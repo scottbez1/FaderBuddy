@@ -1,0 +1,72 @@
+kibot:
+  version: 1
+
+preflight:
+  check_zone_fills: true
+  run_drc: true
+  run_erc: true
+  update_xml: true
+  set_text_variables:
+    - name: COMMIT_DATE_LONG
+      command: 'python3 ci/util/rev_info.py git_date'
+    - name: COMMIT_DATE
+      command: 'python3 ci/util/rev_info.py git_date --short'
+    - name: COMMIT_HASH
+      command: 'python3 ci/util/rev_info.py git_short_rev'
+    - name: RELEASE_VERSION
+      command: 'python3 ci/util/rev_info.py git_release_version releases/motor_fader/'
+  # filters:
+  #   - filter: 'Lines crossing edge cuts'
+  #     error: 'silk_over_copper'
+  #     regex: 'Arc on Edge.Cuts'
+
+outputs:
+  - name: ibom
+    comment: 'Interactive BOM'
+    type: ibom
+    options:
+      dark_mode: true
+      netlist_file: '%F.xml'
+      extra_fields: 'LCSC,Mouser,Digikey,AliExpress,Note'
+
+  - name: schematic
+    type: pdf_sch_print
+
+  - name: 'bom_csv'
+    comment: "Bill of Materials in CSV format"
+    type: bom
+    options:
+      use_alt: false
+      number: 1
+
+  - name: 3d
+    type: render_3d
+    options:
+      view: 'top'
+      copper: '#B39C00FF'
+      board: '#E0D39CA1'
+      solder_mask: '#0B0B0BD4'
+      zoom: 7
+      orthographic: true
+      ray_tracing: true
+      height: 512
+      width: 1024
+
+  - name: 3d_back
+    type: render_3d
+    extends: 3d
+    options:
+      view: 'bottom'
+
+  - name: 3d_perspective
+    type: render_3d
+    extends: 3d
+    options:
+      output: '%f-3D_perspective%I%v.%x'
+      view: 'top'
+      zoom: 5
+      rotate_z: -3
+      rotate_x: 5
+      orthographic: false
+      height: 512
+      width: 1024
