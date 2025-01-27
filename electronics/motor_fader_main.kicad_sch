@@ -1502,7 +1502,7 @@
 				)
 			)
 		)
-		(symbol "MCU_Microchip_ATtiny:ATtiny816-M"
+		(symbol "MCU_Microchip_ATtiny:ATtiny1616-M"
 			(exclude_from_sim no)
 			(in_bom yes)
 			(on_board yes)
@@ -1515,7 +1515,7 @@
 					(justify left bottom)
 				)
 			)
-			(property "Value" "ATtiny816-M"
+			(property "Value" "ATtiny1616-M"
 				(at 2.54 -21.59 0)
 				(effects
 					(font
@@ -1534,7 +1534,7 @@
 					(hide yes)
 				)
 			)
-			(property "Datasheet" "http://ww1.microchip.com/downloads/en/DeviceDoc/40001913A.pdf"
+			(property "Datasheet" "http://ww1.microchip.com/downloads/en/DeviceDoc/ATtiny3216_ATtiny1616-data-sheet-40001997B.pdf"
 				(at 0 0 0)
 				(effects
 					(font
@@ -1543,7 +1543,7 @@
 					(hide yes)
 				)
 			)
-			(property "Description" "20MHz, 8kB Flash, 512B SRAM, 128B EEPROM, VQFN-20"
+			(property "Description" "20MHz, 16kB Flash, 2kB SRAM, 256B EEPROM, VQFN-20"
 				(at 0 0 0)
 				(effects
 					(font
@@ -1570,7 +1570,7 @@
 					(hide yes)
 				)
 			)
-			(symbol "ATtiny816-M_0_1"
+			(symbol "ATtiny1616-M_0_1"
 				(rectangle
 					(start -12.7 -20.32)
 					(end 12.7 20.32)
@@ -1583,7 +1583,7 @@
 					)
 				)
 			)
-			(symbol "ATtiny816-M_1_1"
+			(symbol "ATtiny1616-M_1_1"
 				(pin bidirectional line
 					(at 15.24 12.7 180)
 					(length 2.54)
@@ -3790,6 +3790,16 @@
 	)
 	(wire
 		(pts
+			(xy 69.85 99.06) (xy 85.09 99.06)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d1487135-dfb1-4d23-bedf-d48b578591ea")
+	)
+	(wire
+		(pts
 			(xy 69.85 86.36) (xy 85.09 86.36)
 		)
 		(stroke
@@ -3939,13 +3949,24 @@
 		)
 		(uuid "119ac062-06ec-44cf-a4b4-f0bcca2fe8da")
 	)
-	(label "DBG_LED"
-		(at 24.13 101.6 0)
+	(text "Note: Must be ATtiny1616 or ATtiny3216 for\n2 independent ADC peripherals, for\nsimultaneous touch + potentiometer."
+		(exclude_from_sim no)
+		(at 28.194 50.546 0)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify left bottom)
+			(justify left)
+		)
+		(uuid "c85ee5dc-eb9b-4ab9-aed5-d5345d15f0be")
+	)
+	(label "DBG_LED"
+		(at 85.09 99.06 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
 		)
 		(uuid "03b251ce-0ce4-4d41-a212-ead316a9ed69")
 	)
@@ -3960,12 +3981,12 @@
 		(uuid "04791641-4178-4d01-b9bb-def9d00b3646")
 	)
 	(label "TOUCH"
-		(at 85.09 88.9 180)
+		(at 24.13 101.6 0)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right bottom)
+			(justify left bottom)
 		)
 		(uuid "1a6dfe64-94b4-40cb-b059-61fcea595b7e")
 	)
@@ -7275,7 +7296,7 @@
 		)
 	)
 	(symbol
-		(lib_id "MCU_Microchip_ATtiny:ATtiny816-M")
+		(lib_id "MCU_Microchip_ATtiny:ATtiny1616-M")
 		(at 54.61 88.9 0)
 		(unit 1)
 		(exclude_from_sim no)
@@ -7285,7 +7306,7 @@
 		(fields_autoplaced yes)
 		(uuid "cda97462-1863-4288-9259-64dc5a53a6ad")
 		(property "Reference" "U1"
-			(at 56.6294 63.5 0)
+			(at 56.8041 63.5 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -7293,8 +7314,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "ATtiny816-M"
-			(at 56.6294 66.04 0)
+		(property "Value" "ATtiny1616-M"
+			(at 56.8041 66.04 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -7312,7 +7333,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "http://ww1.microchip.com/downloads/en/DeviceDoc/40001913A.pdf"
+		(property "Datasheet" "http://ww1.microchip.com/downloads/en/DeviceDoc/ATtiny3216_ATtiny1616-data-sheet-40001997B.pdf"
 			(at 54.61 88.9 0)
 			(effects
 				(font
@@ -7321,7 +7342,7 @@
 				(hide yes)
 			)
 		)
-		(property "Description" ""
+		(property "Description" "20MHz, 16kB Flash, 2kB SRAM, 256B EEPROM, VQFN-20"
 			(at 54.61 88.9 0)
 			(effects
 				(font
