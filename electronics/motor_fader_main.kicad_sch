@@ -4817,7 +4817,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Horizontal"
+		(property "Footprint" "modified:PinHeader_1x05_P2.54mm_Horizontal_no_pin_silk"
 			(at 82.55 181.61 0)
 			(effects
 				(font
@@ -7875,7 +7875,7 @@
 				)
 			)
 		)
-		(property "Value" "VMOT_VCC"
+		(property "Value" "Vmot <-> Vio"
 			(at 185.42 96.52 0)
 			(effects
 				(font
@@ -7883,7 +7883,7 @@
 				)
 			)
 		)
-		(property "Footprint" "modified:SolderJumper-2_P1.3mm_Open_TrianglePad1.0x1.5mm_thermal_relief"
+		(property "Footprint" "modified:SolderJumper-2_P1.3mm_Open_TrianglePad1.0x1.5mm_thermal_relief_labelzone"
 			(at 185.42 100.33 0)
 			(effects
 				(font
@@ -8032,7 +8032,7 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "Connector_PinSocket_2.54mm:PinSocket_1x05_P2.54mm_Horizontal"
+		(property "Footprint" "modified:PinSocket_1x05_P2.54mm_Horizontal_no_silk_fill"
 			(at 82.55 166.37 0)
 			(effects
 				(font
