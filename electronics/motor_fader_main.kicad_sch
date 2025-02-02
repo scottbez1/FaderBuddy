@@ -3590,6 +3590,16 @@
 	)
 	(wire
 		(pts
+			(xy 69.85 78.74) (xy 78.74 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "90faead9-6993-40af-bc46-2674e2885e61")
+	)
+	(wire
+		(pts
 			(xy 153.67 115.57) (xy 153.67 119.38)
 		)
 		(stroke
@@ -3820,16 +3830,6 @@
 	)
 	(wire
 		(pts
-			(xy 69.85 88.9) (xy 85.09 88.9)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "e1756652-6b42-4e4a-a8ce-b45e10f04487")
-	)
-	(wire
-		(pts
 			(xy 76.2 176.53) (xy 77.47 176.53)
 		)
 		(stroke
@@ -3897,6 +3897,16 @@
 			(type default)
 		)
 		(uuid "ee0a95eb-03fb-405d-a362-72d48765ae06")
+	)
+	(wire
+		(pts
+			(xy 69.85 88.9) (xy 78.74 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f4900cb2-315f-4663-9a31-e7f6c28fd777")
 	)
 	(wire
 		(pts
@@ -5070,7 +5080,7 @@
 	)
 	(symbol
 		(lib_id "Connector:TestPoint_Small")
-		(at 90.17 60.96 0)
+		(at 78.74 88.9 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -5078,7 +5088,7 @@
 		(dnp no)
 		(uuid "339c096b-0255-4b92-82f6-eb88b7c80e34")
 		(property "Reference" "TP1"
-			(at 91.44 60.96 0)
+			(at 80.01 88.9 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5086,8 +5096,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "P??"
-			(at 96.52 60.96 0)
+		(property "Value" "PA7"
+			(at 85.09 88.9 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5096,7 +5106,7 @@
 			)
 		)
 		(property "Footprint" "modified:TestPoint_THTPad_D1.0mm_Drill0.5mm_small_valuesilk"
-			(at 95.25 60.96 0)
+			(at 83.82 88.9 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5105,7 +5115,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 95.25 60.96 0)
+			(at 83.82 88.9 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5114,7 +5124,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 90.17 60.96 0)
+			(at 78.74 88.9 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -6786,6 +6796,72 @@
 			(project ""
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "A1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Connector:TestPoint_Small")
+		(at 78.74 78.74 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "b1e8572d-4c18-4e52-bbcf-003c1679ea7a")
+		(property "Reference" "TP6"
+			(at 80.01 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "PA3"
+			(at 85.09 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "modified:TestPoint_THTPad_D1.0mm_Drill0.5mm_small_valuesilk"
+			(at 83.82 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 83.82 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" ""
+			(at 78.74 78.74 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "98f97768-9531-4705-a1b0-7a829b69071a")
+		)
+		(instances
+			(project "motor_fader_main"
+				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
+					(reference "TP6")
 					(unit 1)
 				)
 			)
