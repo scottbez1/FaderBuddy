@@ -45,7 +45,7 @@ def plot_to_directory(pcb_file, output_directory, temp_dir, release_prefix):
     board_name = os.path.splitext(os.path.basename(pcb_file))[0]
 
     with pcb_util.get_plotter(pcb_file, temp_dir, release_prefix) as plotter:
-        plotter.plot_options.SetDrillMarksType(pcbnew.PCB_PLOT_PARAMS.NO_DRILL_SHAPE)
+        plotter.plot_options.SetDrillMarksType(pcbnew.DRILL_MARKS_NO_DRILL_SHAPE)
         plotter.plot_options.SetExcludeEdgeLayer(False)
 
         LayerDef = namedtuple('LayerDef', ['layer', 'mirror'])
