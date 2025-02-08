@@ -59,7 +59,7 @@ class Plotter(object):
         self.plot_options.SetScale(1)
         self.plot_options.SetUseAuxOrigin(True)
         self.plot_options.SetMirror(False)
-        self.plot_options.SetExcludeEdgeLayer(True)
+        # self.plot_options.SetExcludeEdgeLayer(True)
 
     def plot(self, layer, plot_format):
         layer_name = self.board.GetLayerName(layer)
