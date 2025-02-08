@@ -45,7 +45,10 @@ def get_versioned_contents(filename, release_search_prefix):
         if release_search_prefix:
             tag_version = rev_info.git_release_version(release_search_prefix)
             if tag_version:
+                logger.info(f'Tag found: {tag_version}')
                 release_version = tag_version
+            else:
+                logger.info(f'No tagged release found with prefix {release_search_prefix!r}')
         return original_contents, original_contents \
             .replace('Date ""', 'Date "%s"' % date_long) \
             .replace('DATE: YYYY-MM-DD HH:MM:SS TZ', 'DATE: %s' % date_long) \
