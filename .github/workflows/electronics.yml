@@ -23,12 +23,12 @@ jobs:
 
       - name: motor_fader_main -- Gen JLCPCB fabrication files 
         run: |
-          ./ci/electronics/export_jlcpcb.py --release-prefix releases/motor_fader/ --assembly-schematic electronics/motor_fader_main.kicad_sch electronics/motor_fader_main.kicad_pcb
+          ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ --assembly-schematic electronics/motor_fader_main.kicad_sch electronics/motor_fader_main.kicad_pcb
           cp -r electronics/build/motor_fader_main-jlc electronics/build/outputs
 
       - name: motor_fader_main -- Gen PCB overview PDF
         run: |
-          ./ci/electronics/generate_pdf.py --release-prefix releases/motor_fader/ electronics/motor_fader_main.kicad_pcb
+          ./ci/electronics/generate_pdf.py --release-prefix releases/electronics/ electronics/motor_fader_main.kicad_pcb
           cp electronics/build/motor_fader_main-pcb-packet.pdf electronics/build/outputs
         env:
           PYTHONUNBUFFERED: 1

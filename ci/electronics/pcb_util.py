@@ -61,13 +61,16 @@ class Plotter(object):
         self.plot_options.SetMirror(False)
         # self.plot_options.SetExcludeEdgeLayer(True)
 
-    def plot(self, layer, plot_format):
+    def plot(self, layer, plot_format, include_edge_layer=False):
         layer_name = self.board.GetLayerName(layer)
         logger.info('Plotting layer %s (kicad layer=%r)', layer_name, layer)
-        self.plot_controller.SetLayer(layer)
         self.plot_controller.OpenPlotfile(layer_name, plot_format , 'Plot')
         output_filename = self.plot_controller.GetPlotFileName()
-        self.plot_controller.PlotLayer()
+        seq = pcbnew.LSEQ()
+        if include_edge_layer:
+            seq.push_back(pcbnew.Edge_Cuts)
+        seq.push_back(layer)
+        self.plot_controller.PlotLayers(seq)
         self.plot_controller.ClosePlot()
         return output_filename
 
@@ -79,7 +82,7 @@ class Plotter(object):
 
         mirror = False
         minimalHeader = False
-        offset = pcbnew.wxPoint(0, 0)
+        offset = pcbnew.VECTOR2I_MM(0, 0)
         merge_npth = True
         drill_writer.SetOptions(mirror, minimalHeader, offset, merge_npth)
 

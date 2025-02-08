@@ -46,7 +46,7 @@ def plot_to_directory(pcb_file, output_directory, temp_dir, release_prefix):
 
     with pcb_util.get_plotter(pcb_file, temp_dir, release_prefix) as plotter:
         plotter.plot_options.SetDrillMarksType(pcbnew.DRILL_MARKS_NO_DRILL_SHAPE)
-        plotter.plot_options.SetExcludeEdgeLayer(False)
+        # plotter.plot_options.SetExcludeEdgeLayer(False)
 
         LayerDef = namedtuple('LayerDef', ['layer', 'mirror'])
         layers = [
@@ -62,7 +62,7 @@ def plot_to_directory(pcb_file, output_directory, temp_dir, release_prefix):
         pdfs = []
         for layer in layers:
             plotter.plot_options.SetMirror(layer.mirror)
-            output_filename = plotter.plot(layer.layer, pcbnew.PLOT_FORMAT_PDF)
+            output_filename = plotter.plot(layer.layer, pcbnew.PLOT_FORMAT_PDF, include_edge_layer=True)
             pdfs.append(output_filename)
 
         _, map_file = plotter.plot_drill()
