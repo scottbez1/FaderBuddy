@@ -28,4 +28,4 @@ sudo cp "$DIR/config/policy.xml" /etc/ImageMagick-6/policy.xml
 
 # Install fonts
 mkdir -p ~/.local/share/fonts/
-cp "$DIR/../fonts/Righteous/Righteous-Regular.ttf ~/.local/share/fonts
+cp "$DIR/../fonts/Righteous/Righteous-Regular.ttf" ~/.local/share/fonts
