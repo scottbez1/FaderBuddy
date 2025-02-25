@@ -78,13 +78,13 @@ void motor_update() {
 
   input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
   float delta = fabs(input_ewma - raw_target);
+  uint32_t now = millis();
   if (is_moving) {
-    uint32_t now = millis();
     if (now - move_start_millis > MOVE_TIMEOUT_MILLIS) {
-#if SERIAL_ENABLED
-      Serial.println("TIMEOUT");
-#endif
-      is_moving = false;
+// #if SERIAL_ENABLED
+//       Serial.println("TIMEOUT");
+// #endif
+//       is_moving = false;
     } else {
       if (delta > 15) {
         at_setpoint_since_millis = now;
@@ -96,8 +96,15 @@ void motor_update() {
         is_moving = false;
       }
     }
-  } else if (delta > 15) {
-    has_position_override = true;
+  } else {
+    // if (delta > 15) {
+    //   has_position_override = true;
+    // }
+    if (delta > 15) {
+      is_moving = true;
+      move_start_millis = now;
+      pid_setpoint = raw_target;
+    }
   }
 
 #if SERIAL_ENABLED
@@ -179,7 +186,7 @@ void loop() {
 #if DEMO
   static uint32_t last_movement;
   static uint8_t x;
-  if (millis() - last_movement >= 8192) {
+  if (millis() - last_movement >= 4096) {
     x++;
     if (x >= 4) {
       x = 0;
