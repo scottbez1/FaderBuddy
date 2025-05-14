@@ -21,90 +21,32 @@
 #define PIN_TOUCH (PIN_PC3)
 
 
-float pid_setpoint = 0;
-float pid_input, pid_output;
-const float pid_kp=1, pid_ki=0, pid_kd=0;
-PIDT<float> pid(&pid_input, &pid_output, &pid_setpoint, pid_kp, pid_ki, pid_kd, DIRECT);
-
-// Movement state
-bool is_moving = false;
-uint32_t move_start_millis = 0;
-const uint32_t MOVE_TIMEOUT_MILLIS = 750;
-bool has_position_override = true;
-uint16_t raw_target = 0;
-const uint32_t MOVE_COMPLETION_MILLIS = 100;
-uint32_t at_setpoint_since_millis = 0;
-
-const float ALPHA = 0.1;
+const float ALPHA = 0.05;
 float input_ewma = 0;
 
 // Touch state
 bool touch = false;
 cap_sensor_t touch_sensor;
 
-void set_position(uint16_t pos) {
-  raw_target = pos;
-  pid_setpoint = pos;
 
-  is_moving = true;
-  has_position_override = false;
-  move_start_millis = millis();
-}
-
-uint16_t get_position() {
-  return has_position_override ? input_ewma : raw_target;
-}
+int16_t target = 512;
 
 void motor_update() {
-  pid_input = analogRead(PIN_FADER);
+  int16_t pid_input = analogRead(PIN_FADER);
+  input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
+  float delta = (target - input_ewma) * 2;
 
-  if (!is_moving) {
-    // If we're not supposed to be moving, make setpoint match the input
-    pid_setpoint = pid_input;
-  }
+  // int16_t delta = target - pid_input;
 
-  pid.Compute();
-
-  if (pid_output > 10) {
-    analogWrite(PIN_MOTOR_A, pid_output + 120);
+  if (delta > 15) {
+    analogWrite(PIN_MOTOR_A, delta + 130 > 255 ? 255 : delta + 130);
     analogWrite(PIN_MOTOR_B, 0);
-  } else if (pid_output < -10) {
+  } else if (delta < -15) {
     analogWrite(PIN_MOTOR_A, 0);
-    analogWrite(PIN_MOTOR_B, -pid_output + 120);
+    analogWrite(PIN_MOTOR_B, -delta + 130 > 255 ? 255 : -delta + 130);
   } else {
     analogWrite(PIN_MOTOR_A, LOW);
     analogWrite(PIN_MOTOR_B, LOW);
-  }
-
-  input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
-  float delta = fabs(input_ewma - raw_target);
-  uint32_t now = millis();
-  if (is_moving) {
-    if (now - move_start_millis > MOVE_TIMEOUT_MILLIS) {
-// #if SERIAL_ENABLED
-//       Serial.println("TIMEOUT");
-// #endif
-//       is_moving = false;
-    } else {
-      if (delta > 15) {
-        at_setpoint_since_millis = now;
-      } else if (now - at_setpoint_since_millis > MOVE_COMPLETION_MILLIS) {
-        // Done moving
-#if SERIAL_ENABLED
-        Serial.println("Done moving");
-#endif
-        is_moving = false;
-      }
-    }
-  } else {
-    // if (delta > 15) {
-    //   has_position_override = true;
-    // }
-    if (delta > 15) {
-      is_moving = true;
-      move_start_millis = now;
-      pid_setpoint = raw_target;
-    }
   }
 
 #if SERIAL_ENABLED
@@ -134,8 +76,6 @@ void setup() {
   Serial.println("Hello world!");
 #endif
 
-  // Adafruit_seesawPeripheral_begin();
-
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_FADER, INPUT);
   pinMode(PIN_MOTOR_nSLEEP, OUTPUT);
@@ -145,11 +85,6 @@ void setup() {
   digitalWrite(PIN_MOTOR_A, 0);
   digitalWrite(PIN_MOTOR_B, 0);
   digitalWrite(PIN_MOTOR_nSLEEP, HIGH);
-
-  pid.SetMode(AUTOMATIC);
-  pid.SetOutputLimits(-135, 135);
-  pid.SetSampleTime(10);
-  pid_setpoint = 512;
 
   digitalWrite(PIN_LED, HIGH);
 
@@ -174,19 +109,16 @@ void setup() {
   // EVSYS.ASYNCUSER0 = EVSYS_ASYNCUSER0_ASYNCCH1_gc;
 
   calibrate_touch();
-
-  set_position(30);
 }
 
 void loop() {
-  // Adafruit_seesawPeripheral_run();
   motor_update();
   touch_update();
 
 #if DEMO
   static uint32_t last_movement;
   static uint8_t x;
-  if (millis() - last_movement >= 4096) {
+  if (millis() - last_movement >= 8192) {
     x++;
     if (x >= 4) {
       x = 0;
@@ -194,16 +126,16 @@ void loop() {
     last_movement = millis();
     switch (x) {
       case 0:
-        set_position(60);
+        target = 60;
         break;
       case 1:
-        set_position(682);
+        target = 682;
         break;
       case 2:
-        set_position(341);
+        target = 341;
         break;
       case 3:
-        set_position(1004);
+        target = 1004;
         break;
     }
   }
