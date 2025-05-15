@@ -1,11 +1,31 @@
 #include <Arduino.h>
+#include <Wire.h>
 // #include "Adafruit_seesawPeripheral.h"
 #include <PID_v1.h>
 #include <ptc_touch.h>
 
 #include "util.h"
 
-#define DEMO 1
+/*
+ * I2C Register Map
+ * ===============
+ * 
+ * Addr | Register Name | Access  | Type | Description
+ * -----|---------------|---------|------|------------
+ * 0x00 | VERSION       | R       | u8   | Protocol version (currently 1)
+ * -----|---------------|---------|------|------------
+ * 0x01 | POSITION      | R       | u16  | Current fader position (0-1024)
+ * -----|---------------|---------|------|------------
+ * 0x02 | TARGET        | R/W     | u16  | Target fader position (0-1024)
+ * -----|---------------|---------|------|------------
+ * 
+ * Protocol:
+ * - Read:  Write register address, then read N bytes
+ * - Write: Write register address + N data bytes
+ * - All multi-byte values are big-endian (MSB first)
+ */
+
+#define DEMO 0
 
 #define PIN_LED (PIN_PB2)
 
@@ -20,6 +40,10 @@
 
 #define PIN_TOUCH (PIN_PC3)
 
+// I2C register addresses
+#define REG_VERSION  0x00  // Protocol version
+#define REG_POSITION 0x01  // Current position (0-1024)
+#define REG_TARGET   0x02  // Target position (0-1024)
 
 const float ALPHA = 0.05;
 float input_ewma = 0;
@@ -28,8 +52,77 @@ float input_ewma = 0;
 bool touch = false;
 cap_sensor_t touch_sensor;
 
+// I2C slave address
+const uint8_t I2C_ADDRESS = 0x20;
 
 int16_t target = 512;
+uint8_t current_register = REG_POSITION;  // Track which register was last accessed
+
+// I2C request handler - called when master requests data
+void requestEvent() {
+  uint16_t value;
+  
+  switch (current_register) {
+    case REG_VERSION:
+      Wire.write(1);  // Protocol version 1
+      return;  // Early return since we've already sent the byte
+      
+    case REG_POSITION:
+      value = (uint16_t)input_ewma;
+      break;
+      
+    case REG_TARGET:
+      value = target;
+      break;
+      
+    default:
+      value = 0;
+  }
+  
+  Wire.write((value >> 8) & 0xFF);  // High byte
+  Wire.write(value & 0xFF);         // Low byte
+}
+
+// I2C receive handler - called when master sends data
+void receiveEvent(int howMany) {
+  if (howMany == 0) return;
+  
+  // First byte is always the register address
+  current_register = Wire.read();
+  
+  // Handle register writes of different sizes
+  if (howMany > 1) {  // At least register address + 1 data byte
+    uint16_t new_value = 0;
+    
+    // Read up to 2 bytes of data based on register
+    switch (current_register) {
+      case REG_TARGET:
+        if (howMany == 3) {  // 16-bit value
+          new_value = (Wire.read() << 8) | Wire.read();
+          if (new_value <= 1024) {  // Validate target range
+            target = new_value;
+          }
+        }
+        break;
+        
+      case REG_VERSION:
+      case REG_POSITION:
+        // Read-only registers, ignore writes
+        while (Wire.available()) Wire.read(); // Discard any data
+        break;
+        
+      default:
+        // Unknown register, discard data
+        while (Wire.available()) Wire.read();
+        break;
+    }
+  }
+}
+
+// Returns the current fader position (0-1024)
+uint16_t get_position() {
+  return (uint16_t)input_ewma;
+}
 
 void motor_update() {
   int16_t pid_input = analogRead(PIN_FADER);
@@ -75,6 +168,11 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Hello world!");
 #endif
+
+  // Initialize I2C as slave
+  Wire.begin(I2C_ADDRESS);
+  Wire.onRequest(requestEvent);
+  Wire.onReceive(receiveEvent);
 
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_FADER, INPUT);
