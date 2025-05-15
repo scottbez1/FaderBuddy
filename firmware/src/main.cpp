@@ -3,6 +3,7 @@
 // #include "Adafruit_seesawPeripheral.h"
 #include <PID_v1.h>
 #include <ptc_touch.h>
+#include <megaTinyCore.h>
 
 #include "util.h"
 
@@ -45,6 +46,11 @@
 #define REG_POSITION 0x01  // Current position (0-1024)
 #define REG_TARGET   0x02  // Target position (0-1024)
 
+// PWM configuration
+#if defined(MILLIS_USE_TIMERA0) || defined(__AVR_ATtinyxy2__)
+  #error "This sketch takes over TCA0, don't use for millis here.  Pin mappings on 8-pin parts are different"
+#endif
+
 const float ALPHA = 0.05;
 float input_ewma = 0;
 
@@ -57,6 +63,25 @@ const uint8_t I2C_ADDRESS = 0x20;
 
 int16_t target = 512;
 uint8_t current_register = REG_POSITION;  // Track which register was last accessed
+
+// Configure TCA0 for high-frequency PWM
+void setup_tca0() {
+  // TakeOver TCA0 for PWM
+  takeOverTCA0();
+
+  // Enable split mode
+  TCA0.SPLIT.CTRLD = TCA_SPLIT_SPLITM_bm;
+  
+  // Configure TCA0 for single-slope PWM
+  // HCMPnEN bit: port output register for the corresponding WO[n+3] pin
+  // PA4=WO4=HCMP1, PA5=WO5=HCMP2
+  TCA0.SPLIT.CTRLB = (TCA_SPLIT_HCMP1EN_bm | TCA_SPLIT_HCMP2EN_bm);
+  TCA0.SPLIT.HPER  = 254;
+  TCA0.SPLIT.HCMP1 = 0;
+  TCA0.SPLIT.HCMP2 = 0;
+
+  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV8_gc;
+}
 
 // I2C request handler - called when master requests data
 void requestEvent() {
@@ -129,17 +154,17 @@ void motor_update() {
   input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
   float delta = (target - input_ewma) * 2;
 
-  // int16_t delta = target - pid_input;
-
   if (delta > 15) {
-    analogWrite(PIN_MOTOR_A, delta + 130 > 255 ? 255 : delta + 130);
-    analogWrite(PIN_MOTOR_B, 0);
+    uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
+    TCA0.SPLIT.HCMP1 = pwm;  // Motor A
+    TCA0.SPLIT.HCMP2 = 0;    // Motor B
   } else if (delta < -15) {
-    analogWrite(PIN_MOTOR_A, 0);
-    analogWrite(PIN_MOTOR_B, -delta + 130 > 255 ? 255 : -delta + 130);
+    uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
+    TCA0.SPLIT.HCMP1 = 0;    // Motor A
+    TCA0.SPLIT.HCMP2 = pwm;  // Motor B
   } else {
-    analogWrite(PIN_MOTOR_A, LOW);
-    analogWrite(PIN_MOTOR_B, LOW);
+    TCA0.SPLIT.HCMP1 = 0;    // Motor A
+    TCA0.SPLIT.HCMP2 = 0;    // Motor B
   }
 
 #if SERIAL_ENABLED
@@ -180,10 +205,10 @@ void setup() {
   pinMode(PIN_MOTOR_A, OUTPUT);
   pinMode(PIN_MOTOR_B, OUTPUT);
 
-  digitalWrite(PIN_MOTOR_A, 0);
-  digitalWrite(PIN_MOTOR_B, 0);
+  // Set up TCA0 for high-frequency PWM
+  setup_tca0();
+  
   digitalWrite(PIN_MOTOR_nSLEEP, HIGH);
-
   digitalWrite(PIN_LED, HIGH);
 
 
