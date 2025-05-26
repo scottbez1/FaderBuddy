@@ -41,6 +41,10 @@
 
 #define PIN_TOUCH (PIN_PC3)
 
+#define PIN_ADDR_0 (PIN_PC2)
+#define PIN_ADDR_1 (PIN_PC1)
+#define PIN_ADDR_2 (PIN_PC0)
+
 // I2C register addresses
 #define REG_VERSION  0x00  // Protocol version
 #define REG_POSITION 0x01  // Current position (0-1024)
@@ -58,8 +62,8 @@ float input_ewma = 0;
 bool touch = false;
 cap_sensor_t touch_sensor;
 
-// I2C slave address
-const uint8_t I2C_ADDRESS = 0x20;
+// I2C slave base address (before A0/A1/A2 jumpers are applied)
+const uint8_t I2C_BASE_ADDRESS = 0x20;
 
 int16_t target = 512;
 uint8_t current_register = REG_POSITION;  // Track which register was last accessed
@@ -84,7 +88,7 @@ void setup_tca0() {
 }
 
 // I2C request handler - called when master requests data
-void requestEvent() {
+void onI2cRequest() {
   uint16_t value;
   
   switch (current_register) {
@@ -109,7 +113,7 @@ void requestEvent() {
 }
 
 // I2C receive handler - called when master sends data
-void receiveEvent(int howMany) {
+void onI2cReceive(int howMany) {
   if (howMany == 0) return;
   
   // First byte is always the register address
@@ -144,13 +148,29 @@ void receiveEvent(int howMany) {
   }
 }
 
+void setup_i2c() {
+  pinMode(PIN_ADDR_0, INPUT_PULLUP);
+  pinMode(PIN_ADDR_1, INPUT_PULLUP);
+  pinMode(PIN_ADDR_2, INPUT_PULLUP);
+
+  uint8_t address = I2C_BASE_ADDRESS +
+    (!digitalRead(PIN_ADDR_2) << 2) +
+    (!digitalRead(PIN_ADDR_1) << 1) +
+    (!digitalRead(PIN_ADDR_0) << 0);
+
+  // Initialize I2C as slave
+  Wire.begin(address);
+  Wire.onRequest(onI2cRequest);
+  Wire.onReceive(onI2cReceive);
+}
+
 // Returns the current fader position (0-1024)
 uint16_t get_position() {
   return (uint16_t)input_ewma;
 }
 
 void motor_update() {
-  int16_t pid_input = ADC1.RES; // Use free-running ADC1 result
+  int16_t pid_input = ADC1.RES / 2; // Use free-running ADC1 result
   input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
   float delta = (target - input_ewma) * 2;
 
@@ -183,10 +203,6 @@ void calibrate_touch() {
   // TODO
 }
 
-void touch_update() {
-  ptc_process(millis());
-}
-
 void setup() {
 #if SERIAL_ENABLED
   Serial.swap(1); // RX/TX on alternate pins
@@ -194,10 +210,7 @@ void setup() {
   Serial.println("Hello world!");
 #endif
 
-  // Initialize I2C as slave
-  Wire.begin(I2C_ADDRESS);
-  Wire.onRequest(requestEvent);
-  Wire.onReceive(receiveEvent);
+  setup_i2c();
 
   pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_FADER, INPUT);
@@ -216,6 +229,7 @@ void setup() {
   // we need to leave ADC0 free for the PTC touch library.
   init_ADC1();
   ADC1.MUXPOS=0x02; //reads from PA6, ADC1 channel 2
+  ADC1.CTRLB = ADC_SAMPNUM_ACC2_gc; // Accumulate 4 readings
   ADC1.CTRLA=ADC_ENABLE_bm|ADC_FREERUN_bm; //start in freerun
   ADC1.COMMAND=ADC_STCONV_bm; //start first conversion!
 
@@ -224,7 +238,7 @@ void setup() {
 
 void loop() {
   motor_update();
-  touch_update();
+  ptc_process(millis());
 
 #if DEMO
   static uint32_t last_movement;
@@ -253,7 +267,8 @@ void loop() {
 #endif
 
   // digitalWrite(PIN_LED, is_moving || has_position_override || touch);
-  digitalWrite(PIN_LED, millis()%512 < 128 || touch);
+  digitalWrite(PIN_LED, touch);
+  // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
 
