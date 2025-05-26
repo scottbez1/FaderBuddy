@@ -64,7 +64,7 @@ const uint8_t I2C_ADDRESS = 0x20;
 int16_t target = 512;
 uint8_t current_register = REG_POSITION;  // Track which register was last accessed
 
-// Configure TCA0 for high-frequency PWM
+// Configure TCA0 for high-frequency PWM so it's not audible via the motor
 void setup_tca0() {
   // TakeOver TCA0 for PWM
   takeOverTCA0();
@@ -80,7 +80,7 @@ void setup_tca0() {
   TCA0.SPLIT.HCMP1 = 0;
   TCA0.SPLIT.HCMP2 = 0;
 
-  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV8_gc;
+  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;
 }
 
 // I2C request handler - called when master requests data
@@ -150,7 +150,7 @@ uint16_t get_position() {
 }
 
 void motor_update() {
-  int16_t pid_input = analogRead(PIN_FADER);
+  int16_t pid_input = ADC1.RES; // Use free-running ADC1 result
   input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
   float delta = (target - input_ewma) * 2;
 
@@ -179,12 +179,12 @@ void motor_update() {
 }
 
 void calibrate_touch() {
-  // ptc_add_selfcap_node(&touch_sensor, PIN_TO_PTC(PIN_TOUCH), 0);
+  ptc_add_selfcap_node(&touch_sensor, PIN_TO_PTC(PIN_TOUCH), 0);
   // TODO
 }
 
 void touch_update() {
-  // ptc_process(millis());
+  ptc_process(millis());
 }
 
 void setup() {
@@ -211,25 +211,13 @@ void setup() {
   digitalWrite(PIN_MOTOR_nSLEEP, HIGH);
   digitalWrite(PIN_LED, HIGH);
 
-
-  // pinMode(PIN_PB2, INPUT);
-  // // Set up TCB0 for input capture (pulse width mode, inverted)
-	// TCB0.CTRLB = 0 << TCB_ASYNC_bp      /* Asynchronous Enable: disabled */
-	//              | 0 << TCB_CCMPEN_bp   /* Pin pid_output Enable: disabled */
-	//              | 0 << TCB_CCMPINIT_bp /* Pin Initial State: disabled */
-	//              | TCB_CNTMODE_PW_gc;   /* pid_input Capture Event */
-	// TCB0.EVCTRL = 1 << TCB_CAPTEI_bp    /* Event pid_input Enable: enabled */
-	//               | 1 << TCB_EDGE_bp    /* Event Edge: 1: pos=capture/count, neg=init */
-	//               | 1 << TCB_FILTER_bp; /* pid_input Capture Noise Cancellation Filter: enabled */
-	// TCB0.CTRLA = TCB_CLKSEL_CLKDIV1_gc  /* CLK_PER/1 (From Prescaler) */
-	//              | 1 << TCB_ENABLE_bp   /* Enable: enabled */
-	//              | 0 << TCB_RUNSTDBY_bp /* Run Standby: disabled */
-	//              | 0 << TCB_SYNCUPD_bp; /* Synchronize Update: disabled */
-
-  // // Connct PB2 to async event channel 1
-	// EVSYS.ASYNCCH1 = EVSYS_ASYNCCH1_PORTB_PIN2_gc; /* Asynchronous Event from Pin PB2 */
-  // // Connect async event channel 1 to async user 0 (for TBC0 measurement triggering)
-  // EVSYS.ASYNCUSER0 = EVSYS_ASYNCUSER0_ASYNCCH1_gc;
+  // Init ADC1 for free-running motor fader input.
+  // Using ADC1 with raw setup rather than megaTinyCore's analogRead helpers since
+  // we need to leave ADC0 free for the PTC touch library.
+  init_ADC1();
+  ADC1.MUXPOS=0x02; //reads from PA6, ADC1 channel 2
+  ADC1.CTRLA=ADC_ENABLE_bm|ADC_FREERUN_bm; //start in freerun
+  ADC1.COMMAND=ADC_STCONV_bm; //start first conversion!
 
   calibrate_touch();
 }
@@ -265,32 +253,9 @@ void loop() {
 #endif
 
   // digitalWrite(PIN_LED, is_moving || has_position_override || touch);
-  digitalWrite(PIN_LED, millis()%512 < 128);
+  digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
-
-// bool Adafruit_seesawPeripheral_customRequestHook() {
-//   uint8_t base_cmd = i2c_buffer[0];
-//   uint8_t module_cmd = i2c_buffer[1];
-//   if (base_cmd == SEESAW_MOTOR_FADER_BASE) {
-//     if (module_cmd == SEESAW_MOTOR_FADER_STATE) {
-//       Adafruit_seesawPeripheral_write16(get_position());
-//       Wire.write((touch << 2) | (is_moving << 1) | (has_position_override << 0));
-//     }
-//   }
-//   return false;
-// }
-
-// bool Adafruit_seesawPeripheral_customReceiveHook() {
-//   uint8_t base_cmd = i2c_buffer[0];
-//   uint8_t module_cmd = i2c_buffer[1];
-//   if (base_cmd == SEESAW_MOTOR_FADER_BASE) {
-//     if (module_cmd == SEESAW_MOTOR_FADER_POSITION) {
-//       set_position(i2c_buffer[2] << 8 | i2c_buffer[3]);
-//     }
-//   }
-//   return false;
-// }
 
 // callback that is called by ptc_process at different points to ease user interaction
 void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
