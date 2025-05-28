@@ -1,30 +1,12 @@
 #include <Arduino.h>
 #include <Wire.h>
-// #include "Adafruit_seesawPeripheral.h"
-#include <PID_v1.h>
 #include <ptc_touch.h>
 #include <megaTinyCore.h>
 
+#include "i2c_data.h"
 #include "util.h"
 
-/*
- * I2C Register Map
- * ===============
- * 
- * Addr | Register Name | Access  | Type | Description
- * -----|---------------|---------|------|------------
- * 0x00 | VERSION       | R       | u8   | Protocol version (currently 1)
- * -----|---------------|---------|------|------------
- * 0x01 | POSITION      | R       | u16  | Current fader position (0-1024)
- * -----|---------------|---------|------|------------
- * 0x02 | TARGET        | R/W     | u16  | Target fader position (0-1024)
- * -----|---------------|---------|------|------------
- * 
- * Protocol:
- * - Read:  Write register address, then read N bytes
- * - Write: Write register address + N data bytes
- * - All multi-byte values are big-endian (MSB first)
- */
+
 
 #define DEMO 0
 
@@ -45,10 +27,6 @@
 #define PIN_ADDR_1 (PIN_PC1)
 #define PIN_ADDR_2 (PIN_PC0)
 
-// I2C register addresses
-#define REG_VERSION  0x00  // Protocol version
-#define REG_POSITION 0x01  // Current position (0-1024)
-#define REG_TARGET   0x02  // Target position (0-1024)
 
 // PWM configuration
 #if defined(MILLIS_USE_TIMERA0) || defined(__AVR_ATtinyxy2__)
@@ -66,7 +44,14 @@ cap_sensor_t touch_sensor;
 const uint8_t I2C_BASE_ADDRESS = 0x20;
 
 int16_t target = 512;
-uint8_t current_register = REG_POSITION;  // Track which register was last accessed
+uint8_t current_register = REG_VERSION;  // Track which register was last accessed
+
+const int16_t WINDOW_SIZE = 8;
+int16_t position_window_upper = WINDOW_SIZE;
+int16_t position_window_lower = 0;
+int16_t position = 0;
+
+uint32_t state = 0;
 
 // Configure TCA0 for high-frequency PWM so it's not audible via the motor
 void setup_tca0() {
@@ -89,27 +74,31 @@ void setup_tca0() {
 
 // I2C request handler - called when master requests data
 void onI2cRequest() {
-  uint16_t value;
-  
   switch (current_register) {
     case REG_VERSION:
-      Wire.write(1);  // Protocol version 1
+      Wire.write(I2C_PROTOCOL_VERSION);
       return;  // Early return since we've already sent the byte
       
-    case REG_POSITION:
-      value = (uint16_t)input_ewma;
-      break;
+    case REG_STATE:
+      Wire.write((state >> 24) & 0xFF);
+      Wire.write((state >> 16) & 0xFF);
+      Wire.write((state >> 8) & 0xFF);
+      Wire.write(state & 0xFF);
+      return;
       
     case REG_TARGET:
-      value = target;
-      break;
-      
-    default:
-      value = 0;
+      Wire.write((target >> 8) & 0xFF);  // High byte
+      Wire.write(target & 0xFF);         // Low byte
+      return;
+    
+    case REG_UPTIME:
+      uint32_t uptime = millis();
+      Wire.write((uptime >> 24) & 0xFF);
+      Wire.write((uptime >> 16) & 0xFF);
+      Wire.write((uptime >> 8) & 0xFF);
+      Wire.write(uptime & 0xFF);
+      return;
   }
-  
-  Wire.write((value >> 8) & 0xFF);  // High byte
-  Wire.write(value & 0xFF);         // Low byte
 }
 
 // I2C receive handler - called when master sends data
@@ -135,7 +124,7 @@ void onI2cReceive(int howMany) {
         break;
         
       case REG_VERSION:
-      case REG_POSITION:
+      case REG_STATE:
         // Read-only registers, ignore writes
         while (Wire.available()) Wire.read(); // Discard any data
         break;
@@ -164,14 +153,23 @@ void setup_i2c() {
   Wire.onReceive(onI2cReceive);
 }
 
-// Returns the current fader position (0-1024)
-uint16_t get_position() {
-  return (uint16_t)input_ewma;
-}
-
 void motor_update() {
   int16_t pid_input = ADC1.RES / 2; // Use free-running ADC1 result
   input_ewma = pid_input * ALPHA + input_ewma * (1-ALPHA);
+  if (input_ewma > position_window_upper) {
+    position_window_upper = input_ewma;
+    position_window_lower = position_window_upper - WINDOW_SIZE;
+    position = position_window_upper;
+  } else if (input_ewma < position_window_lower) {
+    position_window_lower = input_ewma;
+    position_window_upper = position_window_lower + WINDOW_SIZE;
+    position = position_window_lower;
+  }
+  // TODO: lerp bounds...
+  uint8_t pos = BOUNDED_LERP_UINT16(position, 40, 1010, 0, 101);
+  state &= ~STATE_POSITION_bm;
+  state |= pos << STATE_POSITION_bp;
+
   float delta = (target - input_ewma) * 2;
 
   if (delta > 15) {
@@ -200,7 +198,6 @@ void motor_update() {
 
 void calibrate_touch() {
   ptc_add_selfcap_node(&touch_sensor, PIN_TO_PTC(PIN_TOUCH), 0);
-  // TODO
 }
 
 void setup() {
@@ -267,7 +264,7 @@ void loop() {
 #endif
 
   // digitalWrite(PIN_LED, is_moving || has_position_override || touch);
-  digitalWrite(PIN_LED, touch);
+  digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
@@ -278,12 +275,14 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
     // MySerial.print("node touched:");
     // MySerial.println(ptc_get_node_id(node));
 
-    touch = true;
+    // touch = true;
+    state |= STATE_TOUCH_bm;
   } else if (PTC_CB_EVENT_TOUCH_RELEASE == eventType) {
     // MySerial.print("node released:");
     // MySerial.println(ptc_get_node_id(node));
 
-    touch = false;
+    // touch = false;
+    state &= ~STATE_TOUCH_bm;
   } else if (PTC_CB_EVENT_CONV_SELF_CMPL == eventType) {
     // Do more complex things here
   } else if (PTC_CB_EVENT_CONV_CALIB & eventType) {
