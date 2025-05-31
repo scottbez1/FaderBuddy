@@ -34,9 +34,9 @@
 #endif
 
 #define MOVEMENT_TIMEOUT_MILLIS (2000)
-#define TOUCH_DURATION_THRESHOLD (200)
+#define TOUCH_OVERRIDE_DURATION_THRESHOLD (50)
 #define REMOTE_MOVEMENT_STEADY_THRESHOLD (200)
-#define IDLE_DURATION_THRESHOLD (200)
+#define IDLE_DURATION_THRESHOLD (2000)
 
 const float ALPHA = 0.05;
 float input_ewma = 0;
@@ -60,9 +60,9 @@ int16_t position = 0;
 uint32_t state = 0;
 
 uint32_t remote_movement_timeout = MOVEMENT_TIMEOUT_MILLIS;
-uint32_t touch_duration_reached_time = 0;
+uint32_t touch_state_change_millis = 0;
 uint32_t remote_movement_steady_time = 0;
-uint32_t input_steady_time = 0;
+uint32_t input_last_change_millis = 0;
 
 Mode get_mode() {
   return static_cast<Mode>((state & STATE_MODE_bm) >> STATE_MODE_bp);
@@ -186,28 +186,28 @@ void setup_i2c() {
 
 void motor_update() {
   input_ewma = ADC1.RES * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
+  Mode mode = get_mode();
   if (input_ewma > position_window_upper) {
     position_window_upper = input_ewma;
     position_window_lower = position_window_upper - WINDOW_SIZE;
-    if (position != position_window_upper) {
-      input_steady_time = millis() + IDLE_DURATION_THRESHOLD;
+    if (mode != MODE_REMOTE_MOVEMENT_IN_PROGRESS && position != position_window_upper) {
+      input_last_change_millis = millis();
     }
     position = position_window_upper;
   } else if (input_ewma < position_window_lower) {
     position_window_lower = input_ewma;
     position_window_upper = position_window_lower + WINDOW_SIZE;
-    if (position != position_window_lower) {
-      input_steady_time = millis() + IDLE_DURATION_THRESHOLD;
+    if (mode != MODE_REMOTE_MOVEMENT_IN_PROGRESS && position != position_window_lower) {
+      input_last_change_millis = millis();
     }
     position = position_window_lower;
   }
 
-  Mode mode = get_mode();
   switch (mode) {
     case MODE_REMOTE_MOVEMENT_IN_PROGRESS:
       if (millis() > remote_movement_timeout) {
         set_mode(Mode::MODE_ERROR);
-      } else if (touch_duration_reached_time > 0 && millis() > touch_duration_reached_time) {
+      } else if ((state & STATE_TOUCH_bm) && millis() > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       } else {
         float delta = (target - input_ewma) * 2;
@@ -236,7 +236,7 @@ void motor_update() {
     case MODE_INPUT_ACTIVE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
-      if (millis() > input_steady_time) {
+      if (millis() > input_last_change_millis + IDLE_DURATION_THRESHOLD && (state & STATE_TOUCH_bm) == 0 && millis() > touch_state_change_millis + IDLE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_IDLE);
       }
       // TODO: haptics
@@ -245,7 +245,7 @@ void motor_update() {
     case MODE_INPUT_IDLE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
-      if (millis() < input_steady_time) {
+      if (millis() < input_last_change_millis + IDLE_DURATION_THRESHOLD || (state & STATE_TOUCH_bm) != 0 && millis() > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       }
       break;
@@ -352,7 +352,7 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
     // MySerial.println(ptc_get_node_id(node));
 
     // touch = true;
-    touch_duration_reached_time = millis() + TOUCH_DURATION_THRESHOLD;
+    touch_state_change_millis = millis();
     state |= STATE_TOUCH_bm;
 
   } else if (PTC_CB_EVENT_TOUCH_RELEASE == eventType) {
@@ -360,7 +360,7 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
     // MySerial.println(ptc_get_node_id(node));
 
     // touch = false;
-    touch_duration_reached_time = 0;
+    touch_state_change_millis = millis();
     state &= ~STATE_TOUCH_bm;
   } else if (PTC_CB_EVENT_CONV_SELF_CMPL == eventType) {
     // Do more complex things here
