@@ -36,7 +36,7 @@
 #define MOVEMENT_TIMEOUT_MILLIS (2000)
 #define TOUCH_OVERRIDE_DURATION_THRESHOLD (50)
 #define REMOTE_MOVEMENT_STEADY_THRESHOLD (200)
-#define IDLE_DURATION_THRESHOLD (2000)
+#define IDLE_DURATION_THRESHOLD (1000)
 
 const float ALPHA = 0.05;
 float input_ewma = 0;
@@ -49,6 +49,10 @@ cap_sensor_t touch_sensor;
 // I2C slave base address (before A0/A1/A2 jumpers are applied)
 const uint8_t I2C_BASE_ADDRESS = 0x20;
 
+
+#define INPUT_CALIB_MIN (40)
+#define INPUT_CALIB_MAX (1010)
+
 int16_t target = 512;
 uint8_t current_register = REG_VERSION;  // Track which register was last accessed
 
@@ -57,12 +61,18 @@ int16_t position_window_upper = WINDOW_SIZE;
 int16_t position_window_lower = 0;
 int16_t position = 0;
 
-uint32_t state = 0;
+uint32_t state = (Mode::MODE_INPUT_IDLE << STATE_MODE_bp);
 
-uint32_t remote_movement_timeout = MOVEMENT_TIMEOUT_MILLIS;
+uint32_t remote_movement_start = 0;
 uint32_t touch_state_change_millis = 0;
 uint32_t remote_movement_steady_time = 0;
 uint32_t input_last_change_millis = 0;
+uint16_t remote_movement_start_position = 0;
+
+bool pending_report_on_idle = false;
+
+bool pending_calibrate_touch = false;
+void calibrate_touch();
 
 Mode get_mode() {
   return static_cast<Mode>((state & STATE_MODE_bm) >> STATE_MODE_bp);
@@ -93,30 +103,27 @@ void setup_tca0() {
 
 // I2C request handler - called when master requests data
 void onI2cRequest() {
-  switch (current_register) {
-    case REG_VERSION:
+  uint8_t r = current_register;
+  if (r == REG_VERSION) {
       Wire.write(I2C_PROTOCOL_VERSION);
-      return;  // Early return since we've already sent the byte
-      
-    case REG_STATE:
+  } else if (r == REG_STATE) {
       Wire.write((state >> 24) & 0xFF);
       Wire.write((state >> 16) & 0xFF);
       Wire.write((state >> 8) & 0xFF);
       Wire.write(state & 0xFF);
-      return;
-      
-    case REG_TARGET:
+  } else if (r == REG_TARGET) {
       Wire.write((target >> 8) & 0xFF);  // High byte
       Wire.write(target & 0xFF);         // Low byte
-      return;
-    
-    case REG_UPTIME:
+  } else if (r == REG_UPTIME) {
       uint32_t uptime = millis();
       Wire.write((uptime >> 24) & 0xFF);
       Wire.write((uptime >> 16) & 0xFF);
       Wire.write((uptime >> 8) & 0xFF);
       Wire.write(uptime & 0xFF);
-      return;
+  } else if (r == REG_TOUCH_RAW) {
+      uint16_t touch_raw = touch_sensor.sensorData;
+      Wire.write((touch_raw >> 8) & 0xFF);  // High byte
+      Wire.write(touch_raw & 0xFF);         // Low byte
   }
 }
 
@@ -127,45 +134,52 @@ void onI2cReceive(int howMany) {
   // First byte is always the register address
   current_register = Wire.read();
   
-  // Handle register writes of different sizes
-  if (howMany > 1) {  // At least register address + 1 data byte
-    uint16_t new_value = 0;
-    
-    // Read up to 2 bytes of data based on register
-    switch (current_register) {
-      case REG_TARGET:
-        if (howMany == 3) {  // 16-bit value
-          new_value = (Wire.read() << 8) | Wire.read();
-          if (new_value <= 1024) {  // Validate target range
-            Mode mode = get_mode();
-            if (mode == Mode::MODE_INPUT_IDLE) {
-              target = new_value;
-              set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
-              remote_movement_timeout = millis() + MOVEMENT_TIMEOUT_MILLIS;
-            } else if (mode == Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
-              target = new_value;
-              // extend the timeout
-              remote_movement_timeout = millis() + MOVEMENT_TIMEOUT_MILLIS;
-            } else if (mode == Mode::MODE_INPUT_ACTIVE) {
-              // Ingore commanded target when in active input mode
-              // TODO: queue up "last say"
-            }
-          }
+  switch (current_register) {
+    case REG_TARGET:
+      if (howMany == 2) {  // 8-bit value
+        uint16_t new_value = 0;
+        new_value = Wire.read(); //(Wire.read() << 8) | Wire.read();
+        Mode mode = get_mode();
+        if (mode == Mode::MODE_INPUT_IDLE) {
+          target = BOUNDED_LERP_UINT16(new_value, 0, 255, INPUT_CALIB_MIN, INPUT_CALIB_MAX);
+          set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+          remote_movement_start = millis();
+          remote_movement_start_position = input_ewma;
+        } else if (mode == Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
+          target = BOUNDED_LERP_UINT16(new_value, 0, 255, INPUT_CALIB_MIN, INPUT_CALIB_MAX);
+          // extend the timeout
+          remote_movement_start = millis();
+          remote_movement_start_position = input_ewma;
+        } else if (mode == Mode::MODE_INPUT_ACTIVE) {
+          // Ignore commanded target when in active input mode
+          pending_report_on_idle = true;
         }
-        break;
-        
-      case REG_VERSION:
-      case REG_STATE:
-        // Read-only registers, ignore writes
-        while (Wire.available()) Wire.read(); // Discard any data
-        break;
-        
-      default:
-        // Unknown register, discard data
-        while (Wire.available()) Wire.read();
-        break;
-    }
+      }
+      break;
+    case REG_CAL_TOUCH:
+      pending_calibrate_touch = true;
+      break;
+    case REG_CLEAR_ERROR:
+      if (get_mode() == MODE_ERROR) {
+        set_mode(MODE_INPUT_IDLE);
+      }
+      break;
+    case REG_VERSION:
+    case REG_STATE:
+    case REG_UPTIME:
+    case REG_TOUCH_RAW:
+      // Read-only registers, ignore writes
+      // Discard any excess data
+      while (Wire.available()) Wire.read();
+      break;
+      
+    default:
+      // Unknown register, discard data
+      // Discard any excess data
+      while (Wire.available()) Wire.read();
+      break;
   }
+
 }
 
 void setup_i2c() {
@@ -184,49 +198,66 @@ void setup_i2c() {
   Wire.onReceive(onI2cReceive);
 }
 
+void increment_position_nonce() {
+  uint8_t position_nonce = (state & STATE_POSITION_NONCE_bm) >> STATE_POSITION_NONCE_bp;
+  position_nonce++;
+  position_nonce &= ((1 << STATE_POSITION_NONCE_bs) - 1);
+  state &= ~STATE_POSITION_NONCE_bm;
+  state |= position_nonce << STATE_POSITION_NONCE_bp;
+}
+
 void motor_update() {
+  uint32_t now = millis();
+
   input_ewma = ADC1.RES * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
   Mode mode = get_mode();
   if (input_ewma > position_window_upper) {
     position_window_upper = input_ewma;
     position_window_lower = position_window_upper - WINDOW_SIZE;
     if (mode != MODE_REMOTE_MOVEMENT_IN_PROGRESS && position != position_window_upper) {
-      input_last_change_millis = millis();
+      input_last_change_millis = now;
     }
     position = position_window_upper;
   } else if (input_ewma < position_window_lower) {
     position_window_lower = input_ewma;
     position_window_upper = position_window_lower + WINDOW_SIZE;
     if (mode != MODE_REMOTE_MOVEMENT_IN_PROGRESS && position != position_window_lower) {
-      input_last_change_millis = millis();
+      input_last_change_millis = now;
     }
     position = position_window_lower;
   }
 
   switch (mode) {
     case MODE_REMOTE_MOVEMENT_IN_PROGRESS:
-      if (millis() > remote_movement_timeout) {
+      if (now > remote_movement_start + MOVEMENT_TIMEOUT_MILLIS) {
         set_mode(Mode::MODE_ERROR);
-      } else if ((state & STATE_TOUCH_bm) && millis() > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
+      } else if ((state & STATE_TOUCH_bm) && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       } else {
+        // int8_t dir = remote_movement_start_position > target ? -1 : 1;
+        // uint16_t adjusted_target = (int32_t)remote_movement_start_position + dir * (now - remote_movement_start) * 3 / 2;
+        // if (dir == 1 && adjusted_target >= target) {
+        //   adjusted_target = target;
+        // } else if (dir == -1 && adjusted_target <= target) {
+        //   adjusted_target = target;
+        // }
         float delta = (target - input_ewma) * 2;
         if (delta > 15) {
           uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
-          TCA0.SPLIT.HCMP1 = pwm;  // Motor A
+          TCA0.SPLIT.HCMP1 = pwm; // ((now % 4) < 2) ? pwm : 0;  // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
           remote_movement_steady_time = 0;
         } else if (delta < -15) {
           uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+          TCA0.SPLIT.HCMP2 = pwm; // ((now % 4) < 2) ? pwm : 0;  // Motor B
           remote_movement_steady_time = 0;
         } else {
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
           if (remote_movement_steady_time == 0) {
-            remote_movement_steady_time = millis() + REMOTE_MOVEMENT_STEADY_THRESHOLD;
-          } else if (millis() > remote_movement_steady_time) {
+            remote_movement_steady_time = now + REMOTE_MOVEMENT_STEADY_THRESHOLD;
+          } else if (now > remote_movement_steady_time) {
             remote_movement_steady_time == 0;
             set_mode(Mode::MODE_INPUT_IDLE);
           }
@@ -236,7 +267,11 @@ void motor_update() {
     case MODE_INPUT_ACTIVE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
-      if (millis() > input_last_change_millis + IDLE_DURATION_THRESHOLD && (state & STATE_TOUCH_bm) == 0 && millis() > touch_state_change_millis + IDLE_DURATION_THRESHOLD) {
+      if (now > input_last_change_millis + IDLE_DURATION_THRESHOLD && (state & STATE_TOUCH_bm) == 0 && now > touch_state_change_millis + IDLE_DURATION_THRESHOLD) {
+        if (pending_report_on_idle) {
+          pending_report_on_idle = false;
+          increment_position_nonce();
+        }
         set_mode(Mode::MODE_INPUT_IDLE);
       }
       // TODO: haptics
@@ -245,7 +280,7 @@ void motor_update() {
     case MODE_INPUT_IDLE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
-      if (millis() < input_last_change_millis + IDLE_DURATION_THRESHOLD || (state & STATE_TOUCH_bm) != 0 && millis() > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
+      if (now < input_last_change_millis + IDLE_DURATION_THRESHOLD || (state & STATE_TOUCH_bm) != 0 && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       }
       break;
@@ -256,15 +291,15 @@ void motor_update() {
     }
 
   // TODO: lerp bounds...
-  uint8_t pos = BOUNDED_LERP_UINT16(position, 40, 1010, 0, 101);
+  uint8_t pos = BOUNDED_LERP_UINT16(position, INPUT_CALIB_MIN, INPUT_CALIB_MAX, 0, 255);
   state &= ~STATE_POSITION_bm;
   state |= pos << STATE_POSITION_bp;
 
 
 #if SERIAL_ENABLED
   static uint32_t last_print;
-  if (millis() - last_print > 200) {
-    last_print = millis();
+  if (now - last_print > 200) {
+    last_print = now;
     Serial.println("");
     Serial.println(delta, DEC);
     Serial.println(get_position(), DEC);
@@ -272,8 +307,9 @@ void motor_update() {
 #endif
 }
 
-void calibrate_touch() {
+void setup_touch() {
   ptc_add_selfcap_node(&touch_sensor, PIN_TO_PTC(PIN_TOUCH), 0);
+  ptc_node_set_thresholds(&touch_sensor, 30, 25);
 }
 
 void setup() {
@@ -306,10 +342,23 @@ void setup() {
   ADC1.CTRLA=ADC_ENABLE_bm|ADC_FREERUN_bm; //start in freerun
   ADC1.COMMAND=ADC_STCONV_bm; //start first conversion!
 
-  calibrate_touch();
+  setup_touch();
 }
 
 void loop() {
+  if (pending_calibrate_touch) {
+    pending_calibrate_touch = false;
+    TCA0.SPLIT.HCMP1 = 0;    // Motor A
+    TCA0.SPLIT.HCMP2 = 0;    // Motor B
+    delay(10);
+    ptc_node_request_recal(&touch_sensor);
+    for (uint8_t i = 0; i < 4; i++) {
+      digitalWrite(PIN_LED, HIGH);
+      delay(100);
+      digitalWrite(PIN_LED, LOW);
+      delay(400);
+    }
+  }
   motor_update();
   ptc_process(millis());
 
