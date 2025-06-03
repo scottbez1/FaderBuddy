@@ -33,9 +33,9 @@
   #error "This sketch takes over TCA0, don't use for millis here.  Pin mappings on 8-pin parts are different"
 #endif
 
-#define MOVEMENT_TIMEOUT_MILLIS (2000)
+#define MOVEMENT_TIMEOUT_MILLIS (8000)
 #define TOUCH_OVERRIDE_DURATION_THRESHOLD (50)
-#define REMOTE_MOVEMENT_STEADY_THRESHOLD (200)
+#define REMOTE_MOVEMENT_STEADY_THRESHOLD (300)
 #define IDLE_DURATION_THRESHOLD (1000)
 
 const float ALPHA = 0.05;
@@ -65,7 +65,7 @@ uint32_t state = (Mode::MODE_INPUT_IDLE << STATE_MODE_bp);
 
 uint32_t remote_movement_start = 0;
 uint32_t touch_state_change_millis = 0;
-uint32_t remote_movement_steady_time = 0;
+uint32_t remote_movement_steady_start = 0;
 uint32_t input_last_change_millis = 0;
 uint16_t remote_movement_start_position = 0;
 
@@ -98,7 +98,7 @@ void setup_tca0() {
   TCA0.SPLIT.HCMP1 = 0;
   TCA0.SPLIT.HCMP2 = 0;
 
-  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;
+  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV256_gc;
 }
 
 // I2C request handler - called when master requests data
@@ -145,11 +145,13 @@ void onI2cReceive(int howMany) {
           set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
           remote_movement_start = millis();
           remote_movement_start_position = input_ewma;
+          remote_movement_steady_start = millis();
         } else if (mode == Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
           target = BOUNDED_LERP_UINT16(new_value, 0, 255, INPUT_CALIB_MIN, INPUT_CALIB_MAX);
           // extend the timeout
           remote_movement_start = millis();
           remote_movement_start_position = input_ewma;
+          remote_movement_steady_start = millis();
         } else if (mode == Mode::MODE_INPUT_ACTIVE) {
           // Ignore commanded target when in active input mode
           pending_report_on_idle = true;
@@ -241,24 +243,33 @@ void motor_update() {
         // } else if (dir == -1 && adjusted_target <= target) {
         //   adjusted_target = target;
         // }
-        float delta = (target - input_ewma) * 2;
-        if (delta > 15) {
-          uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
-          TCA0.SPLIT.HCMP1 = pwm; // ((now % 4) < 2) ? pwm : 0;  // Motor A
+        float delta = (target - input_ewma) * 1.2;
+        if (delta > 3) {
+          uint8_t pwm = delta + 80 > 254 ? 254 : delta + 80;
+          TCA0.SPLIT.HCMP1 = pwm;  // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
-          remote_movement_steady_time = 0;
-        } else if (delta < -15) {
-          uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
+          remote_movement_steady_start = now;
+        } else if (delta < -3) {
+          uint8_t pwm = -delta + 80 > 254 ? 254 : -delta + 80;
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = pwm; // ((now % 4) < 2) ? pwm : 0;  // Motor B
-          remote_movement_steady_time = 0;
+          TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+          remote_movement_steady_start = now;
         } else {
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
-          if (remote_movement_steady_time == 0) {
-            remote_movement_steady_time = now + REMOTE_MOVEMENT_STEADY_THRESHOLD;
-          } else if (now > remote_movement_steady_time) {
-            remote_movement_steady_time == 0;
+          if (now > remote_movement_steady_start + REMOTE_MOVEMENT_STEADY_THRESHOLD) {
+            // shift hysteresis window to prevent spurious immediate "input" detection if remote movement left us near the window bounds and succeptiple to noise
+            if (input_ewma < WINDOW_SIZE / 2) {
+              position_window_lower = 0;
+              position_window_upper = WINDOW_SIZE;
+            } else if (input_ewma > 1023 - WINDOW_SIZE / 2) {
+              position_window_upper = 1023;
+              position_window_lower = 1023 - WINDOW_SIZE / 2;
+            } else {
+              position_window_lower = input_ewma - WINDOW_SIZE / 2;
+              position_window_upper = position_window_lower + WINDOW_SIZE;
+            }
+            input_last_change_millis = now - IDLE_DURATION_THRESHOLD;
             set_mode(Mode::MODE_INPUT_IDLE);
           }
         }
@@ -280,7 +291,7 @@ void motor_update() {
     case MODE_INPUT_IDLE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
-      if (now < input_last_change_millis + IDLE_DURATION_THRESHOLD || (state & STATE_TOUCH_bm) != 0 && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
+      if (now < input_last_change_millis + IDLE_DURATION_THRESHOLD || ((state & STATE_TOUCH_bm) != 0 && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD)) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       }
       break;
@@ -309,7 +320,11 @@ void motor_update() {
 
 void setup_touch() {
   ptc_add_selfcap_node(&touch_sensor, PIN_TO_PTC(PIN_TOUCH), 0);
-  ptc_node_set_thresholds(&touch_sensor, 30, 25);
+  ptc_node_set_thresholds(&touch_sensor, 50, 25);
+
+  ptc_lib_sm_set_t* settings = ptc_get_sm_settings();
+  settings->force_recal_delta = 200; // Increase drift recalibration delta?
+  settings->touched_max_nom = 255; // Disable automatic recalibration on very long touch
 }
 
 void setup() {
@@ -356,7 +371,7 @@ void loop() {
       digitalWrite(PIN_LED, HIGH);
       delay(100);
       digitalWrite(PIN_LED, LOW);
-      delay(400);
+      delay(100);
     }
   }
   motor_update();
