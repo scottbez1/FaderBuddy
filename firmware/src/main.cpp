@@ -80,6 +80,11 @@ Mode get_mode() {
 
 void set_mode(Mode mode) {
   state = (state & ~STATE_MODE_bm) | (mode << STATE_MODE_bp);
+  if (mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
+    TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV256_gc;
+  } else {
+    TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;
+  }
 }
 
 // Configure TCA0 for high-frequency PWM so it's not audible via the motor
@@ -245,12 +250,12 @@ void motor_update() {
         // }
         float delta = (target - input_ewma) * 1.2;
         if (delta > 3) {
-          uint8_t pwm = delta + 80 > 254 ? 254 : delta + 80;
+          uint8_t pwm = delta + 88 > 254 ? 254 : delta + 88;
           TCA0.SPLIT.HCMP1 = pwm;  // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
           remote_movement_steady_start = now;
         } else if (delta < -3) {
-          uint8_t pwm = -delta + 80 > 254 ? 254 : -delta + 80;
+          uint8_t pwm = -delta + 88 > 254 ? 254 : -delta + 88;
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = pwm;  // Motor B
           remote_movement_steady_start = now;
@@ -276,17 +281,31 @@ void motor_update() {
       }
       break;
     case MODE_INPUT_ACTIVE:
-      TCA0.SPLIT.HCMP1 = 0;    // Motor A
-      TCA0.SPLIT.HCMP2 = 0;    // Motor B
       if (now > input_last_change_millis + IDLE_DURATION_THRESHOLD && (state & STATE_TOUCH_bm) == 0 && now > touch_state_change_millis + IDLE_DURATION_THRESHOLD) {
+        TCA0.SPLIT.HCMP1 = 0;    // Motor A
+        TCA0.SPLIT.HCMP2 = 0;    // Motor B
         if (pending_report_on_idle) {
           pending_report_on_idle = false;
           increment_position_nonce();
         }
         set_mode(Mode::MODE_INPUT_IDLE);
+      } else {
+        // Haptics
+        if (input_ewma < INPUT_CALIB_MIN + 60 && input_ewma > INPUT_CALIB_MIN + 8) {
+          float delta = (INPUT_CALIB_MIN - input_ewma) * 2;
+          uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
+          TCA0.SPLIT.HCMP1 = 0;    // Motor A
+          TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+        } else if (input_ewma > INPUT_CALIB_MAX - 60 && input_ewma < INPUT_CALIB_MAX - 8) {
+          float delta = (INPUT_CALIB_MAX - input_ewma) * 3;
+          uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
+          TCA0.SPLIT.HCMP1 = pwm;  // Motor A
+          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+        } else {
+          TCA0.SPLIT.HCMP1 = 0;    // Motor A
+          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+        }
       }
-      // TODO: haptics
-      // TODO: switch to INPUT_IDLE if idle
       break;
     case MODE_INPUT_IDLE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
@@ -403,8 +422,8 @@ void loop() {
   }
 #endif
 
-  // digitalWrite(PIN_LED, is_moving || has_position_override || touch);
-  digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
+  // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
+  digitalWrite(PIN_LED, TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0);
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
