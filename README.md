@@ -18,4 +18,5 @@ Latest auto-generated (untested and likely broken!) artifacts⚠️:
 - Ordering (Configured for JLCPCB)
   - 1.6mm, any color, HASL lead-free
   - [Gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/gerbers.zip)
-
+  - [BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/bom.csv)
+  - [CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/pos.csv)
