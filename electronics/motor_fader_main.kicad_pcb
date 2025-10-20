@@ -161,7 +161,7 @@
 		(descr "Capacitor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC_7351 nominal, (Body size source: IPC-SM-782 page 76, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "capacitor")
 		(property "Reference" "C2"
-			(at 0 1.55 180)
+			(at 0 1.55 360)
 			(layer "F.SilkS")
 			(uuid "c44d8a33-8b77-46ae-a51a-8d475b12a6d5")
 			(effects
@@ -183,7 +183,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:C_0603_1608Metric"
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "cdbaa517-26aa-4453-aee9-9fb1121a659a")
@@ -195,7 +195,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "e517d652-83e5-4b9b-af3c-5845bacb0f44")
@@ -207,7 +207,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "f51b440d-a86e-4400-b7a1-104f6e418552")
@@ -364,7 +364,7 @@
 			(pintype "passive")
 			(uuid "5bae505f-a450-4184-bd9b-da463cf7f963")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -586,7 +586,7 @@
 			(pintype "passive")
 			(uuid "93f5e227-08fe-4d55-bb32-9650d0a6f3f6")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -1045,7 +1045,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C2052778"
+		(property "LCSC" "C507118"
 			(at 128.5 -28.5 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -2594,7 +2594,7 @@
 			(pintype "passive")
 			(uuid "538c00b4-b043-4d6a-a8df-d14cd00c1807")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x05_P2.54mm_Horizontal.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Connector_PinHeader_2.54mm.3dshapes/PinHeader_1x05_P2.54mm_Horizontal.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -2613,7 +2613,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC_7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R4"
-			(at 2.5 0 180)
+			(at 2.5 0 360)
 			(layer "F.SilkS")
 			(uuid "9f1886f3-0c4a-4ca6-bef3-48cc294bf54e")
 			(effects
@@ -2635,7 +2635,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "4c010114-1f7a-436a-bb8a-65218838155a")
@@ -2647,7 +2647,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "b1aa32e2-5344-44bb-a34d-5887b739ce5d")
@@ -2659,7 +2659,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "981e2bda-c213-4925-a115-9b635eacf978")
@@ -2816,7 +2816,7 @@
 			(pintype "passive")
 			(uuid "46285bbe-3033-4eda-92d7-8a3aad2dc23f")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -3120,7 +3120,7 @@
 			(pintype "passive")
 			(uuid "297f0b2c-3052-4d54-9fe2-6577e141a212")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0805_2012Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0805_2012Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -3669,7 +3669,7 @@
 			(pintype "passive")
 			(uuid "63626713-640e-4a74-980c-87b8938d5e2c")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -3891,7 +3891,7 @@
 			(pintype "passive")
 			(uuid "66e80ad0-1e5d-4cbc-82ab-f2219df49f0a")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/C_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -3910,7 +3910,7 @@
 		(descr "SMD capacitor, aluminum electrolytic, Nichicon, 6.3x5.4mm")
 		(tags "capacitor electrolytic")
 		(property "Reference" "C3"
-			(at -4.25 2.225 180)
+			(at -4.25 2.225 0)
 			(layer "F.SilkS")
 			(uuid "842b8377-b173-4050-832a-f6d80f089bbd")
 			(effects
@@ -3932,7 +3932,7 @@
 			)
 		)
 		(property "Footprint" "Capacitor_SMD:CP_Elec_6.3x5.4_Nichicon"
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "1074c09c-f696-443e-bec5-41065adac709")
@@ -3944,7 +3944,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "7fa3462f-e280-4442-979d-7e173e04bcdc")
@@ -3956,7 +3956,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "6e28a19f-2102-44c4-a774-cb5e0c6caaa4")
@@ -4344,7 +4344,7 @@
 			(pintype "passive")
 			(uuid "e3622dcd-99d7-44a6-bb62-0f9aeea1ee83")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/CP_Elec_6.3x5.4_Nichicon.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Capacitor_SMD.3dshapes/CP_Elec_6.3x5.4_Nichicon.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -4601,7 +4601,7 @@
 			(pintype "passive")
 			(uuid "08bbef89-c461-4cda-b91a-40897cfbd1f2")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/LED_SMD.3dshapes/LED_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/LED_SMD.3dshapes/LED_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -5226,7 +5226,7 @@
 			(pintype "passive")
 			(uuid "b185f2f3-e8b7-4289-9810-081f50752bab")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Connector_PinSocket_2.54mm.3dshapes/PinSocket_1x05_P2.54mm_Horizontal.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Connector_PinSocket_2.54mm.3dshapes/PinSocket_1x05_P2.54mm_Horizontal.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -5861,7 +5861,7 @@
 			(zone_connect 2)
 			(uuid "05b6420b-9bde-4e9c-a0a5-c4e6d5c01fa2")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Package_SON.3dshapes/WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Package_SON.3dshapes/WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -6165,7 +6165,7 @@
 			(pintype "passive")
 			(uuid "5391f894-20a8-4b8e-8356-b5cf91e056fe")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -6422,7 +6422,7 @@
 			(pintype "passive")
 			(uuid "f9edc813-3092-4912-ac22-2b452c0d58f9")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/LED_SMD.3dshapes/LED_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/LED_SMD.3dshapes/LED_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -6441,7 +6441,7 @@
 		(descr "Resistor SMD 0603 (1608 Metric), square (rectangular) end terminal, IPC_7351 nominal, (Body size source: IPC-SM-782 page 72, https://www.pcb-3d.com/wordpress/wp-content/uploads/ipc-sm-782a_amendment_1_and_2.pdf), generated with kicad-footprint-generator")
 		(tags "resistor")
 		(property "Reference" "R3"
-			(at 2.5 0 180)
+			(at 2.5 0 360)
 			(layer "F.SilkS")
 			(uuid "85f06ec9-1d5c-4f75-87a1-5f41d6fd2858")
 			(effects
@@ -6463,7 +6463,7 @@
 			)
 		)
 		(property "Footprint" "Resistor_SMD:R_0603_1608Metric"
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "fd632b07-b7f4-4201-8256-f35111613f25")
@@ -6475,7 +6475,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "6a0c6a71-17a0-4592-b95c-7210790ec911")
@@ -6487,7 +6487,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 0 0 -90)
+			(at 0 0 90)
 			(layer "F.Fab")
 			(hide yes)
 			(uuid "45316fb7-ea9d-46d5-ac3c-0ec13e249f33")
@@ -6644,7 +6644,7 @@
 			(pintype "passive")
 			(uuid "c703856a-1110-41fb-96a5-77e11e8f01fa")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -6866,7 +6866,7 @@
 			(pintype "passive")
 			(uuid "f0394b01-7bd6-4bb8-8cd5-d55ea9344957")
 		)
-		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.wrl"
+		(model "${KICAD6_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603_1608Metric.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -11444,20 +11444,23 @@
 		)
 		(polygon
 			(pts
-				(xy 67.1 41.5) (xy 74.9 41.5) (xy 74.9 44.2) (xy 67.1 44.2)
+				(xy 65.3 41.5) (xy 77 41.5) (xy 77 44.2) (xy 65.3 44.2)
 			)
 		)
 		(filled_polygon
 			(layer "F.Cu")
 			(pts
-				(xy 74.843039 41.519685) (xy 74.888794 41.572489) (xy 74.9 41.624) (xy 74.9 43.6775) (xy 74.880315 43.744539)
-				(xy 74.827511 43.790294) (xy 74.776 43.8015) (xy 73.400615 43.8015) (xy 73.333576 43.781815) (xy 73.312934 43.765181)
+				(xy 76.943039 41.519685) (xy 76.988794 41.572489) (xy 77 41.624) (xy 77 43.6775) (xy 76.980315 43.744539)
+				(xy 76.927511 43.790294) (xy 76.876 43.8015) (xy 73.400615 43.8015) (xy 73.333576 43.781815) (xy 73.312934 43.765181)
 				(xy 73.207294 43.659541) (xy 73.207286 43.659535) (xy 73.138777 43.619982) (xy 73.138772 43.619979)
 				(xy 73.113295 43.613152) (xy 73.062344 43.5995) (xy 68.937656 43.5995) (xy 68.899442 43.609739)
 				(xy 68.861227 43.619979) (xy 68.861222 43.619982) (xy 68.792713 43.659535) (xy 68.792705 43.659541)
-				(xy 68.687066 43.765181) (xy 68.625743 43.798666) (xy 68.599385 43.8015) (xy 67.224 43.8015) (xy 67.156961 43.781815)
-				(xy 67.111206 43.729011) (xy 67.1 43.6775) (xy 67.1 41.624) (xy 67.119685 41.556961) (xy 67.172489 41.511206)
-				(xy 67.224 41.5) (xy 74.776 41.5)
+				(xy 68.687066 43.765181) (xy 68.625743 43.798666) (xy 68.599385 43.8015) (xy 66.458438 43.8015)
+				(xy 66.420224 43.811739) (xy 66.382009 43.821979) (xy 66.338644 43.847016) (xy 66.315398 43.860438)
+				(xy 66.315393 43.860441) (xy 66.313489 43.861539) (xy 66.313484 43.861543) (xy 66.011348 44.163681)
+				(xy 65.950025 44.197166) (xy 65.923667 44.2) (xy 65.424 44.2) (xy 65.356961 44.180315) (xy 65.311206 44.127511)
+				(xy 65.3 44.076) (xy 65.3 41.624) (xy 65.319685 41.556961) (xy 65.372489 41.511206) (xy 65.424 41.5)
+				(xy 76.876 41.5)
 			)
 		)
 	)
@@ -11713,17 +11716,18 @@
 		)
 		(polygon
 			(pts
-				(xy 77.5 55.7) (xy 85.3 55.7) (xy 85.3 58.4) (xy 77.5 58.4)
+				(xy 77.5 54.5) (xy 90.9 54.5) (xy 90.9 58.4) (xy 77.5 58.4)
 			)
 		)
 		(filled_polygon
 			(layer "F.Cu")
 			(pts
-				(xy 85.040706 55.719685) (xy 85.061348 55.736319) (xy 85.065489 55.74046) (xy 85.134012 55.780022)
-				(xy 85.208094 55.799872) (xy 85.267753 55.836235) (xy 85.298283 55.899082) (xy 85.3 55.919646) (xy 85.3 58.276)
-				(xy 85.280315 58.343039) (xy 85.227511 58.388794) (xy 85.176 58.4) (xy 77.624 58.4) (xy 77.556961 58.380315)
-				(xy 77.511206 58.327511) (xy 77.5 58.276) (xy 77.5 55.824) (xy 77.519685 55.756961) (xy 77.572489 55.711206)
-				(xy 77.624 55.7) (xy 84.973667 55.7)
+				(xy 78.206143 54.5005) (xy 78.210438 54.5005) (xy 81.060438 54.5005) (xy 83.774167 54.5005) (xy 83.841206 54.520185)
+				(xy 83.861848 54.536819) (xy 85.065489 55.74046) (xy 85.134012 55.780022) (xy 85.210438 55.8005)
+				(xy 85.21044 55.8005) (xy 90.776 55.8005) (xy 90.843039 55.820185) (xy 90.888794 55.872989) (xy 90.9 55.9245)
+				(xy 90.9 58.276) (xy 90.880315 58.343039) (xy 90.827511 58.388794) (xy 90.776 58.4) (xy 77.624 58.4)
+				(xy 77.556961 58.380315) (xy 77.511206 58.327511) (xy 77.5 58.276) (xy 77.5 54.624) (xy 77.519685 54.556961)
+				(xy 77.572489 54.511206) (xy 77.624 54.5) (xy 78.198514 54.5)
 			)
 		)
 	)
@@ -12200,8 +12204,8 @@
 				(xy 67.541981 44.968902) (xy 67.57481 45.048159) (xy 67.597451 45.102819) (xy 67.685691 45.217815)
 				(xy 67.800687 45.306055) (xy 67.934603 45.361524) (xy 68.078312 45.380444) (xy 68.222021 45.361524)
 				(xy 68.222027 45.361521) (xy 68.22215 45.361489) (xy 68.222218 45.361498) (xy 68.22683 45.360891)
-				(xy 68.226992 45.362125) (xy 68.278304 45.368874) (xy 68.293638 45.380639) (xy 68.7475 45.8345)
-				(xy 69.191886 46.278886) (xy 69.28028 46.3155) (xy 69.375957 46.3155) (xy 69.429361 46.3155) (xy 69.481687 46.337174)
+				(xy 68.226992 45.362125) (xy 68.278304 45.368874) (xy 68.293638 45.380639) (xy 68.725826 45.812826)
+				(xy 69.124232 46.211232) (xy 69.191886 46.278886) (xy 69.28028 46.3155) (xy 69.429361 46.3155) (xy 69.481687 46.337174)
 				(xy 69.503361 46.3895) (xy 69.481687 46.441826) (xy 69.469368 46.451753) (xy 69.414059 46.487297)
 				(xy 69.414056 46.487299) (xy 69.318437 46.59765) (xy 69.257779 46.730474) (xy 69.237 46.874995)
 				(xy 69.237 47.3) (xy 76.763 47.3) (xy 76.763 46.875008) (xy 76.756479 46.793467) (xy 76.712994 46.654082)
@@ -12250,7 +12254,7 @@
 				(xy 108.598217 47.033914) (xy 108.62563 47.05525) (xy 108.781374 47.17647) (xy 108.985497 47.286936)
 				(xy 109.205019 47.362298) (xy 109.433951 47.4005) (xy 109.666049 47.4005) (xy 109.894981 47.362298)
 				(xy 110.114503 47.286936) (xy 110.318626 47.17647) (xy 110.501784 47.033913) (xy 110.658979 46.863153)
-				(xy 110.785924 46.668849) (xy 110.879157 46.4563) (xy 110.936134 46.231305) (xy 110.941874 46.16204)
+				(xy 110.785924 46.668849) (xy 110.879157 46.4563) (xy 110.936134 46.231305) (xy 110.937798 46.211232)
 				(xy 110.9553 46) (xy 110.9553 45.999996) (xy 110.936135 45.768701) (xy 110.936134 45.768698) (xy 110.936134 45.768695)
 				(xy 110.879157 45.5437) (xy 110.785924 45.331151) (xy 110.658979 45.136847) (xy 110.501784 44.966087)
 				(xy 110.501783 44.966086) (xy 110.501782 44.966085) (xy 110.350936 44.848678) (xy 110.318626 44.82353)

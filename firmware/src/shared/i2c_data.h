@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#define I2C_PROTOCOL_VERSION (2)
+#define I2C_PROTOCOL_VERSION (3)
 
 
 /*
@@ -25,6 +25,8 @@
  * -----|---------------|---------|------|------------
  * 0x06 | TOUCH_RAW     | R       | u16  | Raw touch value
  * -----|---------------|---------|------|------------
+ * 0x07 | SELF_CAL      | W       | N/A  | Initiate self calibration of motor/potentiometer
+ * -----|---------------|---------|------|------------
  * 
  * Protocol:
  * - Read:  Write register address, then read N bytes
@@ -42,12 +44,14 @@
 #define REG_CAL_TOUCH 0x04
 #define REG_CLEAR_ERROR 0x05
 #define REG_TOUCH_RAW 0x06
+#define REG_SELF_CAL 0x07
 
 enum Mode : uint8_t {
   MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,
   MODE_INPUT_ACTIVE                = 1,
   MODE_INPUT_IDLE                  = 2,
   MODE_ERROR                       = 3,
+  MODE_SELF_CALIBRATION            = 4,
 };
 
 
@@ -60,22 +64,27 @@ enum Mode : uint8_t {
 #define STATE_TOUCH_bs (1)
 #define STATE_TOUCH_bm (((1U << STATE_TOUCH_bs) - 1) << STATE_TOUCH_bp)
 
-// Mode: 2 bits at position 1
+// Mode: 3 bits at position 1
 #define STATE_MODE_bp (1)
-#define STATE_MODE_bs (2)
+#define STATE_MODE_bs (3)
 #define STATE_MODE_bm (((1U << STATE_MODE_bs) - 1) << STATE_MODE_bp)
 
-// Settings nonce: 2 bits at position 3
-#define STATE_SETTINGS_NONCE_bp      (3)
+// Settings nonce: 2 bits at position 4
+#define STATE_SETTINGS_NONCE_bp      (4)
 #define STATE_SETTINGS_NONCE_bs      (2)
 #define STATE_SETTINGS_NONCE_bm      (((1U << STATE_SETTINGS_NONCE_bs) - 1) << STATE_SETTINGS_NONCE_bp)
 
-// Position: 8 bits at position 5
-#define STATE_POSITION_bp            (5)
+// Position: 8 bits at position 6
+#define STATE_POSITION_bp            (6)
 #define STATE_POSITION_bs            (8)
 #define STATE_POSITION_bm            (((1U << STATE_POSITION_bs) - 1) << STATE_POSITION_bp)
 
-// Position nonce: 2 bits at position 7
-#define STATE_POSITION_NONCE_bp            (13)
+// Position nonce: 2 bits at position 14
+#define STATE_POSITION_NONCE_bp            (14)
 #define STATE_POSITION_NONCE_bs            (2)
 #define STATE_POSITION_NONCE_bm            (((1U << STATE_POSITION_NONCE_bs) - 1) << STATE_POSITION_NONCE_bp)
+
+// Raw ADC: 10 bits at position 16
+#define STATE_RAW_ADC_bp            (16)
+#define STATE_RAW_ADC_bs            (10)
+#define STATE_RAW_ADC_bm            (((1U << STATE_RAW_ADC_bs) - 1) << STATE_RAW_ADC_bp)

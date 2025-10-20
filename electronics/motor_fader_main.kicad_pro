@@ -497,7 +497,7 @@
       "plot": "",
       "pos_files": "",
       "specctra_dsn": "",
-      "step": "switch_plate.step",
+      "step": "motor_fader_main.step",
       "svg": "",
       "vrml": ""
     },

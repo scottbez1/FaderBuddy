@@ -3,7 +3,7 @@
 #include <ptc_touch.h>
 #include <megaTinyCore.h>
 
-#include "i2c_data.h"
+#include "shared/i2c_data.h"
 #include "util.h"
 
 
@@ -50,10 +50,10 @@ cap_sensor_t touch_sensor;
 const uint8_t I2C_BASE_ADDRESS = 0x20;
 
 
-#define INPUT_CALIB_MIN (40)
-#define INPUT_CALIB_MAX (1010)
+uint16_t input_calib_min = 40;
+uint16_t input_calib_max = 1010;
 
-int16_t target = 512;
+int16_t target_adc = 512;
 uint8_t current_register = REG_VERSION;  // Track which register was last accessed
 
 const int16_t WINDOW_SIZE = 8;
@@ -69,6 +69,12 @@ uint32_t remote_movement_steady_start = 0;
 uint32_t input_last_change_millis = 0;
 uint16_t remote_movement_start_position = 0;
 
+uint32_t self_calibration_start = 0;
+uint8_t self_calibration_stage = 0;
+#define SELF_CALIBRATION_TIMEOUT (3000)
+uint16_t self_calibration_adc_stage_0 = 0;
+uint16_t self_calibration_adc_stage_1 = 0;
+
 bool pending_report_on_idle = false;
 
 bool pending_calibrate_touch = false;
@@ -80,7 +86,7 @@ Mode get_mode() {
 
 void set_mode(Mode mode) {
   state = (state & ~STATE_MODE_bm) | (mode << STATE_MODE_bp);
-  if (mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
+  if (mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS || mode == MODE_SELF_CALIBRATION) {
     TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV256_gc;
   } else {
     TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;
@@ -117,8 +123,8 @@ void onI2cRequest() {
       Wire.write((state >> 8) & 0xFF);
       Wire.write(state & 0xFF);
   } else if (r == REG_TARGET) {
-      Wire.write((target >> 8) & 0xFF);  // High byte
-      Wire.write(target & 0xFF);         // Low byte
+      Wire.write((target_adc >> 8) & 0xFF);  // High byte
+      Wire.write(target_adc & 0xFF);         // Low byte
   } else if (r == REG_UPTIME) {
       uint32_t uptime = millis();
       Wire.write((uptime >> 24) & 0xFF);
@@ -146,13 +152,13 @@ void onI2cReceive(int howMany) {
         new_value = Wire.read(); //(Wire.read() << 8) | Wire.read();
         Mode mode = get_mode();
         if (mode == Mode::MODE_INPUT_IDLE) {
-          target = BOUNDED_LERP_UINT16(new_value, 0, 255, INPUT_CALIB_MIN, INPUT_CALIB_MAX);
+          target_adc = BOUNDED_LERP_UINT16(new_value, 0, 255, input_calib_min, input_calib_max);
           set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
           remote_movement_start = millis();
           remote_movement_start_position = input_ewma;
           remote_movement_steady_start = millis();
         } else if (mode == Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
-          target = BOUNDED_LERP_UINT16(new_value, 0, 255, INPUT_CALIB_MIN, INPUT_CALIB_MAX);
+          target_adc = BOUNDED_LERP_UINT16(new_value, 0, 255, input_calib_min, input_calib_max);
           // extend the timeout
           remote_movement_start = millis();
           remote_movement_start_position = input_ewma;
@@ -169,6 +175,13 @@ void onI2cReceive(int howMany) {
     case REG_CLEAR_ERROR:
       if (get_mode() == MODE_ERROR) {
         set_mode(MODE_INPUT_IDLE);
+      }
+      break;
+    case REG_SELF_CAL:
+      if (get_mode() != MODE_ERROR) {
+        self_calibration_stage = 0;
+        self_calibration_start = millis();
+        set_mode(MODE_SELF_CALIBRATION);
       }
       break;
     case REG_VERSION:
@@ -216,7 +229,8 @@ void increment_position_nonce() {
 void motor_update() {
   uint32_t now = millis();
 
-  input_ewma = ADC1.RES * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
+  uint16_t adc_val = ADC1.RES;
+  input_ewma = adc_val * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
   Mode mode = get_mode();
   if (input_ewma > position_window_upper) {
     position_window_upper = input_ewma;
@@ -241,14 +255,7 @@ void motor_update() {
       } else if ((state & STATE_TOUCH_bm) && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       } else {
-        // int8_t dir = remote_movement_start_position > target ? -1 : 1;
-        // uint16_t adjusted_target = (int32_t)remote_movement_start_position + dir * (now - remote_movement_start) * 3 / 2;
-        // if (dir == 1 && adjusted_target >= target) {
-        //   adjusted_target = target;
-        // } else if (dir == -1 && adjusted_target <= target) {
-        //   adjusted_target = target;
-        // }
-        float delta = (target - input_ewma) * 1.2;
+        float delta = (target_adc - input_ewma) * 1.2;
         if (delta > 3) {
           uint8_t pwm = delta + 88 > 254 ? 254 : delta + 88;
           TCA0.SPLIT.HCMP1 = pwm;  // Motor A
@@ -291,13 +298,13 @@ void motor_update() {
         set_mode(Mode::MODE_INPUT_IDLE);
       } else {
         // Haptics
-        if (input_ewma < INPUT_CALIB_MIN + 60 && input_ewma > INPUT_CALIB_MIN + 8) {
-          float delta = (INPUT_CALIB_MIN - input_ewma) * 2;
+        if (input_ewma < input_calib_min + 60 && input_ewma > input_calib_min + 8) {
+          float delta = (input_calib_min - input_ewma) * 2;
           uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = pwm;  // Motor B
-        } else if (input_ewma > INPUT_CALIB_MAX - 60 && input_ewma < INPUT_CALIB_MAX - 8) {
-          float delta = (INPUT_CALIB_MAX - input_ewma) * 3;
+        } else if (input_ewma > input_calib_max - 60 && input_ewma < input_calib_max - 8) {
+          float delta = (input_calib_max - input_ewma) * 3;
           uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
           TCA0.SPLIT.HCMP1 = pwm;  // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
@@ -318,13 +325,61 @@ void motor_update() {
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
       break;
+    case MODE_SELF_CALIBRATION:
+      switch (self_calibration_stage) {
+        case 0:
+          if (now > self_calibration_start + SELF_CALIBRATION_TIMEOUT) {
+            self_calibration_adc_stage_0 = adc_val;
+            self_calibration_stage++;
+            self_calibration_start = millis();
+          } else {
+            // Move toward lower ADC value
+            TCA0.SPLIT.HCMP1 = 0;    // Motor A
+            TCA0.SPLIT.HCMP2 = 254;    // Motor B
+          }
+          break;
+        case 1:
+          if (now > self_calibration_start + SELF_CALIBRATION_TIMEOUT) {
+            self_calibration_adc_stage_1 = adc_val;
+            self_calibration_stage++;
+            self_calibration_start = millis();
+          } else {
+            // Move toward higher ADC value
+            TCA0.SPLIT.HCMP1 = 254;    // Motor A
+            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          }
+          break;
+        case 2:
+          TCA0.SPLIT.HCMP1 = 0;    // Motor A
+          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          if (abs((int16_t)self_calibration_adc_stage_0 - self_calibration_adc_stage_1) < 900) {
+            set_mode(Mode::MODE_ERROR);
+          } else {
+            // Apply calibration in memory
+            input_calib_min = 0.95 * self_calibration_adc_stage_0 + 0.05 * self_calibration_adc_stage_1;
+            input_calib_max = 0.95 * self_calibration_adc_stage_1 + 0.05 * self_calibration_adc_stage_0;
+
+            // TODO: save calibration
+
+            // Since we moved the position, do a remote movement to the previous target
+            remote_movement_start = millis();
+            remote_movement_start_position = input_ewma;
+            remote_movement_steady_start = millis();
+            // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
+            set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+          }
+          break;
+      }
+      break;
     }
 
   // TODO: lerp bounds...
-  uint8_t pos = BOUNDED_LERP_UINT16(position, INPUT_CALIB_MIN, INPUT_CALIB_MAX, 0, 255);
+  uint8_t pos = BOUNDED_LERP_UINT16(position, input_calib_min, input_calib_max, 0, 255);
   state &= ~STATE_POSITION_bm;
   state |= pos << STATE_POSITION_bp;
 
+  state &= ~STATE_RAW_ADC_bm;
+  state |= (adc_val << STATE_RAW_ADC_bp) & STATE_RAW_ADC_bm;
 
 #if SERIAL_ENABLED
   static uint32_t last_print;
@@ -396,34 +451,8 @@ void loop() {
   motor_update();
   ptc_process(millis());
 
-#if DEMO
-  static uint32_t last_movement;
-  static uint8_t x;
-  if (millis() - last_movement >= 8192) {
-    x++;
-    if (x >= 4) {
-      x = 0;
-    }
-    last_movement = millis();
-    switch (x) {
-      case 0:
-        target = 60;
-        break;
-      case 1:
-        target = 682;
-        break;
-      case 2:
-        target = 341;
-        break;
-      case 3:
-        target = 1004;
-        break;
-    }
-  }
-#endif
-
   // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
-  digitalWrite(PIN_LED, TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0);
+  digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) ^ (millis() % 512 < 128));
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
