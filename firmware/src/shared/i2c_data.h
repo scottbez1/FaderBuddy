@@ -84,7 +84,7 @@ enum Mode : uint8_t {
 #define STATE_POSITION_NONCE_bs            (2)
 #define STATE_POSITION_NONCE_bm            (((1U << STATE_POSITION_NONCE_bs) - 1) << STATE_POSITION_NONCE_bp)
 
-// Raw ADC: 10 bits at position 16
+// Raw ADC: 11 bits at position 16
 #define STATE_RAW_ADC_bp            (16)
-#define STATE_RAW_ADC_bs            (10)
-#define STATE_RAW_ADC_bm            (((1U << STATE_RAW_ADC_bs) - 1) << STATE_RAW_ADC_bp)
+#define STATE_RAW_ADC_bs            (11)
+#define STATE_RAW_ADC_bm            (((1UL << STATE_RAW_ADC_bs) - 1) << STATE_RAW_ADC_bp)

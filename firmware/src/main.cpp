@@ -62,6 +62,7 @@ int16_t position_window_lower = 0;
 int16_t position = 0;
 
 uint32_t state = (Mode::MODE_INPUT_IDLE << STATE_MODE_bp);
+volatile uint32_t outgoing_state = state;
 
 uint32_t remote_movement_start = 0;
 uint32_t touch_state_change_millis = 0;
@@ -378,8 +379,8 @@ void motor_update() {
   state &= ~STATE_POSITION_bm;
   state |= pos << STATE_POSITION_bp;
 
-  state &= ~STATE_RAW_ADC_bm;
-  state |= (adc_val << STATE_RAW_ADC_bp) & STATE_RAW_ADC_bm;
+  state &= ~(uint32_t)STATE_RAW_ADC_bm;
+  state |= ((uint32_t)adc_val << STATE_RAW_ADC_bp) & (uint32_t)STATE_RAW_ADC_bm;
 
 #if SERIAL_ENABLED
   static uint32_t last_print;
@@ -427,7 +428,7 @@ void setup() {
   // we need to leave ADC0 free for the PTC touch library.
   init_ADC1();
   ADC1.MUXPOS=0x02; //reads from PA6, ADC1 channel 2
-  ADC1.CTRLB = ADC_SAMPNUM_ACC2_gc; // Accumulate 4 readings
+  ADC1.CTRLB = ADC_SAMPNUM_ACC2_gc; // Accumulate 2 readings
   ADC1.CTRLA=ADC_ENABLE_bm|ADC_FREERUN_bm; //start in freerun
   ADC1.COMMAND=ADC_STCONV_bm; //start first conversion!
 
@@ -449,6 +450,11 @@ void loop() {
     }
   }
   motor_update();
+  
+  noInterrupts();
+  outgoing_state = state;
+  interrupts();
+
   ptc_process(millis());
 
   // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
