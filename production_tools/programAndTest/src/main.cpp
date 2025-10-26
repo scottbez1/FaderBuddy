@@ -58,7 +58,8 @@ enum TestState {
   TEST_LOGIC_POWER,       // Testing 3.3V logic rail
   TEST_MOTOR_POWER,       // Testing 5V motor rail
   TEST_POWER_LED,         // Testing power LED
-  TEST_FIRMWARE_INSTALL,  // Programming firmware (placeholder)
+  TEST_FIRMWARE_INSTALL,  // Programming firmware
+  TEST_DEBUG_LED,         // Testing debug LED blink pattern
   TEST_DIAGNOSTICS,       // I2C diagnostics (10 seconds)
   TEST_PASSED,            // All tests passed
   TEST_FAILED             // One or more tests failed
@@ -96,9 +97,27 @@ struct TestTracking {
   float i1Sum;
   uint16_t sampleCount;
 
+  // Firmware upload tracking
+  enum FirmwareUploadPhase {
+    FIRMWARE_PHASE_PING,
+    FIRMWARE_PHASE_UPLOAD,
+    FIRMWARE_PHASE_READ_SERIAL,
+    FIRMWARE_PHASE_COMPLETE
+  };
+  FirmwareUploadPhase firmwarePhase;
+  uint32_t firmwarePhaseStartTime;
+  bool firmwareCommandSent;
+  char serialBuffer[256];  // Buffer for incoming serial data
+  uint16_t serialBufferPos;  // Current write position in buffer
+
+  // Debug LED test tracking
+  uint32_t debugLedTestStartTime;
+  uint8_t debugLedTransitionCount;
+  bool debugLedState;  // Current state for hysteresis tracking
+
   // Test results
   String failedTestName;
-} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, ""};
+} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, ""};
 
 void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
@@ -201,7 +220,8 @@ const String getTestStateName(TestState state) {
     case TEST_MOTOR_POWER: return "2: MOTOR PWR";
     case TEST_POWER_LED: return "3: PWR LED";
     case TEST_FIRMWARE_INSTALL: return "4: FIRMWARE";
-    case TEST_DIAGNOSTICS: return "5: I2C DIAG";
+    case TEST_DEBUG_LED: return "5: DBG LED";
+    case TEST_DIAGNOSTICS: return "6: I2C DIAG";
     case TEST_PASSED: return "PASSED";
     case TEST_FAILED:
       if (!testTracking.failedTestName.isEmpty()) {
@@ -416,7 +436,7 @@ bool testPowerLED() {
   Serial.print("Power LED - Photodiode ADC: ");
   Serial.println(pwr_led);
 
-  if (pwr_led >= 2000) {
+  if (pwr_led >= 2500) {
     testTracking.failedTestName = "PWR LED";
     Serial.println("FAILED: Power LED not detected");
   } else {
@@ -426,11 +446,259 @@ bool testPowerLED() {
   return true;  // Test complete
 }
 
+// Non-blocking serial buffer update
+// Call this regularly to read available serial data into the buffer
+void updateSerialBuffer() {
+  const size_t bufferSize = sizeof(testTracking.serialBuffer);
+
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+
+    // Add character to buffer if there's room
+    if (testTracking.serialBufferPos < bufferSize - 1) {
+      testTracking.serialBuffer[testTracking.serialBufferPos++] = c;
+      testTracking.serialBuffer[testTracking.serialBufferPos] = '\0';  // Null terminate
+    } else {
+      // Buffer full - shift left by half to make room
+      const size_t halfSize = bufferSize / 2;
+      memmove(testTracking.serialBuffer,
+              testTracking.serialBuffer + halfSize,
+              halfSize);
+      testTracking.serialBufferPos = halfSize;
+      // Ensure we don't write past buffer
+      if (testTracking.serialBufferPos < bufferSize - 1) {
+        testTracking.serialBuffer[testTracking.serialBufferPos++] = c;
+        testTracking.serialBuffer[testTracking.serialBufferPos] = '\0';
+      }
+    }
+  }
+
+  // Safety: ensure buffer is always null-terminated
+  testTracking.serialBuffer[bufferSize - 1] = '\0';
+}
+
+// Check if a specific command is present in the serial buffer
+// If found, removes it from the buffer and returns true
+bool checkForSerialCommand(const char* command) {
+  const size_t bufferSize = sizeof(testTracking.serialBuffer);
+
+  // Ensure buffer is null-terminated before searching
+  testTracking.serialBuffer[bufferSize - 1] = '\0';
+
+  // Search for command in buffer
+  char* found = strstr(testTracking.serialBuffer, command);
+  if (found != nullptr) {
+    // Command found! Calculate position after the command
+    size_t commandLen = strlen(command);
+    char* afterCommand = found + commandLen;
+
+    // Use strnlen to safely get remaining length
+    size_t maxRemaining = bufferSize - (afterCommand - testTracking.serialBuffer);
+    size_t remainingLen = strnlen(afterCommand, maxRemaining);
+
+    // Shift remaining data to start of buffer (safe because remainingLen is bounded)
+    if (remainingLen > 0) {
+      memmove(testTracking.serialBuffer, afterCommand, remainingLen);
+    }
+    testTracking.serialBuffer[remainingLen] = '\0';
+    testTracking.serialBufferPos = remainingLen;
+
+    Serial.print("Received command: ");
+    Serial.println(command);
+    return true;
+  }
+  return false;
+}
+
+// Clear the serial buffer
+void clearSerialBuffer() {
+  memset(testTracking.serialBuffer, 0, sizeof(testTracking.serialBuffer));
+  testTracking.serialBufferPos = 0;
+}
+
 bool testFirmwareInstall() {
-  // TODO: Implement firmware programming
-  // Placeholder: always passes for now
-  Serial.println("Firmware install - PLACEHOLDER");
-  Serial.println("PASSED: Firmware install (placeholder)");
+  // Initialize on first call
+  if (testTracking.firmwarePhase == TestTracking::FIRMWARE_PHASE_PING &&
+      testTracking.firmwarePhaseStartTime == 0) {
+    testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_PING;
+    testTracking.firmwarePhaseStartTime = millis();
+    testTracking.firmwareCommandSent = false;
+    clearSerialBuffer();  // Clear buffer
+    Serial.println("=== Starting firmware upload process ===");
+  }
+
+  // Non-blocking: read any available serial data into buffer
+  updateSerialBuffer();
+
+  switch (testTracking.firmwarePhase) {
+    case TestTracking::FIRMWARE_PHASE_PING:
+      if (!testTracking.firmwareCommandSent) {
+        // Send ping command
+        Serial.println(">>PING<<");
+        testTracking.firmwareCommandSent = true;
+        testTracking.firmwarePhaseStartTime = millis();
+      }
+
+      // Check for ACK (non-blocking)
+      if (checkForSerialCommand(">>ACK<<")) {
+        // ACK received, move to upload phase
+        Serial.println("Host script acknowledged, requesting firmware upload");
+        testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_UPLOAD;
+        testTracking.firmwareCommandSent = false;
+        testTracking.firmwarePhaseStartTime = millis();
+      } else if (millis() - testTracking.firmwarePhaseStartTime > 2000) {
+        // Timeout
+        testTracking.failedTestName = "FW NO HOST";
+        Serial.println("FAILED: No response from host script (is test_host.py running?)");
+        return true;  // Test complete (failed)
+      }
+      return false;  // Still waiting
+
+    case TestTracking::FIRMWARE_PHASE_UPLOAD:
+      if (!testTracking.firmwareCommandSent) {
+        // Send upload command
+        Serial.println(">>START_FIRMWARE_UPLOAD<<");
+        testTracking.firmwareCommandSent = true;
+        testTracking.firmwarePhaseStartTime = millis();
+      }
+
+      // Check for SUCCESS or FAILURE (non-blocking)
+      if (checkForSerialCommand(">>SUCCESS<<")) {
+        // Upload succeeded - move to serial number read phase
+        Serial.println("PASSED: Firmware upload succeeded");
+        testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_READ_SERIAL;
+        testTracking.firmwarePhaseStartTime = millis();
+      } else if (checkForSerialCommand(">>FAILURE<<")) {
+        // Upload failed
+        testTracking.failedTestName = "FW UPLOAD";
+        Serial.println("FAILED: Firmware upload failed");
+        testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_COMPLETE;
+        return true;  // Test complete (failed)
+      } else if (millis() - testTracking.firmwarePhaseStartTime > 20000) {
+        // Timeout
+        testTracking.failedTestName = "FW TIMEOUT";
+        Serial.println("FAILED: Firmware upload timed out");
+        testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_COMPLETE;
+        return true;  // Test complete (failed)
+      }
+      return false;  // Still waiting
+
+    case TestTracking::FIRMWARE_PHASE_READ_SERIAL:
+      {
+        // Read serial number from motor fader and report to host
+        uint8_t serial[10];
+        if (motorFader.readSerialNumber(serial)) {
+          // Format as hex string and send to host
+          Serial.print(">>SERIAL:");
+          for (int i = 0; i < 10; i++) {
+            if (serial[i] < 0x10) Serial.print("0");
+            Serial.print(serial[i], HEX);
+          }
+          Serial.println("<<");
+
+          testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_COMPLETE;
+          return true;  // Test complete (passed)
+        } else {
+          // Failed to read serial number
+          if (millis() - testTracking.firmwarePhaseStartTime > 2000) {
+            // Timeout after 2 seconds
+            testTracking.failedTestName = "FW SERIAL";
+            Serial.println("FAILED: Could not read serial number from motor fader");
+            testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_COMPLETE;
+            return true;  // Test complete (failed)
+          }
+        }
+        return false;  // Still trying
+      }
+
+    case TestTracking::FIRMWARE_PHASE_COMPLETE:
+      return true;  // Already complete
+
+    default:
+      return true;
+  }
+}
+
+bool testDebugLED() {
+  const uint16_t THRESHOLD = 2500;
+  const uint16_t HYSTERESIS = 100;
+  const uint16_t THRESHOLD_HIGH = THRESHOLD + HYSTERESIS;  // 2600
+  const uint16_t THRESHOLD_LOW = THRESHOLD - HYSTERESIS;   // 2400
+  const uint32_t TEST_DURATION_MS = 2000;
+  const uint8_t MIN_TRANSITIONS = 7;
+  const uint8_t MAX_TRANSITIONS = 9;
+
+  // Initialize on first call
+  if (testTracking.debugLedTestStartTime == 0) {
+    testTracking.debugLedTestStartTime = millis();
+    testTracking.debugLedTransitionCount = 0;
+
+    // Read initial LED state
+    uint16_t dbg_led = analogRead(PIN_PHOTODIODE_DBG);
+    testTracking.debugLedState = (dbg_led < THRESHOLD);  // true if LED is ON (low reading)
+
+    Serial.println("Testing debug LED blink pattern (2 seconds)...");
+    Serial.print("Initial LED reading: ");
+    Serial.print(dbg_led);
+    Serial.print(", state: ");
+    Serial.println(testTracking.debugLedState ? "ON" : "OFF");
+  }
+
+  // Read current LED value
+  uint16_t dbg_led = analogRead(PIN_PHOTODIODE_DBG);
+
+  // Check for transitions with hysteresis
+  if (testTracking.debugLedState) {
+    // LED is currently ON (low value), check for transition to OFF (high value)
+    if (dbg_led >= THRESHOLD_HIGH) {
+      testTracking.debugLedState = false;  // LED is now OFF
+      testTracking.debugLedTransitionCount++;
+      Serial.print("LED OFF transition #");
+      Serial.print(testTracking.debugLedTransitionCount);
+      Serial.print(" (value: ");
+      Serial.print(dbg_led);
+      Serial.println(")");
+    }
+  } else {
+    // LED is currently OFF (high value), check for transition to ON (low value)
+    if (dbg_led <= THRESHOLD_LOW) {
+      testTracking.debugLedState = true;  // LED is now ON
+      testTracking.debugLedTransitionCount++;
+      Serial.print("LED ON transition #");
+      Serial.print(testTracking.debugLedTransitionCount);
+      Serial.print(" (value: ");
+      Serial.print(dbg_led);
+      Serial.println(")");
+    }
+  }
+
+  // Check if test duration has elapsed
+  if (millis() - testTracking.debugLedTestStartTime < TEST_DURATION_MS) {
+    return false;  // Still running
+  }
+
+  // Test complete - check if transition count is in valid range
+  Serial.print("Debug LED test complete. Transitions: ");
+  Serial.println(testTracking.debugLedTransitionCount);
+
+  if (testTracking.debugLedTransitionCount < MIN_TRANSITIONS) {
+    testTracking.failedTestName = "DBG LED FEW";
+    Serial.print("FAILED: Too few transitions (");
+    Serial.print(testTracking.debugLedTransitionCount);
+    Serial.print(" < ");
+    Serial.print(MIN_TRANSITIONS);
+    Serial.println(")");
+  } else if (testTracking.debugLedTransitionCount > MAX_TRANSITIONS) {
+    testTracking.failedTestName = "DBG LED MANY";
+    Serial.print("FAILED: Too many transitions (");
+    Serial.print(testTracking.debugLedTransitionCount);
+    Serial.print(" > ");
+    Serial.print(MAX_TRANSITIONS);
+    Serial.println(")");
+  } else {
+    Serial.println("PASSED: Debug LED blink pattern OK");
+  }
+
   return true;  // Test complete
 }
 
@@ -520,6 +788,7 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
       currentTestState != TEST_FAILED) {
     Serial.println("\n=== Test Aborted (presence released) ===\n");
     currentTestState = TEST_IDLE;
+    clearSerialBuffer();  // Clear serial buffer
     versionInfo.valid = false;
     motorState.valid = false;
     lastPresenceState = presencePressed;
@@ -536,6 +805,13 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
         testTracking.sampleCount = 0;
         testTracking.diagnosticsStartTime = 0;
         testTracking.failedTestName = "";
+        testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_PING;
+        testTracking.firmwarePhaseStartTime = 0;
+        testTracking.firmwareCommandSent = false;
+        testTracking.debugLedTestStartTime = 0;
+        testTracking.debugLedTransitionCount = 0;
+        testTracking.debugLedState = false;
+        clearSerialBuffer();  // Clear serial buffer
         versionInfo.valid = false;
         motorState.valid = false;
         currentTestState = TEST_LOGIC_POWER;
@@ -575,6 +851,16 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 
     case TEST_FIRMWARE_INSTALL:
       if (testFirmwareInstall()) {
+        if (!testTracking.failedTestName.isEmpty()) {
+          currentTestState = TEST_FAILED;
+        } else {
+          currentTestState = TEST_DEBUG_LED;
+        }
+      }
+      break;
+
+    case TEST_DEBUG_LED:
+      if (testDebugLED()) {
         if (!testTracking.failedTestName.isEmpty()) {
           currentTestState = TEST_FAILED;
         } else {

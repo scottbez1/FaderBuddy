@@ -89,6 +89,10 @@ bool MotorFaderI2C::readTouchRaw(uint16_t& touchRaw) {
   return true;
 }
 
+bool MotorFaderI2C::readSerialNumber(uint8_t serial[10]) {
+  return readRegister(REG_SERIAL, serial, 10);
+}
+
 bool MotorFaderI2C::calibrateTouch() {
   return writeRegister(REG_CAL_TOUCH);
 }

@@ -27,7 +27,9 @@
  * -----|---------------|---------|------|------------
  * 0x07 | SELF_CAL      | W       | N/A  | Initiate self calibration of motor/potentiometer
  * -----|---------------|---------|------|------------
- * 
+ * 0x08 | SERIAL        | R       | u8[10] | Chip serial number (10 bytes)
+ * -----|---------------|---------|------|------------
+ *
  * Protocol:
  * - Read:  Write register address, then read N bytes
  * - Write: Write register address + N data bytes
@@ -45,6 +47,7 @@
 #define REG_CLEAR_ERROR 0x05
 #define REG_TOUCH_RAW 0x06
 #define REG_SELF_CAL 0x07
+#define REG_SERIAL 0x08  // Chip serial number (10 bytes)
 
 enum Mode : uint8_t {
   MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,

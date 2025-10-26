@@ -20,6 +20,7 @@ public:
   bool writeTargetPosition(uint8_t target);
   bool readUptime(uint32_t& uptime);
   bool readTouchRaw(uint16_t& touchRaw);
+  bool readSerialNumber(uint8_t serial[10]);  // Read 10-byte serial number
   bool calibrateTouch();
   bool clearError();
   bool selfCalibrate();

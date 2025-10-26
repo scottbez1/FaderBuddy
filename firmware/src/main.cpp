@@ -136,6 +136,18 @@ void onI2cRequest() {
       uint16_t touch_raw = touch_sensor.sensorData;
       Wire.write((touch_raw >> 8) & 0xFF);  // High byte
       Wire.write(touch_raw & 0xFF);         // Low byte
+  } else if (r == REG_SERIAL) {
+      // Read 10-byte serial number from SIGROW
+      Wire.write(SIGROW.SERNUM0);
+      Wire.write(SIGROW.SERNUM1);
+      Wire.write(SIGROW.SERNUM2);
+      Wire.write(SIGROW.SERNUM3);
+      Wire.write(SIGROW.SERNUM4);
+      Wire.write(SIGROW.SERNUM5);
+      Wire.write(SIGROW.SERNUM6);
+      Wire.write(SIGROW.SERNUM7);
+      Wire.write(SIGROW.SERNUM8);
+      Wire.write(SIGROW.SERNUM9);
   }
 }
 
@@ -189,6 +201,7 @@ void onI2cReceive(int howMany) {
     case REG_STATE:
     case REG_UPTIME:
     case REG_TOUCH_RAW:
+    case REG_SERIAL:
       // Read-only registers, ignore writes
       // Discard any excess data
       while (Wire.available()) Wire.read();
