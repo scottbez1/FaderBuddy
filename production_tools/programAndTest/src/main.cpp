@@ -60,6 +60,7 @@ enum TestState {
   TEST_POWER_LED,         // Testing power LED
   TEST_FIRMWARE_INSTALL,  // Programming firmware
   TEST_DEBUG_LED,         // Testing debug LED blink pattern
+  TEST_SELF_CALIBRATION,  // Self-calibration test
   TEST_DIAGNOSTICS,       // I2C diagnostics (10 seconds)
   TEST_PASSED,            // All tests passed
   TEST_FAILED             // One or more tests failed
@@ -115,9 +116,16 @@ struct TestTracking {
   uint8_t debugLedTransitionCount;
   bool debugLedState;  // Current state for hysteresis tracking
 
+  // Self-calibration test tracking
+  uint32_t selfCalStartTime;
+  bool selfCalRequestSent;
+  bool selfCalEnteredMode;
+  uint16_t selfCalMinADC;
+  uint16_t selfCalMaxADC;
+
   // Test results
   String failedTestName;
-} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, ""};
+} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, 0, false, false, 0xFFFF, 0, ""};
 
 void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
@@ -221,7 +229,8 @@ const String getTestStateName(TestState state) {
     case TEST_POWER_LED: return "3: PWR LED";
     case TEST_FIRMWARE_INSTALL: return "4: FIRMWARE";
     case TEST_DEBUG_LED: return "5: DBG LED";
-    case TEST_DIAGNOSTICS: return "6: I2C DIAG";
+    case TEST_SELF_CALIBRATION: return "6: SELF CAL";
+    case TEST_DIAGNOSTICS: return "7: I2C DIAG";
     case TEST_PASSED: return "PASSED";
     case TEST_FAILED:
       if (!testTracking.failedTestName.isEmpty()) {
@@ -738,6 +747,122 @@ void readMotorFaderState() {
   motorState.valid = true;
 }
 
+bool testSelfCalibration() {
+  const uint32_t TOTAL_TIMEOUT_MS = 8000;
+  const uint32_t MODE_ENTRY_TIMEOUT_MS = 1000;
+  const uint16_t MIN_ADC_THRESHOLD = 100;
+  const uint16_t MAX_ADC_THRESHOLD = 1900;
+
+  // Initialize on first call
+  if (testTracking.selfCalStartTime == 0) {
+    testTracking.selfCalStartTime = millis();
+    testTracking.selfCalRequestSent = false;
+    testTracking.selfCalEnteredMode = false;
+    testTracking.selfCalMinADC = 0xFFFF;  // Start with max value
+    testTracking.selfCalMaxADC = 0;       // Start with min value
+    Serial.println("Starting self-calibration test (8 seconds max)...");
+  }
+
+  // Send self-calibration command on first call
+  if (!testTracking.selfCalRequestSent) {
+    if (motorFader.selfCalibrate()) {
+      Serial.println("Self-calibration command sent");
+      testTracking.selfCalRequestSent = true;
+    } else {
+      testTracking.failedTestName = "CAL CMD";
+      Serial.println("FAILED: Could not send self-calibration command");
+      return true;  // Test complete (failed)
+    }
+  }
+
+  // Read motor fader state continuously
+  readMotorFaderState();
+
+  if (!motorState.valid) {
+    // Can't read state, check for overall timeout
+    if (millis() - testTracking.selfCalStartTime > TOTAL_TIMEOUT_MS) {
+      testTracking.failedTestName = "CAL NO I2C";
+      Serial.println("FAILED: Cannot read motor fader state");
+      return true;  // Test complete (failed)
+    }
+    return false;  // Keep trying
+  }
+
+  // Update min/max ADC values
+  if (motorState.rawADC < testTracking.selfCalMinADC) {
+    testTracking.selfCalMinADC = motorState.rawADC;
+    Serial.print("Self-cal: New min ADC = ");
+    Serial.println(motorState.rawADC);
+  }
+  if (motorState.rawADC > testTracking.selfCalMaxADC) {
+    testTracking.selfCalMaxADC = motorState.rawADC;
+    Serial.print("Self-cal: New max ADC = ");
+    Serial.println(motorState.rawADC);
+  }
+
+  // Check if mode entered self-calibration
+  if (!testTracking.selfCalEnteredMode) {
+    if (motorState.mode == MODE_SELF_CALIBRATION) {
+      testTracking.selfCalEnteredMode = true;
+      Serial.println("Self-calibration mode entered");
+    } else if (millis() - testTracking.selfCalStartTime > MODE_ENTRY_TIMEOUT_MS) {
+      testTracking.failedTestName = "CAL NO ENTRY";
+      Serial.print("FAILED: Did not enter calibration mode (current mode: ");
+      Serial.print(getModeString(motorState.mode));
+      Serial.println(")");
+      return true;  // Test complete (failed)
+    }
+  }
+
+  // Check for ERROR mode
+  if (motorState.mode == MODE_ERROR) {
+    testTracking.failedTestName = "CAL ERROR";
+    Serial.println("FAILED: Motor fader entered ERROR mode during calibration");
+    return true;  // Test complete (failed)
+  }
+
+  // Check for calibration completion (transition away from MODE_SELF_CALIBRATION)
+  if (testTracking.selfCalEnteredMode && motorState.mode != MODE_SELF_CALIBRATION) {
+    Serial.print("Self-calibration completed. Mode: ");
+    Serial.println(getModeString(motorState.mode));
+    Serial.print("ADC range observed: ");
+    Serial.print(testTracking.selfCalMinADC);
+    Serial.print(" - ");
+    Serial.println(testTracking.selfCalMaxADC);
+
+    // Validate ADC extremes were reached
+    if (testTracking.selfCalMinADC > MIN_ADC_THRESHOLD) {
+      testTracking.failedTestName = "CAL ADC MIN";
+      Serial.print("FAILED: ADC min (");
+      Serial.print(testTracking.selfCalMinADC);
+      Serial.print(") did not reach below ");
+      Serial.println(MIN_ADC_THRESHOLD);
+      return true;  // Test complete (failed)
+    }
+
+    if (testTracking.selfCalMaxADC < MAX_ADC_THRESHOLD) {
+      testTracking.failedTestName = "CAL ADC MAX";
+      Serial.print("FAILED: ADC max (");
+      Serial.print(testTracking.selfCalMaxADC);
+      Serial.print(") did not reach above ");
+      Serial.println(MAX_ADC_THRESHOLD);
+      return true;  // Test complete (failed)
+    }
+
+    Serial.println("PASSED: Self-calibration completed successfully");
+    return true;  // Test complete (passed)
+  }
+
+  // Check for overall timeout
+  if (millis() - testTracking.selfCalStartTime > TOTAL_TIMEOUT_MS) {
+    testTracking.failedTestName = "CAL TIMEOUT";
+    Serial.println("FAILED: Self-calibration timed out");
+    return true;  // Test complete (failed)
+  }
+
+  return false;  // Still running
+}
+
 bool testDiagnostics() {
   // Start timing on first call
   if (testTracking.diagnosticsStartTime == 0) {
@@ -811,6 +936,11 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
         testTracking.debugLedTestStartTime = 0;
         testTracking.debugLedTransitionCount = 0;
         testTracking.debugLedState = false;
+        testTracking.selfCalStartTime = 0;
+        testTracking.selfCalRequestSent = false;
+        testTracking.selfCalEnteredMode = false;
+        testTracking.selfCalMinADC = 0xFFFF;
+        testTracking.selfCalMaxADC = 0;
         clearSerialBuffer();  // Clear serial buffer
         versionInfo.valid = false;
         motorState.valid = false;
@@ -861,6 +991,16 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 
     case TEST_DEBUG_LED:
       if (testDebugLED()) {
+        if (!testTracking.failedTestName.isEmpty()) {
+          currentTestState = TEST_FAILED;
+        } else {
+          currentTestState = TEST_SELF_CALIBRATION;
+        }
+      }
+      break;
+
+    case TEST_SELF_CALIBRATION:
+      if (testSelfCalibration()) {
         if (!testTracking.failedTestName.isEmpty()) {
           currentTestState = TEST_FAILED;
         } else {

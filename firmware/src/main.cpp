@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <ptc_touch.h>
 #include <megaTinyCore.h>
+#include <EEPROM.h>
 
 #include "shared/i2c_data.h"
 #include "util.h"
@@ -49,6 +50,16 @@ cap_sensor_t touch_sensor;
 // I2C slave base address (before A0/A1/A2 jumpers are applied)
 const uint8_t I2C_BASE_ADDRESS = 0x20;
 
+// EEPROM calibration storage
+#define EEPROM_CALIBRATION_ADDR 0
+#define EEPROM_CALIBRATION_MAGIC 0xCAFE  // Magic number to validate EEPROM data
+
+struct CalibrationData {
+  uint16_t magic;         // Magic number for validation
+  uint16_t calib_min;     // Minimum ADC value (fader at one end)
+  uint16_t calib_max;     // Maximum ADC value (fader at other end)
+  uint16_t checksum;      // Simple checksum for data integrity
+};
 
 uint16_t input_calib_min = 40;
 uint16_t input_calib_max = 1010;
@@ -73,6 +84,7 @@ uint16_t remote_movement_start_position = 0;
 uint32_t self_calibration_start = 0;
 uint8_t self_calibration_stage = 0;
 #define SELF_CALIBRATION_TIMEOUT (3000)
+#define SELF_CALIBRATION_BUFFER (0.995)  // Buffer factor to prevent hitting physical limits
 uint16_t self_calibration_adc_stage_0 = 0;
 uint16_t self_calibration_adc_stage_1 = 0;
 
@@ -214,6 +226,52 @@ void onI2cReceive(int howMany) {
       break;
   }
 
+}
+
+// Save calibration data to EEPROM
+void saveCalibration() {
+  CalibrationData cal;
+  cal.magic = EEPROM_CALIBRATION_MAGIC;
+  cal.calib_min = input_calib_min;
+  cal.calib_max = input_calib_max;
+  // Simple checksum: sum of all data
+  cal.checksum = cal.magic + cal.calib_min + cal.calib_max;
+
+  EEPROM.put(EEPROM_CALIBRATION_ADDR, cal);
+}
+
+// Load calibration data from EEPROM
+// Returns true if valid calibration was loaded, false otherwise
+bool loadCalibration() {
+  CalibrationData cal;
+  EEPROM.get(EEPROM_CALIBRATION_ADDR, cal);
+
+  // Validate magic number
+  if (cal.magic != EEPROM_CALIBRATION_MAGIC) {
+    return false;
+  }
+
+  // Validate checksum
+  uint16_t expected_checksum = cal.magic + cal.calib_min + cal.calib_max;
+  if (cal.checksum != expected_checksum) {
+    return false;
+  }
+
+  // Validate calibration values are reasonable
+  if (cal.calib_min >= cal.calib_max) {
+    return false;
+  }
+
+  if (cal.calib_max - cal.calib_min < 900) {
+    // Span is too small, likely invalid
+    return false;
+  }
+
+  // Load calibration values
+  input_calib_min = cal.calib_min;
+  input_calib_max = cal.calib_max;
+
+  return true;
 }
 
 void setup_i2c() {
@@ -370,10 +428,12 @@ void motor_update() {
             set_mode(Mode::MODE_ERROR);
           } else {
             // Apply calibration in memory
-            input_calib_min = 0.95 * self_calibration_adc_stage_0 + 0.05 * self_calibration_adc_stage_1;
-            input_calib_max = 0.95 * self_calibration_adc_stage_1 + 0.05 * self_calibration_adc_stage_0;
+            // Divide by 2 to account for 2-sample ADC aggregation (adc_val is 2x, but input_ewma is corrected)
+            input_calib_min = (SELF_CALIBRATION_BUFFER * self_calibration_adc_stage_0 + (1.0 - SELF_CALIBRATION_BUFFER) * self_calibration_adc_stage_1) / 2;
+            input_calib_max = (SELF_CALIBRATION_BUFFER * self_calibration_adc_stage_1 + (1.0 - SELF_CALIBRATION_BUFFER) * self_calibration_adc_stage_0) / 2;
 
-            // TODO: save calibration
+            // Save calibration to EEPROM
+            saveCalibration();
 
             // Since we moved the position, do a remote movement to the previous target
             remote_movement_start = millis();
@@ -421,6 +481,20 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Hello world!");
 #endif
+
+  // Load calibration from EEPROM if available
+  if (loadCalibration()) {
+#if SERIAL_ENABLED
+    Serial.print("Loaded calibration from EEPROM: min=");
+    Serial.print(input_calib_min);
+    Serial.print(", max=");
+    Serial.println(input_calib_max);
+#endif
+  } else {
+#if SERIAL_ENABLED
+    Serial.println("No valid calibration found, using defaults");
+#endif
+  }
 
   setup_i2c();
 
