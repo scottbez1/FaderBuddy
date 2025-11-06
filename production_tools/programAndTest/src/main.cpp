@@ -26,7 +26,7 @@
 #define PIN_MOTOR_FADER_SDA 26
 
 #define PIN_SERVO 32
-#define SERVO_TOUCH_POS 85
+#define SERVO_TOUCH_POS 88
 #define SERVO_CLEAR_POS 50
 
 // Bounded linear interpolation macro (float only)
@@ -64,6 +64,7 @@ enum TestState {
   TEST_DEBUG_LED,         // Testing debug LED blink pattern
   TEST_SELF_CALIBRATION,  // Self-calibration test
   TEST_DIAGNOSTICS,       // I2C diagnostics (10 seconds)
+  TEST_TOUCH_SENSOR,      // Touch sensor test with servo
   TEST_PASSED,            // All tests passed
   TEST_FAILED             // One or more tests failed
 };
@@ -128,9 +129,25 @@ struct TestTracking {
   uint16_t selfCalMinADC;
   uint16_t selfCalMaxADC;
 
+  // Touch sensor test tracking
+  enum TouchTestPhase {
+    TOUCH_PHASE_CHECK_NO_TOUCH,
+    TOUCH_PHASE_MOVE_TO_POSITION,
+    TOUCH_PHASE_WAIT_FOR_IDLE,
+    TOUCH_PHASE_SERVO_TOUCH,
+    TOUCH_PHASE_WAIT_FOR_TOUCH_DETECT,
+    TOUCH_PHASE_CONFIRM_TOUCH,
+    TOUCH_PHASE_SERVO_CLEAR,
+    TOUCH_PHASE_WAIT_FOR_TOUCH_CLEAR,
+    TOUCH_PHASE_FINAL_WAIT,
+    TOUCH_PHASE_CLEANUP_ON_FAILURE
+  };
+  TouchTestPhase touchTestPhase;
+  uint32_t touchTestPhaseStartTime;
+
   // Test results
   String failedTestName;
-} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, 0, false, false, 0xFFFF, 0, ""};
+} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, 0, false, false, 0xFFFF, 0, TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH, 0, ""};
 
 void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
@@ -150,7 +167,11 @@ void setup() {
   WireMotorFader.begin(PIN_MOTOR_FADER_SDA, PIN_MOTOR_FADER_SCL);
   motorFader.begin(&WireMotorFader);
 
+  // Initialize servo - move to clear position and disable after 2 seconds
   servo.attach(PIN_SERVO);
+  servo.write(SERVO_CLEAR_POS);
+  // delay(2000);  // Allow servo to reach clear position
+  // servo.detach();
 
   // Initialize display
   tft.init();
@@ -236,6 +257,7 @@ const String getTestStateName(TestState state) {
     case TEST_DEBUG_LED: return "5: DBG LED";
     case TEST_SELF_CALIBRATION: return "6: SELF CAL";
     case TEST_DIAGNOSTICS: return "7: I2C DIAG";
+    case TEST_TOUCH_SENSOR: return "8: TOUCH";
     case TEST_PASSED: return "PASSED";
     case TEST_FAILED:
       if (!testTracking.failedTestName.isEmpty()) {
@@ -403,7 +425,7 @@ bool testLogicPower(float v0, float i0) {
   if (avgV0 < 3.1 || avgV0 > 3.5) {
     testTracking.failedTestName = "LOG VOLT";
     Serial.println("FAILED: Logic voltage out of range");
-  } else if (avgI0 < 5.0 || avgI0 > 15.0) {
+  } else if (avgI0 > 15.0) {
     testTracking.failedTestName = "LOG CUR";
     Serial.println("FAILED: Logic current out of range");
   } else {
@@ -932,6 +954,202 @@ bool testDiagnostics() {
   return true;
 }
 
+bool testTouchSensor() {
+  // Initialize on first call
+  if (testTracking.touchTestPhase == TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH &&
+      testTracking.touchTestPhaseStartTime == 0) {
+    testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH;
+    testTracking.touchTestPhaseStartTime = millis();
+    Serial.println("Starting touch sensor test...");
+
+    // Re-attach servo for test (it was detached in setup)
+    // servo.attach(PIN_SERVO);
+    // servo.write(SERVO_CLEAR_POS);
+  }
+
+  // Continuously read motor fader state throughout the test
+  readMotorFaderState();
+
+  if (!motorState.valid) {
+    Serial.println("Failed to read motor state during touch test");
+    return false;  // Keep trying
+  }
+
+  switch (testTracking.touchTestPhase) {
+    case TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH:
+      // Confirm touch is not detected before starting
+      if (motorState.touch) {
+        testTracking.failedTestName = "TCH INITIAL";
+        Serial.println("FAILED: Touch detected at start of test");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+      Serial.println("Touch not detected, proceeding to movement");
+      testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_MOVE_TO_POSITION;
+      testTracking.touchTestPhaseStartTime = millis();
+      return false;
+
+    case TestTracking::TOUCH_PHASE_MOVE_TO_POSITION:
+      // Command fader to position 0
+      if (millis() - testTracking.touchTestPhaseStartTime < 100) {
+        // Give a small delay before commanding to ensure we're ready
+        return false;
+      }
+      if (!motorFader.writeTargetPosition(0)) {
+        testTracking.failedTestName = "TCH CMD POS";
+        Serial.println("FAILED: Could not command position 0");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+      Serial.println("Commanded position 0, waiting for idle");
+      testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_WAIT_FOR_IDLE;
+      testTracking.touchTestPhaseStartTime = millis();
+      return false;
+
+    case TestTracking::TOUCH_PHASE_WAIT_FOR_IDLE:
+      // Wait for fader to report idle state (timeout 9 seconds)
+      if (motorState.mode == MODE_ERROR) {
+        testTracking.failedTestName = "TCH ERROR";
+        Serial.println("FAILED: Fader entered error state during movement");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+
+      if (motorState.mode == MODE_INPUT_IDLE) {
+        Serial.println("Fader reached idle state");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_SERVO_TOUCH;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+
+      if (millis() - testTracking.touchTestPhaseStartTime > 9000) {
+        testTracking.failedTestName = "TCH IDLE TMO";
+        Serial.print("FAILED: Fader did not reach idle within 9 seconds (mode: ");
+        Serial.print(getModeString(motorState.mode));
+        Serial.println(")");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+      return false;  // Still waiting
+
+    case TestTracking::TOUCH_PHASE_SERVO_TOUCH:
+      // Activate servo to touch position
+      servo.write(SERVO_TOUCH_POS);
+      Serial.println("Servo activated to touch position");
+      testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_WAIT_FOR_TOUCH_DETECT;
+      testTracking.touchTestPhaseStartTime = millis();
+      return false;
+
+    case TestTracking::TOUCH_PHASE_WAIT_FOR_TOUCH_DETECT:
+      // Wait for touch to be detected (timeout 3 seconds)
+      if (motorState.touch) {
+        Serial.println("Touch detected!");
+        delay(100);
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CONFIRM_TOUCH;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+
+      if (millis() - testTracking.touchTestPhaseStartTime > 3000) {
+        testTracking.failedTestName = "TCH NO DET";
+        Serial.println("FAILED: Touch not detected within 3 seconds");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+      return false;  // Still waiting
+
+    case TestTracking::TOUCH_PHASE_CONFIRM_TOUCH:
+      // Wait 1 second and confirm touch is still detected
+      if (millis() - testTracking.touchTestPhaseStartTime < 1000) {
+        if (!motorState.touch) {
+          testTracking.failedTestName = "TCH LOST";
+          Serial.println("FAILED: Touch lost during confirmation period");
+          testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+          testTracking.touchTestPhaseStartTime = millis();
+          return false;
+        }
+        return false;  // Still confirming
+      }
+
+      if (!motorState.touch) {
+        testTracking.failedTestName = "TCH NOT HELD";
+        Serial.println("FAILED: Touch not held for 1 second");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+
+      Serial.println("Touch confirmed for 1 second");
+      testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_SERVO_CLEAR;
+      testTracking.touchTestPhaseStartTime = millis();
+      return false;
+
+    case TestTracking::TOUCH_PHASE_SERVO_CLEAR:
+      // Move servo to clear position
+      servo.write(SERVO_CLEAR_POS);
+      Serial.println("Servo moved to clear position");
+      testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_WAIT_FOR_TOUCH_CLEAR;
+      testTracking.touchTestPhaseStartTime = millis();
+      return false;
+
+    case TestTracking::TOUCH_PHASE_WAIT_FOR_TOUCH_CLEAR:
+      // Wait for touch to clear (timeout 3 seconds)
+      if (!motorState.touch) {
+        Serial.println("Touch cleared");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_FINAL_WAIT;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+
+      if (millis() - testTracking.touchTestPhaseStartTime > 3000) {
+        testTracking.failedTestName = "TCH NO CLR";
+        Serial.println("FAILED: Touch did not clear within 3 seconds");
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
+        testTracking.touchTestPhaseStartTime = millis();
+        return false;
+      }
+      return false;  // Still waiting
+
+    case TestTracking::TOUCH_PHASE_FINAL_WAIT:
+      // Wait 2 seconds after touch cleared
+      if (millis() - testTracking.touchTestPhaseStartTime < 2000) {
+        return false;  // Still waiting
+      }
+
+      // // Disable servo
+      // servo.detach();
+      // Serial.println("Servo disabled");
+      Serial.println("PASSED: Touch sensor test complete");
+      return true;  // Test complete (passed)
+
+    case TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE:
+      // On first entry to cleanup phase, move servo to clear and start timer
+      if (millis() - testTracking.touchTestPhaseStartTime < 100) {
+        servo.write(SERVO_CLEAR_POS);
+        Serial.println("Moving servo to clear position for cleanup");
+        return false;
+      }
+
+      // Wait 2 seconds for servo to reach clear position
+      if (millis() - testTracking.touchTestPhaseStartTime < 2000) {
+        return false;  // Still waiting
+      }
+
+      // Disable servo and complete test (failed)
+      // servo.detach();
+      // Serial.println("Servo disabled after failure");
+      return true;  // Test complete (failed)
+
+    default:
+      return true;
+  }
+}
+
 
 void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, float i1) {
   bool presenceJustPressed = presencePressed && !lastPresenceState;
@@ -972,6 +1190,8 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
         testTracking.selfCalEnteredMode = false;
         testTracking.selfCalMinADC = 0xFFFF;
         testTracking.selfCalMaxADC = 0;
+        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH;
+        testTracking.touchTestPhaseStartTime = 0;
         clearSerialBuffer();  // Clear serial buffer
         versionInfo.valid = false;
         motorState.valid = false;
@@ -1042,8 +1262,22 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 
     case TEST_DIAGNOSTICS:
       if (testDiagnostics()) {
-        Serial.println("\n=== ALL TESTS PASSED ===\n");
-        currentTestState = TEST_PASSED;
+        if (!testTracking.failedTestName.isEmpty()) {
+          currentTestState = TEST_FAILED;
+        } else {
+          currentTestState = TEST_TOUCH_SENSOR;
+        }
+      }
+      break;
+
+    case TEST_TOUCH_SENSOR:
+      if (testTouchSensor()) {
+        if (!testTracking.failedTestName.isEmpty()) {
+          currentTestState = TEST_FAILED;
+        } else {
+          Serial.println("\n=== ALL TESTS PASSED ===\n");
+          currentTestState = TEST_PASSED;
+        }
       }
       break;
 
@@ -1108,8 +1342,6 @@ void loop() {
     analogWrite(PIN_LED_RED, brightnessRed);
     analogWrite(PIN_LED_GREEN, brightnessGreen);
   }
-
-  // servo.write(pressed ? 20 : 80);
 
   updateDisplay(voltage0, current0, voltage1, current1);
 

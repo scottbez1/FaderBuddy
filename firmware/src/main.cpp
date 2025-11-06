@@ -84,7 +84,7 @@ uint16_t remote_movement_start_position = 0;
 
 uint32_t self_calibration_start = 0;
 uint8_t self_calibration_stage = 0;
-#define SELF_CALIBRATION_TIMEOUT (3000)
+#define SELF_CALIBRATION_TIMEOUT (1500)
 #define SELF_CALIBRATION_BUFFER (0.995)  // Buffer factor to prevent hitting physical limits
 uint16_t self_calibration_adc_stage_0 = 0;
 uint16_t self_calibration_adc_stage_1 = 0;

@@ -191,16 +191,15 @@ class TestHost:
             while True:
                 if self.serial and self.serial.is_open:
                     try:
-                        # Read line with timeout
-                        if self.serial.in_waiting > 0:
-                            line = self.serial.readline().decode('utf-8', errors='ignore')
-                            if line:
-                                # Echo all serial output for debugging
-                                logging.debug(f"Serial: {line.rstrip()}")
+                        # Read line with timeout (blocking call with 1 second timeout)
+                        line = self.serial.readline().decode('utf-8', errors='ignore')
+                        if line:
+                            # Echo all serial output for debugging
+                            logging.debug(f"Serial: {line.rstrip()}")
 
-                                # Check if it's a command
-                                if ">>" in line and "<<" in line:
-                                    self.process_command(line)
+                            # Check if it's a command
+                            if ">>" in line and "<<" in line:
+                                self.process_command(line)
                     except serial.SerialException as e:
                         logging.error(f"Serial error: {e}")
                         break
