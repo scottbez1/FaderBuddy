@@ -46,6 +46,7 @@ float input_slow_ewma = 0;
 // Touch state
 bool touch = false;
 cap_sensor_t touch_sensor;
+uint16_t touch_recal_count = 0;  // Count of touch recalibrations since boot
 
 // I2C slave base address (before A0/A1/A2 jumpers are applied)
 const uint8_t I2C_BASE_ADDRESS = 0x20;
@@ -160,6 +161,20 @@ void onI2cRequest() {
       Wire.write(SIGROW.SERNUM7);
       Wire.write(SIGROW.SERNUM8);
       Wire.write(SIGROW.SERNUM9);
+  } else if (r == REG_TOUCH_DELTA) {
+      // Touch delta (signed 16-bit): sensorData - reference
+      int16_t delta = ptc_get_node_delta(&touch_sensor);
+      Wire.write((delta >> 8) & 0xFF);  // High byte
+      Wire.write(delta & 0xFF);         // Low byte
+  } else if (r == REG_TOUCH_REF) {
+      // Touch reference value (unsigned 16-bit)
+      uint16_t reference = touch_sensor.reference;
+      Wire.write((reference >> 8) & 0xFF);  // High byte
+      Wire.write(reference & 0xFF);         // Low byte
+  } else if (r == REG_TOUCH_RECAL) {
+      // Touch recalibration count (unsigned 16-bit)
+      Wire.write((touch_recal_count >> 8) & 0xFF);  // High byte
+      Wire.write(touch_recal_count & 0xFF);         // Low byte
   }
 }
 
@@ -214,6 +229,9 @@ void onI2cReceive(int howMany) {
     case REG_UPTIME:
     case REG_TOUCH_RAW:
     case REG_SERIAL:
+    case REG_TOUCH_DELTA:
+    case REG_TOUCH_REF:
+    case REG_TOUCH_RECAL:
       // Read-only registers, ignore writes
       // Discard any excess data
       while (Wire.available()) Wire.read();
@@ -468,9 +486,12 @@ void motor_update() {
 
 void setup_touch() {
   ptc_add_selfcap_node(&touch_sensor, PIN_TO_PTC(PIN_TOUCH), 0);
-  ptc_node_set_thresholds(&touch_sensor, 50, 25);
+  ptc_node_set_thresholds(&touch_sensor, 200, 50);
+  ptc_node_set_gain(&touch_sensor, ADC_SAMPNUM_ACC1_gc, ADC_SAMPNUM_ACC1_gc);
 
   ptc_lib_sm_set_t* settings = ptc_get_sm_settings();
+  settings->drift_down_nom = 50;
+  settings->drift_up_nom = 50;
   settings->force_recal_delta = 200; // Increase drift recalibration delta?
   settings->touched_max_nom = 255; // Disable automatic recalibration on very long touch
 }
@@ -570,6 +591,10 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
   } else if (PTC_CB_EVENT_CONV_SELF_CMPL == eventType) {
     // Do more complex things here
   } else if (PTC_CB_EVENT_CONV_CALIB & eventType) {
+    // Increment recalibration counter on successful calibration
+    if (eventType == PTC_CB_EVENT_CONV_CALIB) {
+      touch_recal_count++;
+    }
     // if (PTC_CB_EVENT_ERR_CALIB_LOW == eventType) {
     //   MySerial.print("Calib error, Cc too low.");
     // } else if (PTC_CB_EVENT_ERR_CALIB_HIGH == eventType) {

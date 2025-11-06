@@ -8,10 +8,10 @@
 /*
  * I2C Register Map
  * ===============
- * 
+ *
  * Addr | Register Name | Access  | Type | Description
  * -----|---------------|---------|------|------------
- * 0x00 | VERSION       | R       | u8   | Protocol version (currently 1)
+ * 0x00 | VERSION       | R       | u8   | Protocol version (currently 3)
  * -----|---------------|---------|------|------------
  * 0x01 | STATE         | R       | u32  | Current state
  * -----|---------------|---------|------|------------
@@ -29,14 +29,18 @@
  * -----|---------------|---------|------|------------
  * 0x08 | SERIAL        | R       | u8[10] | Chip serial number (10 bytes)
  * -----|---------------|---------|------|------------
+ * 0x09 | TOUCH_DELTA   | R       | i16  | Touch delta (sensorData - reference)
+ * -----|---------------|---------|------|------------
+ * 0x0A | TOUCH_REF     | R       | u16  | Touch reference value
+ * -----|---------------|---------|------|------------
+ * 0x0B | TOUCH_RECAL   | R       | u16  | Touch recalibration count
+ * -----|---------------|---------|------|------------
  *
  * Protocol:
  * - Read:  Write register address, then read N bytes
  * - Write: Write register address + N data bytes
  * - All multi-byte values are big-endian (MSB first)
  */
-
-// TODO: expose registers for all ptc touch parameters
 
 // I2C register addresses
 #define REG_VERSION 0x00  // Protocol version
@@ -48,6 +52,9 @@
 #define REG_TOUCH_RAW 0x06
 #define REG_SELF_CAL 0x07
 #define REG_SERIAL 0x08  // Chip serial number (10 bytes)
+#define REG_TOUCH_DELTA 0x09  // Touch delta (signed 16-bit)
+#define REG_TOUCH_REF 0x0A  // Touch reference value (unsigned 16-bit)
+#define REG_TOUCH_RECAL 0x0B  // Touch recalibration count (unsigned 16-bit)
 
 enum Mode : uint8_t {
   MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,

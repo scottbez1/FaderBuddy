@@ -104,3 +104,31 @@ bool MotorFaderI2C::clearError() {
 bool MotorFaderI2C::selfCalibrate() {
   return writeRegister(REG_SELF_CAL);
 }
+
+bool MotorFaderI2C::readTouchDelta(int16_t& delta) {
+  uint8_t data[2];
+  if (!readRegister(REG_TOUCH_DELTA, data, 2)) {
+    return false;
+  }
+  // Combine bytes as signed 16-bit value
+  delta = (int16_t)(((uint16_t)data[0] << 8) | data[1]);
+  return true;
+}
+
+bool MotorFaderI2C::readTouchReference(uint16_t& reference) {
+  uint8_t data[2];
+  if (!readRegister(REG_TOUCH_REF, data, 2)) {
+    return false;
+  }
+  reference = ((uint16_t)data[0] << 8) | data[1];
+  return true;
+}
+
+bool MotorFaderI2C::readTouchRecalCount(uint16_t& recalCount) {
+  uint8_t data[2];
+  if (!readRegister(REG_TOUCH_RECAL, data, 2)) {
+    return false;
+  }
+  recalCount = ((uint16_t)data[0] << 8) | data[1];
+  return true;
+}

@@ -103,7 +103,7 @@ class TestHost:
             logging.info(f"Using PlatformIO venv: {pio_venv}")
 
             # Build PIO command
-            pio_cmd = "pio run -e motor_fader --target upload --verbose"
+            pio_cmd = "pio run -e motor_fader --target upload --verbose --upload-port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
 
             # Override upload port if specified
             if self.updi_port:

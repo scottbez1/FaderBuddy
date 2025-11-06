@@ -26,6 +26,8 @@
 #define PIN_MOTOR_FADER_SDA 26
 
 #define PIN_SERVO 32
+#define SERVO_TOUCH_POS 85
+#define SERVO_CLEAR_POS 50
 
 // Bounded linear interpolation macro (float only)
 #define LERP(x, in_min, in_max, out_min, out_max) \
@@ -82,8 +84,11 @@ struct MotorFaderState {
   uint8_t position;
   uint16_t rawADC;
   uint32_t uptime;
+  int16_t touchDelta;
+  uint16_t touchReference;
+  uint16_t touchRecalCount;
   bool valid;
-} motorState = {false, 0, 0, 0, 0, false};
+} motorState = {false, 0, 0, 0, 0, 0, 0, 0, false};
 
 // Test tracking
 struct TestTracking {
@@ -339,9 +344,19 @@ void updateDisplay(float v0, float c0, float v1, float c1) {
     sprite.print(motorState.rawADC);
 
     sprite.setCursor(5, 170);
-    sprite.print("Touch:");
+    sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+    sprite.print("Tch:");
     sprite.setTextColor(motorState.touch ? TFT_GREEN : TFT_RED, TFT_BLACK);
-    sprite.print(motorState.touch ? "YES" : "NO");
+    sprite.print(motorState.touch ? "Y" : "N");
+
+    // Touch diagnostics (delta, reference, recal count)
+    sprite.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    sprite.print(" d:");
+    sprite.print(motorState.touchDelta);
+    sprite.print(" r:");
+    sprite.print(motorState.touchReference);
+    sprite.print(" rc:");
+    sprite.print(motorState.touchRecalCount);
   }
 
   render_count++;
@@ -744,6 +759,22 @@ void readMotorFaderState() {
     return;
   }
 
+  // Read touch diagnostics
+  if (!motorFader.readTouchDelta(motorState.touchDelta)) {
+    Serial.println("Failed to read touch delta");
+    return;
+  }
+
+  if (!motorFader.readTouchReference(motorState.touchReference)) {
+    Serial.println("Failed to read touch reference");
+    return;
+  }
+
+  if (!motorFader.readTouchRecalCount(motorState.touchRecalCount)) {
+    Serial.println("Failed to read touch recal count");
+    return;
+  }
+
   motorState.valid = true;
 }
 
@@ -875,15 +906,15 @@ bool testDiagnostics() {
   uint32_t elapsed = millis() - testTracking.diagnosticsStartTime;
 
   // Command remote movements at specific times (once each)
-  if (testTracking.diagnosticsMovementStep == 0 && elapsed >= 7000) {
+  if (testTracking.diagnosticsMovementStep == 0 && elapsed >= 1000) {
     motorFader.writeTargetPosition(128);
     Serial.println("Commanding position 128");
     testTracking.diagnosticsMovementStep = 1;
-  } else if (testTracking.diagnosticsMovementStep == 1 && elapsed >= 8000) {
+  } else if (testTracking.diagnosticsMovementStep == 1 && elapsed >= 2000) {
     motorFader.writeTargetPosition(255);
     Serial.println("Commanding position 255");
     testTracking.diagnosticsMovementStep = 2;
-  } else if (testTracking.diagnosticsMovementStep == 2 && elapsed >= 9000) {
+  } else if (testTracking.diagnosticsMovementStep == 2 && elapsed >= 3000) {
     motorFader.writeTargetPosition(0);
     Serial.println("Commanding position 0");
     testTracking.diagnosticsMovementStep = 3;
@@ -893,7 +924,7 @@ bool testDiagnostics() {
   readMotorFaderState();
 
   // Check if 10 seconds have elapsed
-  if (elapsed < 10000) {
+  if (elapsed < 4000) {
     return false;  // Still running
   }
 
@@ -1078,7 +1109,7 @@ void loop() {
     analogWrite(PIN_LED_GREEN, brightnessGreen);
   }
 
-  servo.write(pressed ? 20 : 80);
+  // servo.write(pressed ? 20 : 80);
 
   updateDisplay(voltage0, current0, voltage1, current1);
 
