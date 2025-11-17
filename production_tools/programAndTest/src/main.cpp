@@ -94,7 +94,6 @@ struct MotorFaderState {
 // Test tracking
 struct TestTracking {
   uint32_t testStartTime;
-  uint32_t diagnosticsStartTime;
   uint8_t diagnosticsMovementStep;
 
   // Power test accumulators
@@ -147,7 +146,7 @@ struct TestTracking {
 
   // Test results
   String failedTestName;
-} testTracking = {0, 0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, 0, false, false, 0xFFFF, 0, TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH, 0, ""};
+} testTracking = {0, 0, 0, 0, 0, 0, 0, TestTracking::FIRMWARE_PHASE_PING, 0, false, {0}, 0, 0, 0, false, 0, false, false, 0xFFFF, 0, TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH, 0, ""};
 
 void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
@@ -875,7 +874,7 @@ bool testSelfCalibration() {
   }
 
   // Check for calibration completion (transition away from MODE_SELF_CALIBRATION)
-  if (testTracking.selfCalEnteredMode && motorState.mode != MODE_SELF_CALIBRATION) {
+  if (testTracking.selfCalEnteredMode && motorState.mode == MODE_INPUT_IDLE) {
     Serial.print("Self-calibration completed. Mode: ");
     Serial.println(getModeString(motorState.mode));
     Serial.print("ADC range observed: ");
@@ -917,41 +916,94 @@ bool testSelfCalibration() {
 }
 
 bool testDiagnostics() {
-  // Start timing on first call
-  if (testTracking.diagnosticsStartTime == 0) {
-    testTracking.diagnosticsStartTime = millis();
-    testTracking.diagnosticsMovementStep = 0;
-    Serial.println("Starting I2C diagnostics (10 seconds)...");
+  const uint32_t MOVEMENT_TIMEOUT_MS = 3000;
+
+  // Initialize on first call
+  if (testTracking.diagnosticsMovementStep == 0) {
+    Serial.println("Starting I2C diagnostics...");
     readMotorFaderVersionInfo();
-  }
-
-  uint32_t elapsed = millis() - testTracking.diagnosticsStartTime;
-
-  // Command remote movements at specific times (once each)
-  if (testTracking.diagnosticsMovementStep == 0 && elapsed >= 1000) {
-    motorFader.writeTargetPosition(128);
-    Serial.println("Commanding position 128");
-    testTracking.diagnosticsMovementStep = 1;
-  } else if (testTracking.diagnosticsMovementStep == 1 && elapsed >= 2000) {
-    motorFader.writeTargetPosition(255);
-    Serial.println("Commanding position 255");
-    testTracking.diagnosticsMovementStep = 2;
-  } else if (testTracking.diagnosticsMovementStep == 2 && elapsed >= 3000) {
-    motorFader.writeTargetPosition(0);
-    Serial.println("Commanding position 0");
-    testTracking.diagnosticsMovementStep = 3;
   }
 
   // Continuously read motor state
   readMotorFaderState();
 
-  // Check if 10 seconds have elapsed
-  if (elapsed < 4000) {
-    return false;  // Still running
-  }
+  // State machine for movements:
+  // Step 0: Command position 10
+  // Step 1: Wait for idle
+  // Step 2: Command position 200
+  // Step 3: Wait for idle
+  // Step 4: Command position 80
+  // Step 5: Wait for idle
+  // Step 6: Complete
 
-  Serial.println("PASSED: Diagnostics complete");
-  return true;
+  switch (testTracking.diagnosticsMovementStep) {
+    case 0:  // Command position 10
+      motorFader.writeTargetPosition(10);
+      Serial.println("Commanding position 10");
+      testTracking.testStartTime = millis();  // Start timeout for idle wait
+      testTracking.diagnosticsMovementStep = 1;
+      return false;
+
+    case 1:  // Wait for idle after position 10
+      if (motorState.valid && motorState.mode == MODE_INPUT_IDLE) {
+        Serial.println("Reached idle state");
+        testTracking.diagnosticsMovementStep = 2;
+        return false;
+      }
+      if (millis() - testTracking.testStartTime > MOVEMENT_TIMEOUT_MS) {
+        testTracking.failedTestName = "DIAG MVT1";
+        Serial.println("FAILED: Movement 1 timed out (did not reach idle within 3s)");
+        return true;
+      }
+      return false;
+
+    case 2:  // Command position 200
+      motorFader.writeTargetPosition(200);
+      Serial.println("Commanding position 200");
+      testTracking.testStartTime = millis();  // Start timeout for idle wait
+      testTracking.diagnosticsMovementStep = 3;
+      return false;
+
+    case 3:  // Wait for idle after position 200
+      if (motorState.valid && motorState.mode == MODE_INPUT_IDLE) {
+        Serial.println("Reached idle state");
+        testTracking.diagnosticsMovementStep = 4;
+        return false;
+      }
+      if (millis() - testTracking.testStartTime > MOVEMENT_TIMEOUT_MS) {
+        testTracking.failedTestName = "DIAG MVT2";
+        Serial.println("FAILED: Movement 2 timed out (did not reach idle within 3s)");
+        return true;
+      }
+      return false;
+
+    case 4:  // Command position 80
+      motorFader.writeTargetPosition(80);
+      Serial.println("Commanding position 80");
+      testTracking.testStartTime = millis();  // Start timeout for idle wait
+      testTracking.diagnosticsMovementStep = 5;
+      return false;
+
+    case 5:  // Wait for idle after position 80
+      if (motorState.valid && motorState.mode == MODE_INPUT_IDLE) {
+        Serial.println("Reached idle state");
+        testTracking.diagnosticsMovementStep = 6;
+        return false;
+      }
+      if (millis() - testTracking.testStartTime > MOVEMENT_TIMEOUT_MS) {
+        testTracking.failedTestName = "DIAG MVT3";
+        Serial.println("FAILED: Movement 3 timed out (did not reach idle within 3s)");
+        return true;
+      }
+      return false;
+
+    case 6:  // Complete
+      Serial.println("PASSED: Diagnostics complete");
+      return true;
+
+    default:
+      return true;
+  }
 }
 
 bool testTouchSensor() {
@@ -1048,7 +1100,6 @@ bool testTouchSensor() {
       // Wait for touch to be detected (timeout 3 seconds)
       if (motorState.touch) {
         Serial.println("Touch detected!");
-        delay(100);
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CONFIRM_TOUCH;
         testTracking.touchTestPhaseStartTime = millis();
         return false;
@@ -1065,6 +1116,10 @@ bool testTouchSensor() {
 
     case TestTracking::TOUCH_PHASE_CONFIRM_TOUCH:
       // Wait 1 second and confirm touch is still detected
+      if (millis() - testTracking.touchTestPhaseStartTime < 200) {
+        // Debounce for a bit after initial touch
+        return false;
+      }
       if (millis() - testTracking.touchTestPhaseStartTime < 1000) {
         if (!motorState.touch) {
           testTracking.failedTestName = "TCH LOST";
@@ -1074,14 +1129,6 @@ bool testTouchSensor() {
           return false;
         }
         return false;  // Still confirming
-      }
-
-      if (!motorState.touch) {
-        testTracking.failedTestName = "TCH NOT HELD";
-        Serial.println("FAILED: Touch not held for 1 second");
-        testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
-        testTracking.touchTestPhaseStartTime = millis();
-        return false;
       }
 
       Serial.println("Touch confirmed for 1 second");
@@ -1116,10 +1163,10 @@ bool testTouchSensor() {
       return false;  // Still waiting
 
     case TestTracking::TOUCH_PHASE_FINAL_WAIT:
-      // Wait 2 seconds after touch cleared
-      if (millis() - testTracking.touchTestPhaseStartTime < 2000) {
-        return false;  // Still waiting
-      }
+      // // Wait 2 seconds after touch cleared
+      // if (millis() - testTracking.touchTestPhaseStartTime < 2000) {
+      //   return false;  // Still waiting
+      // }
 
       // // Disable servo
       // servo.detach();
@@ -1128,22 +1175,25 @@ bool testTouchSensor() {
       return true;  // Test complete (passed)
 
     case TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE:
-      // On first entry to cleanup phase, move servo to clear and start timer
-      if (millis() - testTracking.touchTestPhaseStartTime < 100) {
-        servo.write(SERVO_CLEAR_POS);
-        Serial.println("Moving servo to clear position for cleanup");
-        return false;
-      }
+      servo.write(SERVO_CLEAR_POS);
+      Serial.println("Moving servo to clear position for cleanup");
+      return true;  // Test complete (failed)
+      // // On first entry to cleanup phase, move servo to clear and start timer
+      // if (millis() - testTracking.touchTestPhaseStartTime < 100) {
+      //   servo.write(SERVO_CLEAR_POS);
+      //   Serial.println("Moving servo to clear position for cleanup");
+      //   return false;
+      // }
 
-      // Wait 2 seconds for servo to reach clear position
-      if (millis() - testTracking.touchTestPhaseStartTime < 2000) {
-        return false;  // Still waiting
-      }
+      // // Wait 2 seconds for servo to reach clear position
+      // if (millis() - testTracking.touchTestPhaseStartTime < 2000) {
+      //   return false;  // Still waiting
+      // }
 
-      // Disable servo and complete test (failed)
+      // // Disable servo and complete test (failed)
       // servo.detach();
       // Serial.println("Servo disabled after failure");
-      return true;  // Test complete (failed)
+      // return true;  // Test complete (failed)
 
     default:
       return true;
@@ -1171,13 +1221,19 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 
   switch (currentTestState) {
     case TEST_IDLE:
+      // Continue refreshing motor state while idle (if available)
+      readMotorFaderState();
+      if (!versionInfo.valid) {
+        readMotorFaderVersionInfo();
+      }
+
       if (presenceJustPressed) {
         // Debounce delay before starting tests
         delay(50);
         Serial.println("\n=== Starting Test Sequence ===");
         // Reset test tracking
         testTracking.sampleCount = 0;
-        testTracking.diagnosticsStartTime = 0;
+        testTracking.diagnosticsMovementStep = 0;
         testTracking.failedTestName = "";
         testTracking.firmwarePhase = TestTracking::FIRMWARE_PHASE_PING;
         testTracking.firmwarePhaseStartTime = 0;
@@ -1294,9 +1350,14 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
       break;
 
     case TEST_FAILED:
+      // Continue refreshing motor state while in failed state
+      readMotorFaderState();
+
       if (presenceJustReleased) {
         Serial.println("Test failed, returning to idle\n");
         currentTestState = TEST_IDLE;
+        versionInfo.valid = false;
+        motorState.valid = false;
       }
       break;
   }

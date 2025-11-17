@@ -346,13 +346,13 @@ void motor_update() {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       } else {
         float delta = (target_adc - input_ewma) * 1.2;
-        if (delta > 3) {
-          uint8_t pwm = delta + 88 > 254 ? 254 : delta + 88;
+        if (delta > 4) {
+          uint8_t pwm = delta + 80 > 254 ? 254 : delta + 80;
           TCA0.SPLIT.HCMP1 = pwm;  // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
           remote_movement_steady_start = now;
-        } else if (delta < -3) {
-          uint8_t pwm = -delta + 88 > 254 ? 254 : -delta + 88;
+        } else if (delta < -4) {
+          uint8_t pwm = -delta + 80 > 254 ? 254 : -delta + 80;
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = pwm;  // Motor B
           remote_movement_steady_start = now;
@@ -541,6 +541,7 @@ void setup() {
   ADC1.COMMAND=ADC_STCONV_bm; //start first conversion!
 
   setup_touch();
+  pending_calibrate_touch = true;
 }
 
 void loop() {
