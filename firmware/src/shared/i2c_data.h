@@ -98,3 +98,13 @@ enum Mode : uint8_t {
 #define STATE_RAW_ADC_bp            (16)
 #define STATE_RAW_ADC_bs            (11)
 #define STATE_RAW_ADC_bm            (((1UL << STATE_RAW_ADC_bs) - 1) << STATE_RAW_ADC_bp)
+
+// Single tap nonce: 2 bits at position 27
+#define STATE_SINGLE_TAP_NONCE_bp   (27)
+#define STATE_SINGLE_TAP_NONCE_bs   (2)
+#define STATE_SINGLE_TAP_NONCE_bm   (((1UL << STATE_SINGLE_TAP_NONCE_bs) - 1) << STATE_SINGLE_TAP_NONCE_bp)
+
+// Double tap nonce: 2 bits at position 29
+#define STATE_DOUBLE_TAP_NONCE_bp   (29)
+#define STATE_DOUBLE_TAP_NONCE_bs   (2)
+#define STATE_DOUBLE_TAP_NONCE_bm   (((1UL << STATE_DOUBLE_TAP_NONCE_bs) - 1) << STATE_DOUBLE_TAP_NONCE_bp)

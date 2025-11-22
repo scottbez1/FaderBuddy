@@ -89,7 +89,7 @@ export class MotorFader {
     /**
      * Read and parse state register (REG_STATE)
      * Returns an object with all state fields extracted from the packed uint32
-     * @returns {Object} - State object with fields: touchDetected, mode, settingsNonce, position, positionNonce, rawAdc
+     * @returns {Object} - State object with fields: touchDetected, mode, settingsNonce, position, positionNonce, rawAdc, singleTapNonce, doubleTapNonce
      */
     async readState() {
         const data = await this.readRegister(this.REG_STATE, 4);
@@ -114,13 +114,21 @@ export class MotorFader {
         // Bits 16-26: Raw ADC (11 bits)
         const rawAdc = (state >> 16) & 0x7FF;
 
+        // Bits 27-28: Single tap nonce (2 bits)
+        const singleTapNonce = (state >> 27) & 0x03;
+
+        // Bits 29-30: Double tap nonce (2 bits)
+        const doubleTapNonce = (state >> 29) & 0x03;
+
         return {
             touchDetected,
             mode,
             settingsNonce,
             position,
             positionNonce,
-            rawAdc
+            rawAdc,
+            singleTapNonce,
+            doubleTapNonce
         };
     }
 

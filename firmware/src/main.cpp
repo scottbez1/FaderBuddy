@@ -39,6 +39,19 @@
 #define REMOTE_MOVEMENT_STEADY_THRESHOLD (300)
 #define IDLE_DURATION_THRESHOLD (1000)
 
+// Tap detection timing
+#define TAP_MAX_DURATION (200)            // Maximum tap press duration (ms)
+#define DOUBLE_TAP_MAX_INTERVAL (300)     // Maximum time between taps (ms)
+#define TAP_MAX_MOVEMENT (10)             // Maximum position change during tap (ADC units)
+
+// Tap detection state machine
+enum TapState : uint8_t {
+  TAP_NONE = 0,                // No tap in progress
+  TAP_FIRST_PRESSED,           // First tap touch detected
+  TAP_WAITING_FOR_DOUBLE,      // Waiting to see if second tap occurs
+  TAP_SECOND_PRESSED,          // Second tap touch detected
+};
+
 const float ALPHA = 0.05;
 float input_ewma = 0;
 float input_slow_ewma = 0;
@@ -82,6 +95,13 @@ uint32_t remote_movement_steady_start = 0;
 uint32_t input_last_change_millis = 0;
 uint16_t remote_movement_start_position = 0;
 
+// Tap detection state
+TapState tap_state = TAP_NONE;
+uint32_t tap_timestamp = 0;          // Timestamp of last tap-related event for duration/timeout tracking
+uint16_t tap_position_start = 0;     // Raw ADC value when first touch started
+uint8_t single_tap_nonce = 0;
+uint8_t double_tap_nonce = 0;
+
 uint32_t self_calibration_start = 0;
 uint8_t self_calibration_stage = 0;
 #define SELF_CALIBRATION_TIMEOUT (1500)
@@ -93,6 +113,7 @@ bool pending_report_on_idle = false;
 
 bool pending_calibrate_touch = false;
 void calibrate_touch();
+void reset_tap_detection();
 
 Mode get_mode() {
   return static_cast<Mode>((state & STATE_MODE_bm) >> STATE_MODE_bp);
@@ -104,6 +125,11 @@ void set_mode(Mode mode) {
     TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV256_gc;
   } else {
     TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;
+  }
+
+  // Reset tap detection when entering modes where taps shouldn't be detected
+  if (mode != MODE_INPUT_IDLE && mode != MODE_INPUT_ACTIVE) {
+    reset_tap_detection();
   }
 }
 
@@ -316,12 +342,35 @@ void increment_position_nonce() {
   state |= position_nonce << STATE_POSITION_NONCE_bp;
 }
 
+void increment_single_tap_nonce() {
+  single_tap_nonce++;
+  single_tap_nonce &= 0x03;  // Keep only 2 bits (0-3)
+}
+
+void increment_double_tap_nonce() {
+  double_tap_nonce++;
+  double_tap_nonce &= 0x03;  // Keep only 2 bits (0-3)
+}
+
+void reset_tap_detection() {
+  tap_state = TAP_NONE;
+}
+
 void motor_update() {
   uint32_t now = millis();
 
   uint16_t adc_val = ADC1.RES;
   input_ewma = adc_val * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
   Mode mode = get_mode();
+
+  // If we didn't get a second tap start in time, we register a single tap event
+  if (tap_state == TAP_WAITING_FOR_DOUBLE) {
+    if (now - tap_timestamp > DOUBLE_TAP_MAX_INTERVAL) {
+      increment_single_tap_nonce();
+      reset_tap_detection();
+    }
+  }
+
   if (input_ewma > position_window_upper) {
     position_window_upper = input_ewma;
     position_window_lower = position_window_upper - WINDOW_SIZE;
@@ -473,6 +522,13 @@ void motor_update() {
   state &= ~(uint32_t)STATE_RAW_ADC_bm;
   state |= ((uint32_t)adc_val << STATE_RAW_ADC_bp) & (uint32_t)STATE_RAW_ADC_bm;
 
+  // Pack tap nonces into state (TODO: calculate on tap changes instead of every loop)
+  state &= ~STATE_SINGLE_TAP_NONCE_bm;
+  state |= ((uint32_t)single_tap_nonce << STATE_SINGLE_TAP_NONCE_bp) & STATE_SINGLE_TAP_NONCE_bm;
+
+  state &= ~STATE_DOUBLE_TAP_NONCE_bm;
+  state |= ((uint32_t)double_tap_nonce << STATE_DOUBLE_TAP_NONCE_bp) & STATE_DOUBLE_TAP_NONCE_bm;
+
 #if SERIAL_ENABLED
   static uint32_t last_print;
   if (now - last_print > 200) {
@@ -494,6 +550,8 @@ void setup_touch() {
   settings->drift_up_nom = 50;
   settings->force_recal_delta = 200; // Increase drift recalibration delta?
   settings->touched_max_nom = 255; // Disable automatic recalibration on very long touch
+  settings->touched_detect_nom = 2;
+  settings->untouched_detect_nom = 2;
 }
 
 void setup() {
@@ -567,8 +625,12 @@ void loop() {
   ptc_process(millis());
 
   // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
-  digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) ^ (millis() % 512 < 128));
+  // digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) ^ (millis() % 512 < 128));
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
+
+  uint8_t tap_nonce = (state & STATE_SINGLE_TAP_NONCE_bm) >> STATE_SINGLE_TAP_NONCE_bp;
+
+  digitalWrite(PIN_LED, tap_nonce == 0);
 
 }
 
@@ -582,6 +644,28 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
     touch_state_change_millis = millis();
     state |= STATE_TOUCH_bm;
 
+    // Tap detection
+    if (tap_state == TAP_NONE) {
+      // First tap touch detected
+      tap_timestamp = millis();
+      tap_position_start = ADC1.RES;  // Store raw ADC value (no EWMA latency)
+      tap_state = TAP_FIRST_PRESSED;
+    } else if (tap_state == TAP_WAITING_FOR_DOUBLE) {
+      // Use raw ADC for immediate movement detection (no EWMA latency)
+      uint16_t current_adc = ADC1.RES;
+      uint16_t position_change = (current_adc > tap_position_start) ?
+                                  (current_adc - tap_position_start) :
+                                  (tap_position_start - current_adc);
+
+      uint32_t now = millis();
+      if (now - tap_timestamp <= DOUBLE_TAP_MAX_INTERVAL && position_change <= TAP_MAX_MOVEMENT) {
+        tap_timestamp = now;
+        tap_state = TAP_SECOND_PRESSED;
+      } else {
+        // Too slow for double-tap, reset
+        reset_tap_detection();
+      }
+    }
   } else if (PTC_CB_EVENT_TOUCH_RELEASE == eventType) {
     // MySerial.print("node released:");
     // MySerial.println(ptc_get_node_id(node));
@@ -589,6 +673,45 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
     // touch = false;
     touch_state_change_millis = millis();
     state &= ~STATE_TOUCH_bm;
+
+    // Tap detection: validate tap on release
+    if (tap_state == TAP_FIRST_PRESSED || tap_state == TAP_SECOND_PRESSED) {
+      uint32_t now = millis();
+      uint32_t tap_duration = now - tap_timestamp;
+
+      // Use raw ADC for immediate movement detection (no EWMA latency)
+      uint16_t current_adc = ADC1.RES;
+      uint16_t position_change = (current_adc > tap_position_start) ?
+                                  (current_adc - tap_position_start) :
+                                  (tap_position_start - current_adc);
+
+      // Validate tap duration and movement
+      if (tap_duration <= TAP_MAX_DURATION && position_change <= TAP_MAX_MOVEMENT) {
+        // Valid tap!
+        if (tap_state == TAP_FIRST_PRESSED) {
+          // First tap complete, wait for possible double-tap
+          tap_timestamp = now;
+          tap_state = TAP_WAITING_FOR_DOUBLE;
+        } else if (tap_state == TAP_SECOND_PRESSED) {
+          // Double-tap complete!
+          increment_double_tap_nonce();
+          reset_tap_detection();
+
+          // Haptic kick for double-tap confirmation
+          TCA0.SPLIT.HCMP1 = 250;  // Motor direction A
+          TCA0.SPLIT.HCMP2 = 0;
+          delay(6);
+          TCA0.SPLIT.HCMP1 = 0;
+          TCA0.SPLIT.HCMP2 = 250;  // Motor direction B
+          delay(6);
+          TCA0.SPLIT.HCMP1 = 0;    // Stop
+          TCA0.SPLIT.HCMP2 = 0;
+        }
+      } else {
+        // Invalid tap (too long or too much movement)
+        reset_tap_detection();
+      }
+    }
   } else if (PTC_CB_EVENT_CONV_SELF_CMPL == eventType) {
     // Do more complex things here
   } else if (PTC_CB_EVENT_CONV_CALIB & eventType) {

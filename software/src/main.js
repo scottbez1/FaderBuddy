@@ -31,6 +31,8 @@ function updateUI(state) {
     document.getElementById('mode').textContent = MODE_NAMES[state.mode] || 'UNKNOWN';
     document.getElementById('touchStatus').textContent = state.touchDetected ? 'YES' : 'NO';
     document.getElementById('posNonce').textContent = state.positionNonce;
+    document.getElementById('singleTapNonce').textContent = state.singleTapNonce;
+    document.getElementById('doubleTapNonce').textContent = state.doubleTapNonce;
     document.getElementById('rawAdc').textContent = state.rawAdc;
 }
 
