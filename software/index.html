@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>motorFader WebHID Demo</title>
+    <style>
+        body { font-family: monospace; margin: 20px; max-width: 800px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        .status { padding: 5px; margin: 5px 0; }
+        .connected { background: #d4edda; }
+        .disconnected { background: #f8d7da; }
+        .error { background: #f8d7da; color: #721c24; }
+        .active { background: #fff3cd; }
+        button { margin: 5px; padding: 8px 15px; cursor: pointer; }
+        input[type="range"] { width: 300px; }
+        .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
+        .info-label { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>motorFader WebHID Demo</h1>
+
+    <!-- Connection Section -->
+    <div class="section">
+        <h2>Connection</h2>
+        <button id="connectBtn">Connect MCP2221</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+        <div id="connectionStatus" class="status disconnected">Not connected</div>
+        <div class="info-row">
+            <span class="info-label">I2C Address:</span>
+            <input type="text" id="i2cAddress" value="0x20" size="5">
+        </div>
+    </div>
+
+    <!-- Position Control Section -->
+    <div class="section">
+        <h2>Position Control</h2>
+        <div class="info-row">
+            <span class="info-label">Current Position:</span>
+            <span id="currentPosition">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Target Position:</span>
+            <input type="range" id="targetSlider" min="0" max="255" value="128" disabled>
+            <span id="targetValue">128</span>
+        </div>
+        <button id="setTargetBtn" disabled>Set Target</button>
+    </div>
+
+    <!-- Status Section -->
+    <div class="section">
+        <h2>Status</h2>
+        <div class="info-row">
+            <span class="info-label">Mode:</span>
+            <span id="mode">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Touch Detected:</span>
+            <span id="touchStatus">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Position Nonce:</span>
+            <span id="posNonce">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Raw ADC:</span>
+            <span id="rawAdc">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Uptime:</span>
+            <span id="uptime">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Protocol Version:</span>
+            <span id="version">--</span>
+        </div>
+    </div>
+
+    <!-- Touch Diagnostics Section -->
+    <div class="section">
+        <h2>Touch Diagnostics</h2>
+        <div class="info-row">
+            <span class="info-label">Touch Raw:</span>
+            <span id="touchRaw">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Touch Delta:</span>
+            <span id="touchDelta">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Touch Reference:</span>
+            <span id="touchRef">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Touch Recal Count:</span>
+            <span id="touchRecal">--</span>
+        </div>
+        <button id="calTouchBtn" disabled>Calibrate Touch</button>
+    </div>
+
+    <!-- Control Section -->
+    <div class="section">
+        <h2>Control</h2>
+        <button id="clearErrorBtn" disabled>Clear Error</button>
+        <button id="selfCalBtn" disabled>Self Calibration</button>
+    </div>
+
+    <!-- Log Section -->
+    <div class="section">
+        <h2>Log</h2>
+        <div id="log" style="height: 150px; overflow-y: scroll; background: #f5f5f5; padding: 10px; font-size: 12px;"></div>
+        <button id="clearLogBtn">Clear Log</button>
+    </div>
+
+    <script type="module" src="dist/bundle.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "motorfader-webhid-demo",
+  "version": "1.0.0",
+  "description": "WebHID demo interface for motorFader control via MCP2221",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --outfile=dist/bundle.js --format=esm",
+    "watch": "esbuild src/main.js --bundle --outfile=dist/bundle.js --format=esm --watch"
+  },
+  "dependencies": {
+    "@johntalton/mcp2221": "^4.0.4",
+    "@johntalton/i2c-bus-mcp2221": "^4.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
+  }
+}
