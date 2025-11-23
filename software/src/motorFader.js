@@ -22,6 +22,7 @@ export class MotorFader {
         this.REG_TOUCH_DELTA = 0x09;
         this.REG_TOUCH_REF = 0x0A;
         this.REG_TOUCH_RECAL = 0x0B;
+        this.REG_HAPTIC_CONFIG = 0x0C;
 
         // Mode states
         this.MODE_REMOTE_MOVEMENT = 0;
@@ -29,6 +30,11 @@ export class MotorFader {
         this.MODE_INPUT_IDLE = 2;
         this.MODE_ERROR = 3;
         this.MODE_SELF_CALIBRATION = 4;
+
+        // Haptic modes
+        this.HAPTIC_NO_HAPTICS = 0;
+        this.HAPTIC_SMOOTH_WITH_MAGNET_ENDS = 1;
+        this.HAPTIC_DETENTS = 2;
     }
 
     /**
@@ -222,5 +228,38 @@ export class MotorFader {
     async readTouchRecal() {
         const data = await this.readRegister(this.REG_TOUCH_RECAL, 2);
         return this.bytesToUint16BE(data);
+    }
+
+    /**
+     * Set haptic configuration
+     * @param {number} nonce - 2-bit nonce (0-3)
+     * @param {number} mode - Haptic mode (0=NO_HAPTICS, 1=SMOOTH_WITH_MAGNET_ENDS, 2=DETENTS)
+     * @param {number} detentCount - 4-bit detent count (0-15)
+     * @param {number} detentStrength - 3-bit detent strength (0-7)
+     * @param {number} targetPosition - 8-bit target position (0-255)
+     */
+    async setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition) {
+        // Pack the 32-bit value according to the bit layout:
+        // Bits 0-1: Nonce (2 bits)
+        // Bits 2-4: Mode (3 bits)
+        // Bits 5-8: Detent count (4 bits)
+        // Bits 9-11: Detent strength (3 bits)
+        // Bits 12-19: Target position (8 bits)
+        const config =
+            ((nonce & 0x03) << 0) |
+            ((mode & 0x07) << 2) |
+            ((detentCount & 0x0F) << 5) |
+            ((detentStrength & 0x07) << 9) |
+            ((targetPosition & 0xFF) << 12);
+
+        // Convert to big-endian bytes
+        const data = new Uint8Array([
+            (config >> 24) & 0xFF,
+            (config >> 16) & 0xFF,
+            (config >> 8) & 0xFF,
+            config & 0xFF
+        ]);
+
+        await this.writeRegister(this.REG_HAPTIC_CONFIG, data);
     }
 }

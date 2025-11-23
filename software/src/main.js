@@ -5,6 +5,48 @@ import { MotorFader } from './motorFader.js';
 // UI State
 let chip = null;
 let fader = null;
+let hapticNonce = 1;  // Start at 1, increment each time a config is sent
+
+// I2C bus mutex for serializing operations
+let i2cBusy = false;
+const i2cWaiters = [];
+
+/**
+ * Process queued I2C operations sequentially
+ */
+async function processQueue() {
+    // If already processing, return (mutual exclusion)
+    if (i2cBusy) return;
+
+    i2cBusy = true;
+
+    // Process all queued operations
+    while (i2cWaiters.length > 0) {
+        const item = i2cWaiters.shift();
+        try {
+            const result = await item.fn();
+            item.resolve(result);
+        } catch (error) {
+            log('I2C operation error: ' + error.message);
+            item.reject(error);
+        }
+    }
+
+    i2cBusy = false;
+}
+
+/**
+ * Run an async function with exclusive I2C bus access
+ * Queues operations and processes them FIFO
+ * @param {Function} fn - Async function to execute
+ * @returns {Promise} - Result of the function
+ */
+async function runWithI2cBus(fn) {
+    return new Promise((resolve, reject) => {
+        i2cWaiters.push({ fn, resolve, reject });
+        void processQueue();  // Don't await - let it run independently
+    });
+}
 
 // Mode names
 const MODE_NAMES = [
@@ -37,21 +79,15 @@ function updateUI(state) {
 }
 
 // Polling function with serialized I2C operations
-let polling = false;
 let pollCounter = 0;
 let pollTimeout = null;
 
 async function poll() {
-    if (!fader || polling) {
-        // Reschedule if still active
-        if (fader) {
-            pollTimeout = setTimeout(poll, 100);
-        }
+    if (!fader) {
         return;
     }
 
-    polling = true;
-    try {
+    await runWithI2cBus(async () => {
         // Always read state
         const state = await fader.readState();
         updateUI(state);
@@ -75,15 +111,11 @@ async function poll() {
         }
 
         pollCounter++;
-    } catch (e) {
-        log('Error polling: ' + e.message);
-    } finally {
-        polling = false;
+    });
 
-        // Schedule next poll after this one completes
-        if (fader) {
-            pollTimeout = setTimeout(poll, 100);
-        }
+    // Schedule next poll after this one completes
+    if (fader) {
+        pollTimeout = setTimeout(poll, 100);
     }
 }
 
@@ -174,6 +206,9 @@ document.getElementById('connectBtn').addEventListener('click', async () => {
         document.getElementById('calTouchBtn').disabled = false;
         document.getElementById('clearErrorBtn').disabled = false;
         document.getElementById('selfCalBtn').disabled = false;
+        document.getElementById('hapticNoHapticsBtn').disabled = false;
+        document.getElementById('hapticSmoothBtn').disabled = false;
+        document.getElementById('hapticDetentsBtn').disabled = false;
         document.getElementById('connectionStatus').textContent = 'Connected';
         document.getElementById('connectionStatus').className = 'status connected';
 
@@ -208,6 +243,9 @@ document.getElementById('disconnectBtn').addEventListener('click', async () => {
     document.getElementById('calTouchBtn').disabled = true;
     document.getElementById('clearErrorBtn').disabled = true;
     document.getElementById('selfCalBtn').disabled = true;
+    document.getElementById('hapticNoHapticsBtn').disabled = true;
+    document.getElementById('hapticSmoothBtn').disabled = true;
+    document.getElementById('hapticDetentsBtn').disabled = true;
     document.getElementById('connectionStatus').textContent = 'Not connected';
     document.getElementById('connectionStatus').className = 'status disconnected';
 
@@ -221,68 +259,91 @@ document.getElementById('targetSlider').addEventListener('input', (e) => {
 
 // Set target button
 document.getElementById('setTargetBtn').addEventListener('click', async () => {
-    if (polling) return;
-    polling = true;
-
     const target = parseInt(document.getElementById('targetSlider').value);
-    try {
+    await runWithI2cBus(async () => {
         await fader.setTarget(target);
         log(`Set target position to ${target}`);
-    } catch (e) {
-        log('Error setting target: ' + e.message);
-    } finally {
-        polling = false;
-    }
+    });
 });
 
 // Calibrate touch button
 document.getElementById('calTouchBtn').addEventListener('click', async () => {
-    if (polling) return;
-    polling = true;
-
-    try {
+    await runWithI2cBus(async () => {
         await fader.calibrateTouch();
         log('Touch calibration triggered');
-    } catch (e) {
-        log('Error calibrating touch: ' + e.message);
-    } finally {
-        polling = false;
-    }
+    });
 });
 
 // Clear error button
 document.getElementById('clearErrorBtn').addEventListener('click', async () => {
-    if (polling) return;
-    polling = true;
-
-    try {
+    await runWithI2cBus(async () => {
         await fader.clearError();
         log('Error cleared');
-    } catch (e) {
-        log('Error clearing error: ' + e.message);
-    } finally {
-        polling = false;
-    }
+    });
 });
 
 // Self calibration button
 document.getElementById('selfCalBtn').addEventListener('click', async () => {
-    if (polling) return;
-    polling = true;
-
-    try {
+    await runWithI2cBus(async () => {
         await fader.selfCalibrate();
         log('Self calibration started');
-    } catch (e) {
-        log('Error starting self calibration: ' + e.message);
-    } finally {
-        polling = false;
-    }
+    });
 });
 
 // Clear log button
 document.getElementById('clearLogBtn').addEventListener('click', () => {
     document.getElementById('log').innerHTML = '';
+});
+
+// Haptic button 1: NO_HAPTICS with target=127
+document.getElementById('hapticNoHapticsBtn').addEventListener('click', async () => {
+    const nonce = hapticNonce;
+    const mode = fader.HAPTIC_NO_HAPTICS;
+    const detentCount = 0;
+    const detentStrength = 0;
+    const targetPosition = 127;
+
+    await runWithI2cBus(async () => {
+        await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
+        log(`Set haptic config: NO_HAPTICS, target=${targetPosition}, nonce=${nonce}`);
+    });
+
+    // Increment nonce for next config (wrap at 4 since it's 2 bits)
+    hapticNonce = (hapticNonce + 1) & 0x03;
+});
+
+// Haptic button 2: SMOOTH_WITH_MAGNET_ENDS with target=20
+document.getElementById('hapticSmoothBtn').addEventListener('click', async () => {
+    const nonce = hapticNonce;
+    const mode = fader.HAPTIC_SMOOTH_WITH_MAGNET_ENDS;
+    const detentCount = 0;
+    const detentStrength = 0;
+    const targetPosition = 20;
+
+    await runWithI2cBus(async () => {
+        await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
+        log(`Set haptic config: SMOOTH_WITH_MAGNET_ENDS, target=${targetPosition}, nonce=${nonce}`);
+    });
+
+    // Increment nonce for next config (wrap at 4 since it's 2 bits)
+    hapticNonce = (hapticNonce + 1) & 0x03;
+});
+
+// Haptic button 3: DETENTS with detent_count=1, target=127
+document.getElementById('hapticDetentsBtn').addEventListener('click', async () => {
+    const nonce = hapticNonce;
+    const mode = fader.HAPTIC_DETENTS;
+    const detentCount = 1;
+    const detentStrength = 0;
+    const targetPosition = 127;
+
+    await runWithI2cBus(async () => {
+        await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
+        log(`Set haptic config: DETENTS, count=${detentCount}, target=${targetPosition}, nonce=${nonce}`);
+    });
+
+    // Increment nonce for next config (wrap at 4 since it's 2 bits)
+    hapticNonce = (hapticNonce + 1) & 0x03;
 });
 
 log('motorFader WebHID Demo loaded. Click "Connect MCP2221" to begin.');

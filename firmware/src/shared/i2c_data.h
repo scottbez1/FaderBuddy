@@ -35,6 +35,8 @@
  * -----|---------------|---------|------|------------
  * 0x0B | TOUCH_RECAL   | R       | u16  | Touch recalibration count
  * -----|---------------|---------|------|------------
+ * 0x0C | HAPTIC_CONFIG | R/W     | u32  | Haptic configuration (bit-packed)
+ * -----|---------------|---------|------|------------
  *
  * Protocol:
  * - Read:  Write register address, then read N bytes
@@ -55,6 +57,7 @@
 #define REG_TOUCH_DELTA 0x09  // Touch delta (signed 16-bit)
 #define REG_TOUCH_REF 0x0A  // Touch reference value (unsigned 16-bit)
 #define REG_TOUCH_RECAL 0x0B  // Touch recalibration count (unsigned 16-bit)
+#define REG_HAPTIC_CONFIG 0x0C  // Haptic configuration (unsigned 32-bit, bit-packed)
 
 enum Mode : uint8_t {
   MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,
@@ -62,6 +65,12 @@ enum Mode : uint8_t {
   MODE_INPUT_IDLE                  = 2,
   MODE_ERROR                       = 3,
   MODE_SELF_CALIBRATION            = 4,
+};
+
+enum HapticMode : uint8_t {
+  HAPTIC_NO_HAPTICS              = 0,
+  HAPTIC_SMOOTH_WITH_MAGNET_ENDS = 1,
+  HAPTIC_DETENTS                 = 2,
 };
 
 
@@ -108,3 +117,28 @@ enum Mode : uint8_t {
 #define STATE_DOUBLE_TAP_NONCE_bp   (29)
 #define STATE_DOUBLE_TAP_NONCE_bs   (2)
 #define STATE_DOUBLE_TAP_NONCE_bm   (((1UL << STATE_DOUBLE_TAP_NONCE_bs) - 1) << STATE_DOUBLE_TAP_NONCE_bp)
+
+// Haptic nonce: 2 bits at position 0
+#define HAPTIC_NONCE_bp             (0)
+#define HAPTIC_NONCE_bs             (2)
+#define HAPTIC_NONCE_bm             (((1U << HAPTIC_NONCE_bs) - 1) << HAPTIC_NONCE_bp)
+
+// Haptic mode: 3 bits at position 2
+#define HAPTIC_MODE_bp              (2)
+#define HAPTIC_MODE_bs              (3)
+#define HAPTIC_MODE_bm              (((1U << HAPTIC_MODE_bs) - 1) << HAPTIC_MODE_bp)
+
+// Detent count: 4 bits at position 5
+#define HAPTIC_DETENT_COUNT_bp      (5)
+#define HAPTIC_DETENT_COUNT_bs      (4)
+#define HAPTIC_DETENT_COUNT_bm      (((1U << HAPTIC_DETENT_COUNT_bs) - 1) << HAPTIC_DETENT_COUNT_bp)
+
+// Detent strength: 3 bits at position 9
+#define HAPTIC_DETENT_STRENGTH_bp   (9)
+#define HAPTIC_DETENT_STRENGTH_bs   (3)
+#define HAPTIC_DETENT_STRENGTH_bm   (((1U << HAPTIC_DETENT_STRENGTH_bs) - 1) << HAPTIC_DETENT_STRENGTH_bp)
+
+// Target position: 8 bits at position 12
+#define HAPTIC_TARGET_POSITION_bp   (12)
+#define HAPTIC_TARGET_POSITION_bs   (8)
+#define HAPTIC_TARGET_POSITION_bm   (((1UL << HAPTIC_TARGET_POSITION_bs) - 1) << HAPTIC_TARGET_POSITION_bp)

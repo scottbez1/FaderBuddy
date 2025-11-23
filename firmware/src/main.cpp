@@ -41,7 +41,7 @@
 
 // Tap detection timing
 #define TAP_MAX_DURATION (200)            // Maximum tap press duration (ms)
-#define DOUBLE_TAP_MAX_INTERVAL (300)     // Maximum time between taps (ms)
+#define DOUBLE_TAP_MAX_INTERVAL (200)     // Maximum time between taps (ms)
 #define TAP_MAX_MOVEMENT (10)             // Maximum position change during tap (ADC units)
 
 // Tap detection state machine
@@ -80,6 +80,10 @@ uint16_t input_calib_max = 1010;
 
 int16_t target_adc = 512;
 uint8_t current_register = REG_VERSION;  // Track which register was last accessed
+
+// Haptic configuration storage
+uint32_t haptic_config = 0;  // Bit-packed haptic configuration register
+uint8_t last_haptic_nonce = 0;  // Track last seen nonce to detect changes
 
 const int16_t WINDOW_SIZE = 8;
 int16_t position_window_upper = WINDOW_SIZE;
@@ -201,6 +205,12 @@ void onI2cRequest() {
       // Touch recalibration count (unsigned 16-bit)
       Wire.write((touch_recal_count >> 8) & 0xFF);  // High byte
       Wire.write(touch_recal_count & 0xFF);         // Low byte
+  } else if (r == REG_HAPTIC_CONFIG) {
+      // Haptic configuration (unsigned 32-bit, bit-packed)
+      Wire.write((haptic_config >> 24) & 0xFF);
+      Wire.write((haptic_config >> 16) & 0xFF);
+      Wire.write((haptic_config >> 8) & 0xFF);
+      Wire.write(haptic_config & 0xFF);
   }
 }
 
@@ -248,6 +258,37 @@ void onI2cReceive(int howMany) {
         self_calibration_stage = 0;
         self_calibration_start = millis();
         set_mode(MODE_SELF_CALIBRATION);
+      }
+      break;
+    case REG_HAPTIC_CONFIG:
+      if (howMany == 5) {  // 1 byte register + 4 bytes data (u32)
+        uint32_t new_config = 0;
+        new_config = ((uint32_t)Wire.read() << 24) |
+                     ((uint32_t)Wire.read() << 16) |
+                     ((uint32_t)Wire.read() << 8) |
+                     ((uint32_t)Wire.read());
+
+        // Extract nonce from new config
+        uint8_t new_nonce = (new_config & HAPTIC_NONCE_bm) >> HAPTIC_NONCE_bp;
+
+        // Check if nonce changed
+        if (new_nonce != last_haptic_nonce) {
+          // Extract target position from haptic config
+          uint8_t haptic_target = (new_config & HAPTIC_TARGET_POSITION_bm) >> HAPTIC_TARGET_POSITION_bp;
+
+          // Apply target position and start movement (even if in INPUT_ACTIVE)
+          target_adc = BOUNDED_LERP_UINT16(haptic_target, 0, 255, input_calib_min, input_calib_max);
+          set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+          remote_movement_start = millis();
+          remote_movement_start_position = input_ewma;
+          remote_movement_steady_start = millis();
+
+          // Update stored nonce
+          last_haptic_nonce = new_nonce;
+        }
+
+        // Always update the stored config
+        haptic_config = new_config;
       }
       break;
     case REG_VERSION:
@@ -436,18 +477,28 @@ void motor_update() {
         }
         set_mode(Mode::MODE_INPUT_IDLE);
       } else {
-        // Haptics
-        if (input_ewma < input_calib_min + 60 && input_ewma > input_calib_min + 8) {
-          float delta = (input_calib_min - input_ewma) * 2;
-          uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
-          TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = pwm;  // Motor B
-        } else if (input_ewma > input_calib_max - 60 && input_ewma < input_calib_max - 8) {
-          float delta = (input_calib_max - input_ewma) * 3;
-          uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
-          TCA0.SPLIT.HCMP1 = pwm;  // Motor A
-          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+        // Haptics - extract current mode from haptic_config
+        HapticMode haptic_mode = static_cast<HapticMode>((haptic_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
+
+        if (haptic_mode == HAPTIC_SMOOTH_WITH_MAGNET_ENDS) {
+          // TODO: Use strength value from haptic_config (bits 9-11) to scale the magnetic force
+          // Magnetic endpoints - pull toward calibration limits when near
+          if (input_ewma < input_calib_min + 60 && input_ewma > input_calib_min + 8) {
+            float delta = (input_calib_min - input_ewma) * 2;
+            uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
+            TCA0.SPLIT.HCMP1 = 0;    // Motor A
+            TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+          } else if (input_ewma > input_calib_max - 60 && input_ewma < input_calib_max - 8) {
+            float delta = (input_calib_max - input_ewma) * 3;
+            uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
+            TCA0.SPLIT.HCMP1 = pwm;  // Motor A
+            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          } else {
+            TCA0.SPLIT.HCMP1 = 0;    // Motor A
+            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          }
         } else {
+          // No haptics for other modes (NO_HAPTICS, DETENTS)
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
         }
