@@ -207,6 +207,7 @@ document.getElementById('connectBtn').addEventListener('click', async () => {
         document.getElementById('calTouchBtn').disabled = false;
         document.getElementById('clearErrorBtn').disabled = false;
         document.getElementById('selfCalBtn').disabled = false;
+        document.getElementById('hapticStrengthSlider').disabled = false;
         document.getElementById('hapticNoHapticsBtn').disabled = false;
         document.getElementById('hapticSmoothBtn').disabled = false;
         document.getElementById('detentCountSlider').disabled = false;
@@ -245,6 +246,7 @@ document.getElementById('disconnectBtn').addEventListener('click', async () => {
     document.getElementById('calTouchBtn').disabled = true;
     document.getElementById('clearErrorBtn').disabled = true;
     document.getElementById('selfCalBtn').disabled = true;
+    document.getElementById('hapticStrengthSlider').disabled = true;
     document.getElementById('hapticNoHapticsBtn').disabled = true;
     document.getElementById('hapticSmoothBtn').disabled = true;
     document.getElementById('detentCountSlider').disabled = true;
@@ -263,6 +265,11 @@ document.getElementById('targetSlider').addEventListener('input', (e) => {
 // Detent count slider
 document.getElementById('detentCountSlider').addEventListener('input', (e) => {
     document.getElementById('detentCountValue').textContent = e.target.value;
+});
+
+// Haptic strength slider
+document.getElementById('hapticStrengthSlider').addEventListener('input', (e) => {
+    document.getElementById('hapticStrengthValue').textContent = e.target.value;
 });
 
 // Set target button
@@ -308,7 +315,7 @@ document.getElementById('hapticNoHapticsBtn').addEventListener('click', async ()
     const nonce = hapticNonce;
     const mode = fader.HAPTIC_NO_HAPTICS;
     const detentCount = 0;
-    const detentStrength = 0;
+    const detentStrength = parseInt(document.getElementById('hapticStrengthSlider').value);
     const targetPosition = 127;
 
     await runWithI2cBus(async () => {
@@ -325,12 +332,12 @@ document.getElementById('hapticSmoothBtn').addEventListener('click', async () =>
     const nonce = hapticNonce;
     const mode = fader.HAPTIC_SMOOTH_WITH_MAGNET_ENDS;
     const detentCount = 0;
-    const detentStrength = 0;
+    const detentStrength = parseInt(document.getElementById('hapticStrengthSlider').value);
     const targetPosition = 20;
 
     await runWithI2cBus(async () => {
         await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
-        log(`Set haptic config: SMOOTH_WITH_MAGNET_ENDS, target=${targetPosition}, nonce=${nonce}`);
+        log(`Set haptic config: SMOOTH_WITH_MAGNET_ENDS, strength=${detentStrength}, target=${targetPosition}, nonce=${nonce}`);
     });
 
     // Increment nonce for next config (wrap at 4 since it's 2 bits)
@@ -342,12 +349,12 @@ document.getElementById('hapticDetentsBtn').addEventListener('click', async () =
     const nonce = hapticNonce;
     const mode = fader.HAPTIC_DETENTS;
     const detentCount = parseInt(document.getElementById('detentCountSlider').value);
-    const detentStrength = 0;
+    const detentStrength = parseInt(document.getElementById('hapticStrengthSlider').value);
     const targetPosition = 127;
 
     await runWithI2cBus(async () => {
         await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
-        log(`Set haptic config: DETENTS, count=${detentCount}, target=${targetPosition}, nonce=${nonce}`);
+        log(`Set haptic config: DETENTS, count=${detentCount}, strength=${detentStrength}, target=${targetPosition}, nonce=${nonce}`);
     });
 
     // Increment nonce for next config (wrap at 4 since it's 2 bits)

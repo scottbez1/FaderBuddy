@@ -39,6 +39,13 @@
 #define REMOTE_MOVEMENT_STEADY_THRESHOLD (300)
 #define IDLE_DURATION_THRESHOLD (1000)
 
+// Haptic parameters
+#define HAPTIC_DEAD_ZONE (8)           // ADC units of dead zone around target
+#define HAPTIC_BASE_PWM (150)           // Base PWM value for haptic force
+#define HAPTIC_MAX_PWM (254)            // Maximum PWM value
+#define HAPTIC_MAGNET_RANGE (60)        // Active range for magnetic endpoints (ADC units)
+#define HAPTIC_BASE_MULTIPLIER (3.0f)   // Base force multiplier for haptics
+
 // Tap detection timing
 #define TAP_MAX_DURATION (200)            // Maximum tap press duration (ms)
 #define DOUBLE_TAP_MAX_INTERVAL (200)     // Maximum time between taps (ms)
@@ -410,6 +417,16 @@ void reset_tap_detection() {
   tap_state = TAP_NONE;
 }
 
+// Calculate max PWM from 3-bit strength value (0-7)
+// Returns maximum PWM value to use for haptic force
+// strength 0 -> minimum usable PWM (~189), strength 7 -> full PWM limit (254)
+uint8_t get_strength_max_pwm(uint8_t strength) {
+  // Scale from 189 (minimum usable) to 254 (max) based on strength
+  // strength 0: 189 max PWM, strength 7: 254 max PWM
+  const uint8_t min_pwm = 189;  // Minimum usable PWM (was strength 2)
+  return min_pwm + (strength * (HAPTIC_MAX_PWM - min_pwm)) / 7;
+}
+
 // Calculate the nearest detent position in ADC units
 // detent_count: number of detents (1-10)
 // current_position: current fader position in ADC units
@@ -524,16 +541,18 @@ void motor_update() {
         HapticMode haptic_mode = static_cast<HapticMode>((haptic_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
 
         if (haptic_mode == HAPTIC_SMOOTH_WITH_MAGNET_ENDS) {
-          // TODO: Use strength value from haptic_config (bits 9-11) to scale the magnetic force
           // Magnetic endpoints - pull toward calibration limits when near
-          if (input_ewma < input_calib_min + 60 && input_ewma > input_calib_min + 8) {
-            float delta = (input_calib_min - input_ewma) * 2;
-            uint8_t pwm = -delta + 150 > 254 ? 254 : -delta + 150;
+          uint8_t strength = (haptic_config & HAPTIC_DETENT_STRENGTH_bm) >> HAPTIC_DETENT_STRENGTH_bp;
+          uint8_t max_pwm = get_strength_max_pwm(strength);
+
+          if (input_ewma < input_calib_min + HAPTIC_MAGNET_RANGE && input_ewma > input_calib_min + HAPTIC_DEAD_ZONE) {
+            float delta = (input_calib_min - input_ewma) * HAPTIC_BASE_MULTIPLIER;
+            uint8_t pwm = (-delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : -delta + HAPTIC_BASE_PWM;
             TCA0.SPLIT.HCMP1 = 0;    // Motor A
             TCA0.SPLIT.HCMP2 = pwm;  // Motor B
-          } else if (input_ewma > input_calib_max - 60 && input_ewma < input_calib_max - 8) {
-            float delta = (input_calib_max - input_ewma) * 3;
-            uint8_t pwm = delta + 150 > 254 ? 254 : delta + 150;
+          } else if (input_ewma > input_calib_max - HAPTIC_MAGNET_RANGE && input_ewma < input_calib_max - HAPTIC_DEAD_ZONE) {
+            float delta = (input_calib_max - input_ewma) * HAPTIC_BASE_MULTIPLIER;
+            uint8_t pwm = (delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : delta + HAPTIC_BASE_PWM;
             TCA0.SPLIT.HCMP1 = pwm;  // Motor A
             TCA0.SPLIT.HCMP2 = 0;    // Motor B
           } else {
@@ -541,9 +560,10 @@ void motor_update() {
             TCA0.SPLIT.HCMP2 = 0;    // Motor B
           }
         } else if (haptic_mode == HAPTIC_DETENTS) {
-          // TODO: Use strength value from haptic_config (bits 9-11) to scale the detent force
           // Detent haptics - pull toward nearest detent position
           uint8_t detent_count = (haptic_config & HAPTIC_DETENT_COUNT_bm) >> HAPTIC_DETENT_COUNT_bp;
+          uint8_t strength = (haptic_config & HAPTIC_DETENT_STRENGTH_bm) >> HAPTIC_DETENT_STRENGTH_bp;
+          uint8_t max_pwm = get_strength_max_pwm(strength);
 
           // Get nearest detent position
           uint16_t nearest_detent = get_nearest_detent_position(detent_count, input_ewma);
@@ -551,19 +571,19 @@ void motor_update() {
           // Calculate displacement from detent (positive = need to move up, negative = need to move down)
           int16_t displacement = nearest_detent - input_ewma;
 
-          // Apply dead zone (8 ADC units, same as magnetic endpoints)
-          if (abs(displacement) > 8) {
+          // Apply dead zone
+          if (abs(displacement) > HAPTIC_DEAD_ZONE) {
             // Calculate restorative force proportional to displacement
-            float delta = displacement * 2.5;
+            float delta = displacement * HAPTIC_BASE_MULTIPLIER;
 
             if (delta > 0) {
               // Pull toward higher position (Motor A)
-              uint8_t pwm = (delta + 150 > 254) ? 254 : delta + 150;
+              uint8_t pwm = (delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : delta + HAPTIC_BASE_PWM;
               TCA0.SPLIT.HCMP1 = pwm;  // Motor A
               TCA0.SPLIT.HCMP2 = 0;    // Motor B
             } else {
               // Pull toward lower position (Motor B)
-              uint8_t pwm = (-delta + 150 > 254) ? 254 : -delta + 150;
+              uint8_t pwm = (-delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : -delta + HAPTIC_BASE_PWM;
               TCA0.SPLIT.HCMP1 = 0;    // Motor A
               TCA0.SPLIT.HCMP2 = pwm;  // Motor B
             }
@@ -751,12 +771,8 @@ void loop() {
   ptc_process(millis());
 
   // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
-  // digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) ^ (millis() % 512 < 128));
+  digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) || (millis() % 512 < 128));
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
-
-  uint8_t tap_nonce = (state & STATE_SINGLE_TAP_NONCE_bm) >> STATE_SINGLE_TAP_NONCE_bp;
-
-  digitalWrite(PIN_LED, tap_nonce == 0);
 
 }
 

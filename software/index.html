@@ -14,8 +14,9 @@
         .active { background: #fff3cd; }
         button { margin: 5px; padding: 8px 15px; cursor: pointer; }
         input[type="range"] { width: 300px; }
-        .info-row { display: flex; justify-content: space-between; margin: 5px 0; }
+        .info-row { display: flex; justify-content: space-between; margin: 5px 0; align-items: center; }
         .info-label { font-weight: bold; }
+        .info-row span:last-child { display: inline-block; min-width: 30px; text-align: right; }
     </style>
 </head>
 <body>
@@ -118,6 +119,11 @@
     <!-- Haptic Control Section -->
     <div class="section">
         <h2>Haptic Control</h2>
+        <div class="info-row">
+            <span class="info-label">Haptic Strength:</span>
+            <input type="range" id="hapticStrengthSlider" min="0" max="7" value="7" disabled>
+            <span id="hapticStrengthValue">7</span>
+        </div>
         <button id="hapticNoHapticsBtn" disabled>No Haptics (pos=127)</button>
         <button id="hapticSmoothBtn" disabled>Smooth + Magnet Ends (pos=20)</button>
         <div class="info-row">
