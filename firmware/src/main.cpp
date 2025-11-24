@@ -268,6 +268,19 @@ void onI2cReceive(int howMany) {
                      ((uint32_t)Wire.read() << 8) |
                      ((uint32_t)Wire.read());
 
+        // Validate haptic configuration before applying
+        HapticMode new_haptic_mode = static_cast<HapticMode>((new_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
+
+        if (new_haptic_mode == HAPTIC_DETENTS) {
+          uint8_t detent_count = (new_config & HAPTIC_DETENT_COUNT_bm) >> HAPTIC_DETENT_COUNT_bp;
+
+          // Validate detent count (must be 1-10)
+          if (detent_count < 1 || detent_count > 10) {
+            // Invalid config - reject by not updating config or nonce
+            break;
+          }
+        }
+
         // Extract nonce from new config
         uint8_t new_nonce = (new_config & HAPTIC_NONCE_bm) >> HAPTIC_NONCE_bp;
 
@@ -397,6 +410,36 @@ void reset_tap_detection() {
   tap_state = TAP_NONE;
 }
 
+// Calculate the nearest detent position in ADC units
+// detent_count: number of detents (1-10)
+// current_position: current fader position in ADC units
+// Returns: ADC value of the nearest detent
+uint16_t get_nearest_detent_position(uint8_t detent_count, uint16_t current_position) {
+  // Special case: single detent at midpoint
+  if (detent_count == 1) {
+    return input_calib_min + (input_calib_max - input_calib_min) / 2;
+  }
+
+  // For 2+ detents: evenly spaced including endpoints
+  uint16_t range = input_calib_max - input_calib_min;
+
+  // Calculate offset from minimum position
+  int16_t offset = current_position - input_calib_min;
+
+  // Calculate which detent index is nearest using rounding
+  // detent_index = round(offset * (detent_count - 1) / range)
+  // Using integer math: add half the divisor before dividing for rounding
+  uint8_t detent_index = ((uint32_t)offset * (detent_count - 1) + range / 2) / range;
+
+  // Clamp to valid range [0, detent_count-1]
+  if (detent_index >= detent_count) {
+    detent_index = detent_count - 1;
+  }
+
+  // Calculate position of that detent
+  return input_calib_min + ((uint32_t)detent_index * range) / (detent_count - 1);
+}
+
 void motor_update() {
   uint32_t now = millis();
 
@@ -497,8 +540,40 @@ void motor_update() {
             TCA0.SPLIT.HCMP1 = 0;    // Motor A
             TCA0.SPLIT.HCMP2 = 0;    // Motor B
           }
+        } else if (haptic_mode == HAPTIC_DETENTS) {
+          // TODO: Use strength value from haptic_config (bits 9-11) to scale the detent force
+          // Detent haptics - pull toward nearest detent position
+          uint8_t detent_count = (haptic_config & HAPTIC_DETENT_COUNT_bm) >> HAPTIC_DETENT_COUNT_bp;
+
+          // Get nearest detent position
+          uint16_t nearest_detent = get_nearest_detent_position(detent_count, input_ewma);
+
+          // Calculate displacement from detent (positive = need to move up, negative = need to move down)
+          int16_t displacement = nearest_detent - input_ewma;
+
+          // Apply dead zone (8 ADC units, same as magnetic endpoints)
+          if (abs(displacement) > 8) {
+            // Calculate restorative force proportional to displacement
+            float delta = displacement * 2.5;
+
+            if (delta > 0) {
+              // Pull toward higher position (Motor A)
+              uint8_t pwm = (delta + 150 > 254) ? 254 : delta + 150;
+              TCA0.SPLIT.HCMP1 = pwm;  // Motor A
+              TCA0.SPLIT.HCMP2 = 0;    // Motor B
+            } else {
+              // Pull toward lower position (Motor B)
+              uint8_t pwm = (-delta + 150 > 254) ? 254 : -delta + 150;
+              TCA0.SPLIT.HCMP1 = 0;    // Motor A
+              TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+            }
+          } else {
+            // Within dead zone, no force
+            TCA0.SPLIT.HCMP1 = 0;    // Motor A
+            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          }
         } else {
-          // No haptics for other modes (NO_HAPTICS, DETENTS)
+          // No haptics for NO_HAPTICS mode
           TCA0.SPLIT.HCMP1 = 0;    // Motor A
           TCA0.SPLIT.HCMP2 = 0;    // Motor B
         }

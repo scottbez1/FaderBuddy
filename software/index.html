@@ -38,6 +38,7 @@
         <h2>Position Control</h2>
         <div class="info-row">
             <span class="info-label">Current Position:</span>
+            <input type="range" id="currentPositionSlider" min="0" max="255" value="0" disabled>
             <span id="currentPosition">--</span>
         </div>
         <div class="info-row">
@@ -119,7 +120,12 @@
         <h2>Haptic Control</h2>
         <button id="hapticNoHapticsBtn" disabled>No Haptics (pos=127)</button>
         <button id="hapticSmoothBtn" disabled>Smooth + Magnet Ends (pos=20)</button>
-        <button id="hapticDetentsBtn" disabled>Detents (count=1, pos=127)</button>
+        <div class="info-row">
+            <span class="info-label">Detent Count:</span>
+            <input type="range" id="detentCountSlider" min="1" max="10" value="1" disabled>
+            <span id="detentCountValue">1</span>
+        </div>
+        <button id="hapticDetentsBtn" disabled>Set Detents (pos=127)</button>
     </div>
 
     <!-- Log Section -->

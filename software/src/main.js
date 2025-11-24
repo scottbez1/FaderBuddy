@@ -70,6 +70,7 @@ function updateUI(state) {
     if (!state) return;
 
     document.getElementById('currentPosition').textContent = state.position;
+    document.getElementById('currentPositionSlider').value = state.position;
     document.getElementById('mode').textContent = MODE_NAMES[state.mode] || 'UNKNOWN';
     document.getElementById('touchStatus').textContent = state.touchDetected ? 'YES' : 'NO';
     document.getElementById('posNonce').textContent = state.positionNonce;
@@ -208,6 +209,7 @@ document.getElementById('connectBtn').addEventListener('click', async () => {
         document.getElementById('selfCalBtn').disabled = false;
         document.getElementById('hapticNoHapticsBtn').disabled = false;
         document.getElementById('hapticSmoothBtn').disabled = false;
+        document.getElementById('detentCountSlider').disabled = false;
         document.getElementById('hapticDetentsBtn').disabled = false;
         document.getElementById('connectionStatus').textContent = 'Connected';
         document.getElementById('connectionStatus').className = 'status connected';
@@ -245,6 +247,7 @@ document.getElementById('disconnectBtn').addEventListener('click', async () => {
     document.getElementById('selfCalBtn').disabled = true;
     document.getElementById('hapticNoHapticsBtn').disabled = true;
     document.getElementById('hapticSmoothBtn').disabled = true;
+    document.getElementById('detentCountSlider').disabled = true;
     document.getElementById('hapticDetentsBtn').disabled = true;
     document.getElementById('connectionStatus').textContent = 'Not connected';
     document.getElementById('connectionStatus').className = 'status disconnected';
@@ -255,6 +258,11 @@ document.getElementById('disconnectBtn').addEventListener('click', async () => {
 // Target slider
 document.getElementById('targetSlider').addEventListener('input', (e) => {
     document.getElementById('targetValue').textContent = e.target.value;
+});
+
+// Detent count slider
+document.getElementById('detentCountSlider').addEventListener('input', (e) => {
+    document.getElementById('detentCountValue').textContent = e.target.value;
 });
 
 // Set target button
@@ -329,11 +337,11 @@ document.getElementById('hapticSmoothBtn').addEventListener('click', async () =>
     hapticNonce = (hapticNonce + 1) & 0x03;
 });
 
-// Haptic button 3: DETENTS with detent_count=1, target=127
+// Haptic button 3: DETENTS with configurable detent count, target=127
 document.getElementById('hapticDetentsBtn').addEventListener('click', async () => {
     const nonce = hapticNonce;
     const mode = fader.HAPTIC_DETENTS;
-    const detentCount = 1;
+    const detentCount = parseInt(document.getElementById('detentCountSlider').value);
     const detentStrength = 0;
     const targetPosition = 127;
 
