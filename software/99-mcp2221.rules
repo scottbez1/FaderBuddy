@@ -1,0 +1,4 @@
+# MCP2221 USB-to-I2C/UART Bridge
+# Allow user access to MCP2221 HID interface for WebHID
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="00dd", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="00dd", MODE="0666", GROUP="plugdev"
