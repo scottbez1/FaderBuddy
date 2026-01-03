@@ -4,7 +4,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
-#include "../../protocol/i2c_data.h"
+#include "../../../protocol/i2c_data.h"
 
 namespace esphome {
 namespace motorFaderESPHomeComponent {
