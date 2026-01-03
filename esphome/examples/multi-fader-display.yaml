@@ -1,0 +1,327 @@
+esphome:
+  name: s3zerofader
+  friendly_name: S3ZeroFader
+  on_boot:
+    - delay: 5s
+    - lvgl.widget.hide: boot_screen
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "7zsbHuNwjBQX5BZzQCkpd0li8qZ648uvVAQDSkdIHO8="
+
+ota:
+  - platform: esphome
+    password: "oaiwefoiaseoifnaoiejf"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+captive_portal:
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/scottbez1/motorFader.git
+      username: !secret github_username
+      password: !secret github_password
+    components: [motorFaderESPHomeComponent]
+    
+
+# I2C Bus Configuration
+i2c:
+  sda: GPIO12
+  scl: GPIO13
+  scan: true
+  id: bus_a
+
+# SPI Bus for Display
+spi:
+  clk_pin: GPIO1
+  mosi_pin: GPIO2
+  id: spi_bus
+
+# ST7789 Display Configuration (76x284)
+display:
+  - platform: mipi_spi
+    model: ST7789V
+    id: my_display
+
+    dc_pin: GPIO4
+    cs_pin: GPIO5
+    reset_pin: GPIO3
+
+    dimensions: 
+      height: 80 # only 76 useable but otherwise will show glitchy lines
+      width: 284
+      offset_height: 82
+      offset_width: 18
+
+    rotation: 90 # when choosing other rotations you must also swap the height/width and offsets
+    auto_clear_enabled: false
+
+# LVGL Configuration
+lvgl:
+  displays:
+    - my_display
+  touchscreens: []
+
+  style_definitions:
+    - id: style_card
+      bg_color: 0x880088
+      bg_opa: COVER
+      radius: 10
+      border_width: 0
+      pad_all: 0
+      border_color: 0xFFFFFF
+
+  top_layer:
+    widgets:
+      - obj:
+          id: boot_screen
+          x: 0
+          y: 0
+          width: 100%
+          height: 100%
+          bg_color: 0x000000
+          bg_opa: COVER
+          radius: 0
+          pad_all: 0
+          border_width: 0
+          widgets:
+            - label:
+                text: "smart motor fader"
+                text_font: righteous
+                text_color: 0xFFFFFF
+                align: CENTER
+
+  widgets:
+    - obj:  # Main container
+        id: main_container
+        width: 284
+        height: 76
+        bg_color: 0x000000
+        bg_opa: COVER
+        border_width: 0
+        pad_all: 0
+        widgets:
+          # First card - Floor Lamp
+          - obj:
+              id: card1
+              x: 4
+              y: 10
+              width: 88
+              height: 60
+              styles: style_card
+              widgets:
+                - label:
+                    id: icon1
+                    text: "\U000F08DD"  # mdi:floor-lamp
+                    text_font: mdi_icons
+                    text_color: 0xFFFFFF
+                    align: CENTER
+
+          # Second card - Desk Lamp
+          - obj:
+              id: card2
+              x: 98
+              y: 10
+              width: 88
+              height: 60
+              styles: style_card
+              widgets:
+                - label:
+                    id: icon2
+                    text: "\U000F1B20"  # mdi:desk-lamp
+                    text_font: mdi_icons
+                    text_color: 0xFFFFFF
+                    align: CENTER
+
+          # Third card - Cat
+          - obj:
+              id: card3
+              x: 192
+              y: 10
+              width: 88
+              height: 60
+              styles: style_card
+              widgets:
+                - label:
+                    id: icon3
+                    text: "\U000F011B"  # mdi:cat
+                    text_font: mdi_icons
+                    text_color: 0xFFFFFF
+                    align: CENTER
+
+# Display Backlight with PWM control
+output:
+  - platform: ledc
+    pin: 
+      number: GPIO6
+      inverted: true
+    id: backlight_pwm
+    frequency: 1000Hz
+
+light:
+  # Display backlight
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: display_backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0.5s
+  
+  # WS2812 LED strip
+  - platform: neopixelbus
+    type: GRB
+    variant: WS2812
+    pin: GPIO21
+    num_leds: 1  # Adjust to your actual number of LEDs
+    name: "LED Strip"
+    id: led_strip
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    effects:
+      - addressable_rainbow:
+      - addressable_scan:
+      - addressable_twinkle:
+
+# Font for display (you'll need to add a .ttf file)
+font:
+  - file: "gfonts://Roboto"
+    id: my_font
+    size: 12
+  - file: "gfonts://Righteous"
+    id: righteous
+    size: 22
+  # Material Design Icons
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: mdi_icons
+    size: 48
+    glyphs:
+      - "\U000F08DD"  # mdi:floor-lamp
+      - "\U000F1B20"  # mdi:desk-lamp
+      - "\U000F011B"  # mdi:cat
+
+motorFaderESPHomeComponent:
+  - id: motor_fader
+    address: 0x22
+    update_interval: 10ms
+    invert: true
+    value_change_rate_limit: 200ms
+    on_manual_move:
+      then:
+        # Send fader position to home assistant
+        - homeassistant.action:
+            action: light.turn_on
+            data:
+              entity_id: light.ikea_of_sweden_tradfri_bulb_e26_ws_globe_1100lm  # light.gledopto_light_a
+              brightness: !lambda 'return x;'
+              transition: "0"
+    on_touch_change:
+      then:
+        - lvgl.widget.update:
+            id: card1
+            border_width: !lambda |-
+              if (x) {
+                return 2;
+              } else {
+                return 0;
+              }
+
+  - id: motor_fader2
+    address: 0x21
+    update_interval: 10ms
+    invert: true
+    value_change_rate_limit: 25ms
+    on_manual_move:
+      then:
+        # Send fader position to home assistant
+        - homeassistant.action:
+            action: light.turn_on
+            data:
+              entity_id: light.esphome_web_318bc2_desk_light
+              brightness: !lambda 'return x;'
+              transition: "0"
+    on_touch_change:
+      then:
+        - lvgl.widget.update:
+            id: card2
+            border_width: !lambda |-
+              if (x) {
+                return 2;
+              } else {
+                return 0;
+              }
+
+  - id: motor_fader3
+    address: 0x20
+    update_interval: 10ms
+    invert: true
+    value_change_rate_limit: 50ms
+    on_touch_change:
+      then:
+        - lvgl.widget.update:
+            id: card3
+            border_width: !lambda |-
+              if (x) {
+                return 2;
+              } else {
+                return 0;
+              }
+
+sensor:
+  - platform: homeassistant
+    name: "Living Room Brightness"
+    entity_id: light.ikea_of_sweden_tradfri_bulb_e26_ws_globe_1100lm  # light.gledopto_light_a
+    attribute: brightness
+    id: living_room_brightness
+    internal: true
+    on_value:
+      then:
+        # Send home assistant light brightness to the fader
+        - lambda: |-
+            ESP_LOGD("main", "Brightness changed to: %f", x);
+            id(motor_fader).remote_move_to(isnan(x) ? 0 : x);
+  - platform: homeassistant
+    name: "Desk Lamp Brightness"
+    entity_id: light.esphome_web_318bc2_desk_light
+    attribute: brightness
+    id: desk_lamp_brightness
+    internal: true
+    on_value:
+      then:
+        # Send home assistant light brightness to the fader
+        - lambda: |-
+            ESP_LOGD("main", "Brightness changed to: %f", x);
+            id(motor_fader2).remote_move_to(isnan(x) ? 0 : x);
+
+button:
+  - platform: template
+    name: Self Calibrate 1
+    id: btn_self_cal_1
+    on_press:
+      - lambda: |-
+          id(motor_fader).run_self_calibration();
+  - platform: template
+    name: Self Calibrate 2
+    id: btn_self_cal_2
+    on_press:
+      - lambda: |-
+          id(motor_fader2).run_self_calibration();
+  - platform: template
+    name: Self Calibrate 3
+    id: btn_self_cal_3
+    on_press:
+      - lambda: |-
+          id(motor_fader3).run_self_calibration();
+

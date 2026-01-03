@@ -4,7 +4,7 @@
 #include <megaTinyCore.h>
 #include <EEPROM.h>
 
-#include "shared/i2c_data.h"
+#include "i2c_data.h"
 #include "util.h"
 
 

@@ -1,0 +1,5 @@
+{
+  "name": "MotorFaderProtocol",
+  "version": "1.0.0",
+  "description": "Shared I2C protocol definitions for motor fader control system"
+}
