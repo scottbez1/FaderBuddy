@@ -34,6 +34,7 @@ external_components:
       url: https://github.com/scottbez1/motorFader.git
       username: !secret github_username
       password: !secret github_password
+    refresh: 0s
     components: [motorFaderESPHomeComponent]
     
 
@@ -204,7 +205,7 @@ font:
     id: righteous
     size: 22
   # Material Design Icons
-  - file: 'fonts/materialdesignicons-webfont.ttf'
+  - file: "gfonts://Roboto" # 'fonts/materialdesignicons-webfont.ttf'
     id: mdi_icons
     size: 48
     glyphs:
