@@ -126,7 +126,7 @@ lvgl:
               widgets:
                 - label:
                     id: icon1
-                    text: "\U000F08DD"  # mdi:floor-lamp
+                    text: "A"  # mdi:floor-lamp
                     text_font: mdi_icons
                     text_color: 0xFFFFFF
                     align: CENTER
@@ -142,7 +142,7 @@ lvgl:
               widgets:
                 - label:
                     id: icon2
-                    text: "\U000F1B20"  # mdi:desk-lamp
+                    text: "B"  # mdi:desk-lamp
                     text_font: mdi_icons
                     text_color: 0xFFFFFF
                     align: CENTER
@@ -158,7 +158,7 @@ lvgl:
               widgets:
                 - label:
                     id: icon3
-                    text: "\U000F011B"  # mdi:cat
+                    text: "C"  # mdi:cat
                     text_font: mdi_icons
                     text_color: 0xFFFFFF
                     align: CENTER
@@ -208,10 +208,6 @@ font:
   - file: "gfonts://Roboto" # 'fonts/materialdesignicons-webfont.ttf'
     id: mdi_icons
     size: 48
-    glyphs:
-      - "\U000F08DD"  # mdi:floor-lamp
-      - "\U000F1B20"  # mdi:desk-lamp
-      - "\U000F011B"  # mdi:cat
 
 motorFaderESPHomeComponent:
   - id: motor_fader
