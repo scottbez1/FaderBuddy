@@ -110,7 +110,6 @@ uint16_t remote_movement_start_position = 0;
 TapState tap_state = TAP_NONE;
 uint32_t tap_timestamp = 0;          // Timestamp of last tap-related event for duration/timeout tracking
 uint16_t tap_position_start = 0;     // Raw ADC value when first touch started
-uint8_t single_tap_nonce = 0;
 uint8_t double_tap_nonce = 0;
 
 uint32_t self_calibration_start = 0;
@@ -403,11 +402,6 @@ void increment_position_nonce() {
   state |= position_nonce << STATE_POSITION_NONCE_bp;
 }
 
-void increment_single_tap_nonce() {
-  single_tap_nonce++;
-  single_tap_nonce &= 0x03;  // Keep only 2 bits (0-3)
-}
-
 void increment_double_tap_nonce() {
   double_tap_nonce++;
   double_tap_nonce &= 0x03;  // Keep only 2 bits (0-3)
@@ -464,10 +458,9 @@ void motor_update() {
   input_ewma = adc_val * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
   Mode mode = get_mode();
 
-  // If we didn't get a second tap start in time, we register a single tap event
+  // If we didn't get a second tap start in time, reset tap detection
   if (tap_state == TAP_WAITING_FOR_DOUBLE) {
     if (now - tap_timestamp > DOUBLE_TAP_MAX_INTERVAL) {
-      increment_single_tap_nonce();
       reset_tap_detection();
     }
   }
@@ -668,10 +661,7 @@ void motor_update() {
   state &= ~(uint32_t)STATE_RAW_ADC_bm;
   state |= ((uint32_t)adc_val << STATE_RAW_ADC_bp) & (uint32_t)STATE_RAW_ADC_bm;
 
-  // Pack tap nonces into state (TODO: calculate on tap changes instead of every loop)
-  state &= ~STATE_SINGLE_TAP_NONCE_bm;
-  state |= ((uint32_t)single_tap_nonce << STATE_SINGLE_TAP_NONCE_bp) & STATE_SINGLE_TAP_NONCE_bm;
-
+  // Pack double tap nonce into state (TODO: calculate on tap changes instead of every loop)
   state &= ~STATE_DOUBLE_TAP_NONCE_bm;
   state |= ((uint32_t)double_tap_nonce << STATE_DOUBLE_TAP_NONCE_bp) & STATE_DOUBLE_TAP_NONCE_bm;
 

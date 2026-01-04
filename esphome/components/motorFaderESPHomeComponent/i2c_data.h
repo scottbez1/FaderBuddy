@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#define I2C_PROTOCOL_VERSION (3)
+#define I2C_PROTOCOL_VERSION (4)
 
 
 /*
@@ -11,7 +11,7 @@
  *
  * Addr | Register Name | Access  | Type | Description
  * -----|---------------|---------|------|------------
- * 0x00 | VERSION       | R       | u8   | Protocol version (currently 3)
+ * 0x00 | VERSION       | R       | u8   | Protocol version (currently 4)
  * -----|---------------|---------|------|------------
  * 0x01 | STATE         | R       | u32  | Current state
  * -----|---------------|---------|------|------------
@@ -88,57 +88,52 @@ enum HapticMode : uint8_t {
 #define STATE_MODE_bs (3)
 #define STATE_MODE_bm (((1U << STATE_MODE_bs) - 1) << STATE_MODE_bp)
 
-// Settings nonce: 2 bits at position 4
-#define STATE_SETTINGS_NONCE_bp      (4)
-#define STATE_SETTINGS_NONCE_bs      (2)
-#define STATE_SETTINGS_NONCE_bm      (((1U << STATE_SETTINGS_NONCE_bs) - 1) << STATE_SETTINGS_NONCE_bp)
+// Haptic config nonce: 3 bits at position 4
+#define STATE_HAPTIC_CONFIG_NONCE_bp      (4)
+#define STATE_HAPTIC_CONFIG_NONCE_bs      (3)
+#define STATE_HAPTIC_CONFIG_NONCE_bm      (((1U << STATE_HAPTIC_CONFIG_NONCE_bs) - 1) << STATE_HAPTIC_CONFIG_NONCE_bp)
 
-// Position: 8 bits at position 6
-#define STATE_POSITION_bp            (6)
+// Position: 8 bits at position 7
+#define STATE_POSITION_bp            (7)
 #define STATE_POSITION_bs            (8)
 #define STATE_POSITION_bm            (((1U << STATE_POSITION_bs) - 1) << STATE_POSITION_bp)
 
-// Position nonce: 2 bits at position 14
-#define STATE_POSITION_NONCE_bp            (14)
+// Position nonce: 2 bits at position 15
+#define STATE_POSITION_NONCE_bp            (15)
 #define STATE_POSITION_NONCE_bs            (2)
 #define STATE_POSITION_NONCE_bm            (((1U << STATE_POSITION_NONCE_bs) - 1) << STATE_POSITION_NONCE_bp)
 
-// Raw ADC: 11 bits at position 16
-#define STATE_RAW_ADC_bp            (16)
+// Raw ADC: 11 bits at position 17
+#define STATE_RAW_ADC_bp            (17)
 #define STATE_RAW_ADC_bs            (11)
 #define STATE_RAW_ADC_bm            (((1UL << STATE_RAW_ADC_bs) - 1) << STATE_RAW_ADC_bp)
 
-// Single tap nonce: 2 bits at position 27
-#define STATE_SINGLE_TAP_NONCE_bp   (27)
-#define STATE_SINGLE_TAP_NONCE_bs   (2)
-#define STATE_SINGLE_TAP_NONCE_bm   (((1UL << STATE_SINGLE_TAP_NONCE_bs) - 1) << STATE_SINGLE_TAP_NONCE_bp)
-
-// Double tap nonce: 2 bits at position 29
-#define STATE_DOUBLE_TAP_NONCE_bp   (29)
+// Double tap nonce: 2 bits at position 28
+#define STATE_DOUBLE_TAP_NONCE_bp   (28)
 #define STATE_DOUBLE_TAP_NONCE_bs   (2)
 #define STATE_DOUBLE_TAP_NONCE_bm   (((1UL << STATE_DOUBLE_TAP_NONCE_bs) - 1) << STATE_DOUBLE_TAP_NONCE_bp)
 
-// Haptic nonce: 2 bits at position 0
+// Haptic nonce: 3 bits at position 0
 #define HAPTIC_NONCE_bp             (0)
-#define HAPTIC_NONCE_bs             (2)
+#define HAPTIC_NONCE_bs             (3)
 #define HAPTIC_NONCE_bm             (((1U << HAPTIC_NONCE_bs) - 1) << HAPTIC_NONCE_bp)
 
-// Haptic mode: 3 bits at position 2
-#define HAPTIC_MODE_bp              (2)
+// Haptic mode: 3 bits at position 3
+#define HAPTIC_MODE_bp              (3)
 #define HAPTIC_MODE_bs              (3)
 #define HAPTIC_MODE_bm              (((1U << HAPTIC_MODE_bs) - 1) << HAPTIC_MODE_bp)
 
-// Detent count: 4 bits at position 5
-#define HAPTIC_DETENT_COUNT_bp      (5)
+// Detent count: 4 bits at position 6
+#define HAPTIC_DETENT_COUNT_bp      (6)
 #define HAPTIC_DETENT_COUNT_bs      (4)
 #define HAPTIC_DETENT_COUNT_bm      (((1U << HAPTIC_DETENT_COUNT_bs) - 1) << HAPTIC_DETENT_COUNT_bp)
 
-// Detent strength: 3 bits at position 9
-#define HAPTIC_DETENT_STRENGTH_bp   (9)
+// Detent strength: 3 bits at position 10
+#define HAPTIC_DETENT_STRENGTH_bp   (10)
 #define HAPTIC_DETENT_STRENGTH_bs   (3)
 #define HAPTIC_DETENT_STRENGTH_bm   (((1U << HAPTIC_DETENT_STRENGTH_bs) - 1) << HAPTIC_DETENT_STRENGTH_bp)
 
-// Target position: 8 bits at position 12
-#define HAPTIC_TARGET_POSITION_bp   (12)
+// Target position: 8 bits at position 13
+#define HAPTIC_TARGET_POSITION_bp   (13)
 #define HAPTIC_TARGET_POSITION_bs   (8)
 #define HAPTIC_TARGET_POSITION_bm   (((1UL << HAPTIC_TARGET_POSITION_bs) - 1) << HAPTIC_TARGET_POSITION_bp)
