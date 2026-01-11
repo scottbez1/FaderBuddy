@@ -62,12 +62,17 @@ bool MotorFaderI2C::readProtocolVersion(uint8_t& version) {
   return readRegister(REG_VERSION, &version, 1);
 }
 
-bool MotorFaderI2C::readTargetPosition(uint8_t& target) {
-  return readRegister(REG_TARGET, &target, 1);
-}
-
 bool MotorFaderI2C::writeTargetPosition(uint8_t target) {
-  return writeRegister(REG_TARGET, target);
+  if (_wire == nullptr) {
+    return false;
+  }
+
+  // Layer-addressed write to layer 0: [register, layer, position]
+  _wire->beginTransmission(_address);
+  _wire->write(REG_LAYER_TARGET);
+  _wire->write(0);  // Layer 0
+  _wire->write(target);
+  return _wire->endTransmission() == 0;
 }
 
 bool MotorFaderI2C::readUptime(uint32_t& uptime) {
@@ -132,3 +137,4 @@ bool MotorFaderI2C::readTouchRecalCount(uint16_t& recalCount) {
   recalCount = ((uint16_t)data[0] << 8) | data[1];
   return true;
 }
+

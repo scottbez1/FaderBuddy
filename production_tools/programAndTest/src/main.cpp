@@ -753,6 +753,15 @@ void readMotorFaderVersionInfo() {
   if (motorFader.readProtocolVersion(versionInfo.protocolVersion)) {
     Serial.print("Motor Fader Protocol Version: ");
     Serial.println(versionInfo.protocolVersion);
+
+    // Require protocol version 5
+    if (versionInfo.protocolVersion != 5) {
+      Serial.print("ERROR: Expected protocol version 5, got ");
+      Serial.println(versionInfo.protocolVersion);
+      versionInfo.valid = false;
+      return;
+    }
+
     versionInfo.valid = true;
   } else {
     Serial.println("Failed to read protocol version");

@@ -16,8 +16,7 @@ public:
   // Protocol functions
   bool readState(uint32_t& state);
   bool readProtocolVersion(uint8_t& version);
-  bool readTargetPosition(uint8_t& target);
-  bool writeTargetPosition(uint8_t target);
+  bool writeTargetPosition(uint8_t target);  // Writes to layer 0
   bool readUptime(uint32_t& uptime);
   bool readTouchRaw(uint16_t& touchRaw);
   bool readSerialNumber(uint8_t serial[10]);  // Read 10-byte serial number

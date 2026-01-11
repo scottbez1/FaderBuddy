@@ -22,12 +22,12 @@ CONF_ON_MANUAL_MOVE = "on_manual_move"
 CONF_ON_TOUCH_CHANGE = "on_touch_change"
 CONF_ON_DOUBLE_TAP = "on_double_tap"
 CONF_INVERT = "invert"
-CONF_VALUE_CHANGE_RATE_LIMIT = "value_change_rate_limit"
 CONF_LAYER_HAPTICS = "layer_haptics"
 CONF_LAYER = "layer"
 CONF_DETENT_COUNT = "detent_count"
 CONF_DETENT_STRENGTH = "detent_strength"
 CONF_POSITION = "position"
+CONF_VALUE_CHANGE_MIN_INTERVAL = "value_change_min_interval"
 
 # Schema for a single layer haptic configuration
 LAYER_HAPTIC_SCHEMA = cv.Schema({
@@ -35,6 +35,7 @@ LAYER_HAPTIC_SCHEMA = cv.Schema({
     cv.Required(CONF_MODE): cv.enum(HAPTIC_MODES, lower=True),
     cv.Optional(CONF_DETENT_COUNT, default=0): cv.int_range(min=0, max=15),
     cv.Optional(CONF_DETENT_STRENGTH, default=0): cv.int_range(min=0, max=7),
+    cv.Optional(CONF_VALUE_CHANGE_MIN_INTERVAL, default="0ms"): cv.positive_time_period_milliseconds,
 })
 
 CONFIG_SCHEMA = (
@@ -44,7 +45,6 @@ CONFIG_SCHEMA = (
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_DOUBLE_TAP): automation.validate_automation(single=True),
         cv.Optional(CONF_INVERT, default=False): cv.boolean,
-        cv.Optional(CONF_VALUE_CHANGE_RATE_LIMIT): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_LAYER_HAPTICS): cv.ensure_list(LAYER_HAPTIC_SCHEMA),
     })
     .extend(cv.polling_component_schema("50ms"))
@@ -59,20 +59,19 @@ async def to_code(config):
     if CONF_INVERT in config:
         cg.add(var.set_invert(config[CONF_INVERT]))
 
-    if CONF_VALUE_CHANGE_RATE_LIMIT in config:
-        cg.add(var.set_value_change_rate_limit(config[CONF_VALUE_CHANGE_RATE_LIMIT]))
-
-    # Apply layer haptic configurations if specified
+    # Store initial layer haptic configurations (sent during setup)
     if CONF_LAYER_HAPTICS in config:
         for haptic_config in config[CONF_LAYER_HAPTICS]:
             layer = haptic_config[CONF_LAYER]
             mode = haptic_config[CONF_MODE]
             detent_count = haptic_config[CONF_DETENT_COUNT]
             detent_strength = haptic_config[CONF_DETENT_STRENGTH]
+            min_interval = haptic_config[CONF_VALUE_CHANGE_MIN_INTERVAL]
 
-            cg.add(var.set_layer_haptic_config(
-                layer, mode, detent_count, detent_strength, 0
+            cg.add(var.store_initial_layer_haptic_config(
+                layer, mode, detent_count, detent_strength
             ))
+            cg.add(var.set_layer_value_change_min_interval(layer, min_interval))
 
     if CONF_ON_MANUAL_MOVE in config:
         await automation.build_automation(

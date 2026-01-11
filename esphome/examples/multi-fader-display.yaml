@@ -29,13 +29,19 @@ wifi:
 captive_portal:
 
 external_components:
+  # Local path for testing/development within this repo
   - source:
-      type: git
-      url: https://github.com/scottbez1/motorFader.git
-      username: !secret github_username
-      password: !secret github_password
-    refresh: 0s
+      type: local
+      path: ../components
     components: [motorFaderESPHomeComponent]
+
+  # For use outside this repo, use the GitHub source instead:
+  # - source:
+  #     type: git
+  #     url: https://github.com/scottbez1/motorFader.git
+  #     ref: main  # or specify a tag/branch
+  #   refresh: 0s
+  #   components: [motorFaderESPHomeComponent]
     
 
 # I2C Bus Configuration
@@ -214,7 +220,10 @@ motorFaderESPHomeComponent:
     address: 0x22
     update_interval: 10ms
     invert: true
-    value_change_rate_limit: 200ms
+    layer_haptics:
+      - layer: 0
+        mode: smooth
+        value_change_min_interval: 200ms
     on_manual_move:
       then:
         # Send fader position to home assistant
@@ -239,7 +248,12 @@ motorFaderESPHomeComponent:
     address: 0x21
     update_interval: 10ms
     invert: true
-    value_change_rate_limit: 25ms
+    layer_haptics:
+      - layer: 0
+        mode: detents
+        detent_count: 5
+        detent_strength: 3
+        value_change_min_interval: 25ms
     on_manual_move:
       then:
         # Send fader position to home assistant
@@ -264,7 +278,10 @@ motorFaderESPHomeComponent:
     address: 0x20
     update_interval: 10ms
     invert: true
-    value_change_rate_limit: 50ms
+    layer_haptics:
+      - layer: 0
+        mode: smooth_with_magnets
+        value_change_min_interval: 50ms
     on_touch_change:
       then:
         - lvgl.widget.update:

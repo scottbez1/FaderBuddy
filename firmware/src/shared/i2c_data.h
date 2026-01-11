@@ -15,7 +15,7 @@
  * -----|---------------------|---------|------|------------
  * 0x01 | STATE               | R       | u32  | Current state (includes active layer in bits 4-6)
  * -----|---------------------|---------|------|------------
- * 0x02 | TARGET              | R/W     | u8   | Target fader position (0-255) [DEPRECATED - use REG_LAYER_TARGET]
+ * 0x02 | (removed in v5)     |         |      | Use REG_LAYER_TARGET instead
  * -----|---------------------|---------|------|------------
  * 0x03 | UPTIME              | R       | u32  | Uptime milliseconds
  * -----|---------------------|---------|------|------------
@@ -62,7 +62,7 @@
 // I2C register addresses
 #define REG_VERSION 0x00  // Protocol version
 #define REG_STATE   0x01  // Current
-#define REG_TARGET  0x02  // Target position (0-255)
+// 0x02 removed in v5 - use REG_LAYER_TARGET instead
 #define REG_UPTIME  0x03
 #define REG_CAL_TOUCH 0x04
 #define REG_CLEAR_ERROR 0x05

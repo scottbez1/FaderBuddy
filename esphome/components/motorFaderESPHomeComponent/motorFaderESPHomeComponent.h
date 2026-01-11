@@ -8,28 +8,8 @@
 namespace esphome {
 namespace motorFaderESPHomeComponent {
 
-// Per-layer state structure
-struct LayerState {
-  // Position to restore when switching to this layer (USER-FACING position 0-255)
-  // This is the position the user expects to see, accounting for invert_ setting
-  uint8_t restore_position = 0;
-
-  // The haptic config nonce value for this layer (maps to layer index)
-  uint8_t expected_nonce = 0;
-
-  // Cached haptic configuration for this layer (32-bit packed value)
-  uint32_t haptic_config = 0;
-
-  // Last confirmed position from firmware when this layer was active (HARDWARE position 0-255)
-  // This is the raw position from firmware, not accounting for invert_ setting
-  uint8_t last_confirmed_hw_position = 0;
-
-  // Last known position nonce when this layer was active
-  uint8_t last_position_nonce = 0;
-
-  // Track if layer has ever been active
-  bool has_been_initialized = false;
-};
+// Protocol v5: Layer management is now handled in firmware
+// ESPHome component is a simple protocol wrapper
 
 class MotorFaderESPHomeComponent : public PollingComponent, public i2c::I2CDevice {
 
@@ -43,22 +23,24 @@ class MotorFaderESPHomeComponent : public PollingComponent, public i2c::I2CDevic
      void dump_config() override;
      float get_setup_priority() const override;
 
-    // Layer management
+    // Layer management (Protocol v5: forwards to firmware)
     void set_active_layer(uint8_t layer_index);
-    uint8_t get_active_layer() const { return active_layer_; }
+    uint8_t get_active_layer() const;
     void remote_move_to(uint8_t position, uint8_t layer = 0);
     uint8_t get_position(uint8_t layer = 0) const;
     void set_layer_haptic_config(
         uint8_t layer,
         uint8_t mode,
         uint8_t detent_count = 0,
-        uint8_t detent_strength = 0,
-        uint8_t target_position = 0
+        uint8_t detent_strength = 0
     );
 
     void run_self_calibration();
     void set_invert(bool invert) { invert_ = invert; }
-    void set_value_change_rate_limit(uint32_t rate_limit_ms) { value_change_rate_limit_ = rate_limit_ms; }
+    void set_layer_value_change_min_interval(uint8_t layer, uint32_t min_interval_ms);
+
+    // Called only from codegen to store initial haptic configs
+    void store_initial_layer_haptic_config(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
 
     Trigger<uint8_t, uint8_t> *get_on_manual_move_trigger() const { return on_manual_move_; }
     Trigger<bool, uint8_t> *get_on_touch_change_trigger() const { return on_touch_change_; }
@@ -66,43 +48,41 @@ class MotorFaderESPHomeComponent : public PollingComponent, public i2c::I2CDevic
 
     protected:
         bool read_sensor_data_();
+        void send_layer_haptic_config_(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
+        bool write_with_retry_(const uint8_t *data, size_t len, uint8_t retries = 3);
 
         Trigger<uint8_t, uint8_t> *on_manual_move_{new Trigger<uint8_t, uint8_t>()};
         Trigger<bool, uint8_t> *on_touch_change_{new Trigger<bool, uint8_t>()};
         Trigger<uint8_t> *on_double_tap_{new Trigger<uint8_t>()};
 
     private:
-        // Helper functions
-        uint32_t make_haptic_config_internal_(
-            uint8_t nonce,
-            uint8_t mode,
-            uint8_t detent_count,
-            uint8_t detent_strength,
-            uint8_t target_position
-        );
-        void write_haptic_config_(uint32_t config);
-        void write_target_position_(uint8_t position);
-
-        // Layer management
-        uint8_t active_layer_{0};
-        LayerState layer_state_[8];
-        optional<uint8_t> pending_layer_switch_;
-        uint32_t layer_switch_timeout_{0};
-        static constexpr uint32_t LAYER_SWITCH_TIMEOUT_MS = 500;
-
-        // Existing state variables
+        // State variables
         uint16_t last_hw_position_{0};  // Last HARDWARE position from firmware (0-255, raw from I2C)
         uint8_t last_position_nonce_{0};
         uint32_t last_state_{0};
         HighFrequencyLoopRequester high_freq_;
         bool invert_{false};
-        uint32_t value_change_rate_limit_{0};  // 0 = no rate limiting
-        uint32_t last_trigger_time_{0};
-        uint8_t deferred_value_{0};  // USER-FACING position for deferred trigger
-        uint8_t deferred_value_layer_{0};
-        bool has_deferred_value_{false};
         bool last_touch_{false};
         uint8_t last_double_tap_nonce_{0};
+
+        // Per-layer state for value change rate limiting
+        struct LayerState {
+            uint32_t value_change_min_interval{0};  // 0 = no rate limiting
+            uint32_t last_trigger_time{0};
+            uint8_t deferred_value{0};  // USER-FACING position for deferred trigger
+            bool has_deferred_value{false};
+        };
+        LayerState layer_states_[8] = {};
+
+        // Initial haptic configurations (set during codegen, sent once during setup)
+        struct InitialHapticConfig {
+            uint8_t layer;
+            uint8_t mode;
+            uint8_t detent_count;
+            uint8_t detent_strength;
+            bool valid;
+        };
+        InitialHapticConfig initial_haptic_configs_[8] = {};
 };
 
 // Action classes for automation
@@ -147,8 +127,7 @@ template<typename... Ts> class SetLayerHapticConfigAction : public Action<Ts...>
         this->layer_.value(x...),
         this->mode_.value(x...),
         this->detent_count_.value(x...),
-        this->detent_strength_.value(x...),
-        0  // target_position
+        this->detent_strength_.value(x...)
     );
   }
 

@@ -4,7 +4,7 @@
 #include <megaTinyCore.h>
 #include <EEPROM.h>
 
-#include "i2c_data.h"
+#include "shared/i2c_data.h"
 #include "util.h"
 
 
@@ -185,9 +185,6 @@ void onI2cRequest() {
       Wire.write((state >> 16) & 0xFF);
       Wire.write((state >> 8) & 0xFF);
       Wire.write(state & 0xFF);
-  } else if (r == REG_TARGET) {
-      Wire.write((target_adc >> 8) & 0xFF);  // High byte
-      Wire.write(target_adc & 0xFF);         // Low byte
   } else if (r == REG_UPTIME) {
       uint32_t uptime = millis();
       Wire.write((uptime >> 24) & 0xFF);
@@ -251,29 +248,6 @@ void onI2cReceive(int howMany) {
   current_register = Wire.read();
   
   switch (current_register) {
-    case REG_TARGET:
-      if (howMany == 2) {  // 8-bit value
-        uint16_t new_value = 0;
-        new_value = Wire.read(); //(Wire.read() << 8) | Wire.read();
-        Mode mode = get_mode();
-        if (mode == Mode::MODE_INPUT_IDLE) {
-          target_adc = BOUNDED_LERP_UINT16(new_value, 0, 255, input_calib_min, input_calib_max);
-          set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
-          remote_movement_start = millis();
-          remote_movement_start_position = input_ewma;
-          remote_movement_steady_start = millis();
-        } else if (mode == Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
-          target_adc = BOUNDED_LERP_UINT16(new_value, 0, 255, input_calib_min, input_calib_max);
-          // extend the timeout
-          remote_movement_start = millis();
-          remote_movement_start_position = input_ewma;
-          remote_movement_steady_start = millis();
-        } else if (mode == Mode::MODE_INPUT_ACTIVE) {
-          // Ignore commanded target when in active input mode
-          pending_report_on_idle = true;
-        }
-      }
-      break;
     case REG_CAL_TOUCH:
       pending_calibrate_touch = true;
       break;
