@@ -89,8 +89,15 @@ int16_t target_adc = 512;
 uint8_t current_register = REG_VERSION;  // Track which register was last accessed
 
 // Haptic configuration storage
-uint32_t haptic_config = 0;  // Bit-packed haptic configuration register
-uint8_t last_haptic_nonce = 0;  // Track last seen nonce to detect changes
+uint32_t haptic_config = 0;  // Bit-packed haptic configuration register (currently active layer's config)
+uint8_t last_haptic_nonce = 0;  // Track last seen nonce to detect changes [DEPRECATED in v5]
+
+// Layer state storage (27 bytes total) - Protocol v5+
+uint16_t layer_haptic_configs[8];      // 16 bytes - 16-bit haptic config per layer
+uint8_t layer_restore_positions[8];    // 8 bytes - restore position per layer (0-255)
+uint8_t active_layer = 0;              // 1 byte - currently active layer (0-7)
+uint8_t pending_layer_change = 0xFF;   // 1 byte - deferred layer change (0xFF = none, 0-7 = layer)
+uint8_t queried_layer = 0;             // 1 byte - for layer-addressed read protocol
 
 const int16_t WINDOW_SIZE = 8;
 int16_t position_window_upper = WINDOW_SIZE;
@@ -124,6 +131,12 @@ bool pending_report_on_idle = false;
 bool pending_calibrate_touch = false;
 void calibrate_touch();
 void reset_tap_detection();
+
+// Forward declarations for layer management functions (Protocol v5+)
+void request_layer_change(uint8_t new_layer);
+void apply_layer_change(uint8_t new_layer);
+void write_layer_target(uint8_t layer, uint8_t target);
+void write_layer_haptic_config(uint8_t layer, uint16_t config);
 
 Mode get_mode() {
   return static_cast<Mode>((state & STATE_MODE_bm) >> STATE_MODE_bp);
@@ -212,11 +225,21 @@ void onI2cRequest() {
       Wire.write((touch_recal_count >> 8) & 0xFF);  // High byte
       Wire.write(touch_recal_count & 0xFF);         // Low byte
   } else if (r == REG_HAPTIC_CONFIG) {
-      // Haptic configuration (unsigned 32-bit, bit-packed)
+      // Haptic configuration (unsigned 32-bit, bit-packed) [DEPRECATED in v5]
       Wire.write((haptic_config >> 24) & 0xFF);
       Wire.write((haptic_config >> 16) & 0xFF);
       Wire.write((haptic_config >> 8) & 0xFF);
       Wire.write(haptic_config & 0xFF);
+  } else if (r == REG_ACTIVE_LAYER) {
+      Wire.write(active_layer);
+  } else if (r == REG_LAYER_TARGET) {
+      // Return restore position for the previously queried layer
+      Wire.write(layer_restore_positions[queried_layer]);
+  } else if (r == REG_LAYER_HAPTIC_CONFIG) {
+      // Return haptic config for the previously queried layer (16 bits, big-endian)
+      uint16_t config = layer_haptic_configs[queried_layer];
+      Wire.write((config >> 8) & 0xFF);  // High byte
+      Wire.write(config & 0xFF);          // Low byte
   }
 }
 
@@ -308,6 +331,34 @@ void onI2cReceive(int howMany) {
 
         // Always update the stored config
         haptic_config = new_config;
+      }
+      break;
+    case REG_ACTIVE_LAYER:
+      if (howMany == 2) {  // register + 1 byte layer index
+        uint8_t new_layer = Wire.read() & 0x07;  // Clamp to 0-7
+        request_layer_change(new_layer);
+      }
+      break;
+    case REG_LAYER_TARGET:
+      if (howMany == 2) {
+        // Read setup: register + layer index
+        queried_layer = Wire.read() & 0x07;
+      } else if (howMany == 3) {
+        // Write: register + layer + target position
+        uint8_t layer = Wire.read() & 0x07;
+        uint8_t target = Wire.read();
+        write_layer_target(layer, target);
+      }
+      break;
+    case REG_LAYER_HAPTIC_CONFIG:
+      if (howMany == 2) {
+        // Read setup: register + layer index
+        queried_layer = Wire.read() & 0x07;
+      } else if (howMany == 4) {
+        // Write: register + layer + 2 bytes config (big-endian)
+        uint8_t layer = Wire.read() & 0x07;
+        uint16_t config = ((uint16_t)Wire.read() << 8) | Wire.read();
+        write_layer_haptic_config(layer, config);
       }
       break;
     case REG_VERSION:
@@ -451,6 +502,106 @@ uint16_t get_nearest_detent_position(uint8_t detent_count, uint16_t current_posi
   return input_calib_min + ((uint32_t)detent_index * range) / (detent_count - 1);
 }
 
+// ============================================================================
+// Layer Management Functions (Protocol v5+)
+// ============================================================================
+
+// Request layer change - may be deferred based on current mode
+void request_layer_change(uint8_t new_layer) {
+  if (new_layer > 7) return;  // Invalid layer
+  if (new_layer == active_layer) return;  // Already on this layer
+
+  Mode mode = get_mode();
+  if (mode == MODE_INPUT_IDLE || mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
+    apply_layer_change(new_layer);  // Apply immediately
+  } else if (mode == MODE_INPUT_ACTIVE || mode == MODE_SELF_CALIBRATION) {
+    pending_layer_change = new_layer;  // Defer until mode transition
+  } else if (mode == MODE_ERROR) {
+    return;  // Ignore - no deferral
+  }
+}
+
+// Apply layer change and start movement to new layer's restore position
+void apply_layer_change(uint8_t new_layer) {
+  Mode mode = get_mode();
+
+  // Save current position to outgoing layer (only if in input mode)
+  if (mode == MODE_INPUT_ACTIVE) {
+    uint8_t current_pos = BOUNDED_LERP_UINT16(position, input_calib_min, input_calib_max, 0, 255);
+    layer_restore_positions[active_layer] = current_pos;
+  }
+
+  // Switch to new layer
+  active_layer = new_layer;
+  pending_layer_change = 0xFF;
+
+  // Load new layer's haptic config
+  haptic_config = layer_haptic_configs[new_layer];
+
+  // Start movement to new layer's restore position
+  target_adc = BOUNDED_LERP_UINT16(
+    layer_restore_positions[new_layer], 0, 255,
+    input_calib_min, input_calib_max
+  );
+
+  set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+  remote_movement_start = millis();
+  remote_movement_start_position = input_ewma;
+  remote_movement_steady_start = millis();
+}
+
+// Write target position to a specific layer
+void write_layer_target(uint8_t layer, uint8_t target) {
+  if (layer > 7) return;
+
+  if (layer == active_layer) {
+    Mode mode = get_mode();
+    if (mode == MODE_INPUT_IDLE) {
+      // Start remote movement
+      layer_restore_positions[layer] = target;
+      target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
+      set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+      remote_movement_start = millis();
+      remote_movement_start_position = input_ewma;
+      remote_movement_steady_start = millis();
+    } else if (mode == MODE_INPUT_ACTIVE) {
+      // Ignore - user has control
+    } else if (mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
+      // Update target of in-progress movement
+      layer_restore_positions[layer] = target;
+      target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
+      remote_movement_start = millis();
+      remote_movement_start_position = input_ewma;
+      remote_movement_steady_start = millis();
+    }
+  } else {
+    // Non-active layer - just update restore position
+    layer_restore_positions[layer] = target;
+  }
+}
+
+// Write haptic configuration to a specific layer (16-bit format)
+void write_layer_haptic_config(uint8_t layer, uint16_t config) {
+  if (layer > 7) return;
+
+  // Validate haptic configuration
+  HapticMode haptic_mode = static_cast<HapticMode>((config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
+  if (haptic_mode == HAPTIC_DETENTS) {
+    uint8_t detent_count = (config & HAPTIC_DETENT_COUNT_bm) >> HAPTIC_DETENT_COUNT_bp;
+    if (detent_count < 1 || detent_count > 10) {
+      return;  // Invalid config - reject
+    }
+  }
+
+  // Store config for layer
+  layer_haptic_configs[layer] = config;
+
+  // If active layer, apply immediately (even during MODE_INPUT_ACTIVE)
+  if (layer == active_layer) {
+    haptic_config = config;
+  }
+}
+
 void motor_update() {
   uint32_t now = millis();
 
@@ -521,6 +672,12 @@ void motor_update() {
       }
       break;
     case MODE_INPUT_ACTIVE:
+      // Continuously update active layer's restore position
+      {
+        uint8_t current_pos = BOUNDED_LERP_UINT16(position, input_calib_min, input_calib_max, 0, 255);
+        layer_restore_positions[active_layer] = current_pos;
+      }
+
       if (now > input_last_change_millis + IDLE_DURATION_THRESHOLD && (state & STATE_TOUCH_bm) == 0 && now > touch_state_change_millis + IDLE_DURATION_THRESHOLD) {
         TCA0.SPLIT.HCMP1 = 0;    // Motor A
         TCA0.SPLIT.HCMP2 = 0;    // Motor B
@@ -529,6 +686,12 @@ void motor_update() {
           increment_position_nonce();
         }
         set_mode(Mode::MODE_INPUT_IDLE);
+
+        // Apply pending layer change if deferred
+        if (pending_layer_change != 0xFF) {
+          apply_layer_change(pending_layer_change);
+          break;  // Exit switch - apply_layer_change sets mode to REMOTE_MOVEMENT
+        }
       } else {
         // Haptics - extract current mode from haptic_config
         HapticMode haptic_mode = static_cast<HapticMode>((haptic_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
@@ -595,6 +758,13 @@ void motor_update() {
     case MODE_INPUT_IDLE:
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
+
+      // Apply pending layer change (may be deferred from SELF_CALIBRATION)
+      if (pending_layer_change != 0xFF) {
+        apply_layer_change(pending_layer_change);
+        break;  // Exit switch - apply_layer_change sets mode to REMOTE_MOVEMENT
+      }
+
       if (now < input_last_change_millis + IDLE_DURATION_THRESHOLD || ((state & STATE_TOUCH_bm) != 0 && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD)) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       }
@@ -641,12 +811,18 @@ void motor_update() {
             // Save calibration to EEPROM
             saveCalibration();
 
-            // Since we moved the position, do a remote movement to the previous target
-            remote_movement_start = millis();
-            remote_movement_start_position = input_ewma;
-            remote_movement_steady_start = millis();
-            // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
-            set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+            // Check for pending layer change
+            if (pending_layer_change != 0xFF) {
+              apply_layer_change(pending_layer_change);
+            } else {
+              // Normal case: restore previous target position
+              // Since we moved the position, do a remote movement to the previous target
+              remote_movement_start = millis();
+              remote_movement_start_position = input_ewma;
+              remote_movement_steady_start = millis();
+              // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
+              set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+            }
           }
           break;
       }
@@ -661,10 +837,9 @@ void motor_update() {
   state &= ~(uint32_t)STATE_RAW_ADC_bm;
   state |= ((uint32_t)adc_val << STATE_RAW_ADC_bp) & (uint32_t)STATE_RAW_ADC_bm;
 
-  // Pack haptic config nonce into state (extract from haptic_config)
-  uint8_t haptic_nonce = (haptic_config & HAPTIC_NONCE_bm) >> HAPTIC_NONCE_bp;
-  state &= ~STATE_HAPTIC_CONFIG_NONCE_bm;
-  state |= ((uint32_t)haptic_nonce << STATE_HAPTIC_CONFIG_NONCE_bp) & STATE_HAPTIC_CONFIG_NONCE_bm;
+  // Pack active layer into state (bits 4-6, replacing haptic_config_nonce in v5)
+  state &= ~STATE_ACTIVE_LAYER_bm;
+  state |= ((uint32_t)active_layer << STATE_ACTIVE_LAYER_bp) & STATE_ACTIVE_LAYER_bm;
 
   // Pack double tap nonce into state (TODO: calculate on tap changes instead of every loop)
   state &= ~STATE_DOUBLE_TAP_NONCE_bm;
@@ -715,6 +890,18 @@ void setup() {
     Serial.println("No valid calibration found, using defaults");
 #endif
   }
+
+  // Initialize all layers with default configuration (Protocol v5+)
+  for (uint8_t i = 0; i < 8; i++) {
+    layer_haptic_configs[i] = 0;  // Default: HAPTIC_NO_HAPTICS (smooth mode), all bits 0
+    layer_restore_positions[i] = 128;  // Default: midpoint
+  }
+  active_layer = 0;
+  pending_layer_change = 0xFF;  // No pending change
+  queried_layer = 0;
+
+  // Load active layer's haptic config into global haptic_config
+  haptic_config = layer_haptic_configs[0];
 
   setup_i2c();
 
