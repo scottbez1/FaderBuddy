@@ -2,7 +2,7 @@ from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import i2c
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_MODE
 
 MULTI_CONF = True
 DEPENDENCIES = ["i2c"]
@@ -10,11 +10,32 @@ DEPENDENCIES = ["i2c"]
 my_custom_sensor_ns = cg.esphome_ns.namespace("motorFaderESPHomeComponent")
 MotorFaderESPHomeComponent = my_custom_sensor_ns.class_("MotorFaderESPHomeComponent", cg.PollingComponent, i2c.I2CDevice)
 
+# Define haptic mode enum
+HapticMode = my_custom_sensor_ns.enum("HapticMode")
+HAPTIC_MODES = {
+    "smooth": HapticMode.HAPTIC_NO_HAPTICS,
+    "smooth_with_magnets": HapticMode.HAPTIC_SMOOTH_WITH_MAGNET_ENDS,
+    "detents": HapticMode.HAPTIC_DETENTS,
+}
+
 CONF_ON_MANUAL_MOVE = "on_manual_move"
 CONF_ON_TOUCH_CHANGE = "on_touch_change"
 CONF_ON_DOUBLE_TAP = "on_double_tap"
 CONF_INVERT = "invert"
 CONF_VALUE_CHANGE_RATE_LIMIT = "value_change_rate_limit"
+CONF_LAYER_HAPTICS = "layer_haptics"
+CONF_LAYER = "layer"
+CONF_DETENT_COUNT = "detent_count"
+CONF_DETENT_STRENGTH = "detent_strength"
+CONF_POSITION = "position"
+
+# Schema for a single layer haptic configuration
+LAYER_HAPTIC_SCHEMA = cv.Schema({
+    cv.Required(CONF_LAYER): cv.int_range(min=0, max=7),
+    cv.Required(CONF_MODE): cv.enum(HAPTIC_MODES, lower=True),
+    cv.Optional(CONF_DETENT_COUNT, default=0): cv.int_range(min=0, max=15),
+    cv.Optional(CONF_DETENT_STRENGTH, default=0): cv.int_range(min=0, max=7),
+})
 
 CONFIG_SCHEMA = (
     cv.Schema({
@@ -24,6 +45,7 @@ CONFIG_SCHEMA = (
         cv.Optional(CONF_ON_DOUBLE_TAP): automation.validate_automation(single=True),
         cv.Optional(CONF_INVERT, default=False): cv.boolean,
         cv.Optional(CONF_VALUE_CHANGE_RATE_LIMIT): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_LAYER_HAPTICS): cv.ensure_list(LAYER_HAPTIC_SCHEMA),
     })
     .extend(cv.polling_component_schema("50ms"))
     .extend(i2c.i2c_device_schema(0x20))  # default I2C address
@@ -40,17 +62,109 @@ async def to_code(config):
     if CONF_VALUE_CHANGE_RATE_LIMIT in config:
         cg.add(var.set_value_change_rate_limit(config[CONF_VALUE_CHANGE_RATE_LIMIT]))
 
+    # Apply layer haptic configurations if specified
+    if CONF_LAYER_HAPTICS in config:
+        for haptic_config in config[CONF_LAYER_HAPTICS]:
+            layer = haptic_config[CONF_LAYER]
+            mode = haptic_config[CONF_MODE]
+            detent_count = haptic_config[CONF_DETENT_COUNT]
+            detent_strength = haptic_config[CONF_DETENT_STRENGTH]
+
+            cg.add(var.set_layer_haptic_config(
+                layer, mode, detent_count, detent_strength, 0
+            ))
+
     if CONF_ON_MANUAL_MOVE in config:
         await automation.build_automation(
-            var.get_on_manual_move_trigger(), [(cg.uint8, "x")], config[CONF_ON_MANUAL_MOVE]
+            var.get_on_manual_move_trigger(), [(cg.uint8, "x"), (cg.uint8, "layer")], config[CONF_ON_MANUAL_MOVE]
         )
 
     if CONF_ON_TOUCH_CHANGE in config:
         await automation.build_automation(
-            var.get_on_touch_change_trigger(), [(cg.bool_, "x")], config[CONF_ON_TOUCH_CHANGE]
+            var.get_on_touch_change_trigger(), [(cg.bool_, "x"), (cg.uint8, "layer")], config[CONF_ON_TOUCH_CHANGE]
         )
 
     if CONF_ON_DOUBLE_TAP in config:
         await automation.build_automation(
-            var.get_on_double_tap_trigger(), [], config[CONF_ON_DOUBLE_TAP]
+            var.get_on_double_tap_trigger(), [(cg.uint8, "layer")], config[CONF_ON_DOUBLE_TAP]
         )
+
+
+# Actions
+SetActiveLayerAction = my_custom_sensor_ns.class_("SetActiveLayerAction", automation.Action)
+RemoteMoveToAction = my_custom_sensor_ns.class_("RemoteMoveToAction", automation.Action)
+SetLayerHapticConfigAction = my_custom_sensor_ns.class_("SetLayerHapticConfigAction", automation.Action)
+RunSelfCalibrationAction = my_custom_sensor_ns.class_("RunSelfCalibrationAction", automation.Action)
+
+
+@automation.register_action(
+    "motorFaderESPHomeComponent.set_active_layer",
+    SetActiveLayerAction,
+    cv.Schema({
+        cv.Required(CONF_ID): cv.use_id(MotorFaderESPHomeComponent),
+        cv.Required(CONF_LAYER): cv.templatable(cv.int_range(min=0, max=7)),
+    })
+)
+async def set_active_layer_action_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    layer = await cg.templatable(config[CONF_LAYER], args, cg.uint8)
+    cg.add(var.set_layer(layer))
+    return var
+
+
+@automation.register_action(
+    "motorFaderESPHomeComponent.remote_move_to",
+    RemoteMoveToAction,
+    cv.Schema({
+        cv.Required(CONF_ID): cv.use_id(MotorFaderESPHomeComponent),
+        cv.Required(CONF_POSITION): cv.templatable(cv.int_range(min=0, max=255)),
+        cv.Optional(CONF_LAYER, default=0): cv.templatable(cv.int_range(min=0, max=7)),
+    })
+)
+async def remote_move_to_action_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    position = await cg.templatable(config[CONF_POSITION], args, cg.uint8)
+    cg.add(var.set_position(position))
+    layer = await cg.templatable(config[CONF_LAYER], args, cg.uint8)
+    cg.add(var.set_layer(layer))
+    return var
+
+
+@automation.register_action(
+    "motorFaderESPHomeComponent.set_layer_haptic_config",
+    SetLayerHapticConfigAction,
+    cv.Schema({
+        cv.Required(CONF_ID): cv.use_id(MotorFaderESPHomeComponent),
+        cv.Required(CONF_LAYER): cv.templatable(cv.int_range(min=0, max=7)),
+        cv.Required(CONF_MODE): cv.templatable(cv.enum(HAPTIC_MODES, lower=True)),
+        cv.Optional(CONF_DETENT_COUNT, default=0): cv.templatable(cv.int_range(min=0, max=15)),
+        cv.Optional(CONF_DETENT_STRENGTH, default=0): cv.templatable(cv.int_range(min=0, max=7)),
+    })
+)
+async def set_layer_haptic_config_action_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    layer = await cg.templatable(config[CONF_LAYER], args, cg.uint8)
+    cg.add(var.set_layer(layer))
+    mode = await cg.templatable(config[CONF_MODE], args, HapticMode)
+    cg.add(var.set_mode(mode))
+    detent_count = await cg.templatable(config[CONF_DETENT_COUNT], args, cg.uint8)
+    cg.add(var.set_detent_count(detent_count))
+    detent_strength = await cg.templatable(config[CONF_DETENT_STRENGTH], args, cg.uint8)
+    cg.add(var.set_detent_strength(detent_strength))
+    return var
+
+
+@automation.register_action(
+    "motorFaderESPHomeComponent.run_self_calibration",
+    RunSelfCalibrationAction,
+    cv.Schema({
+        cv.Required(CONF_ID): cv.use_id(MotorFaderESPHomeComponent),
+    })
+)
+async def run_self_calibration_action_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    return var

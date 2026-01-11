@@ -661,6 +661,11 @@ void motor_update() {
   state &= ~(uint32_t)STATE_RAW_ADC_bm;
   state |= ((uint32_t)adc_val << STATE_RAW_ADC_bp) & (uint32_t)STATE_RAW_ADC_bm;
 
+  // Pack haptic config nonce into state (extract from haptic_config)
+  uint8_t haptic_nonce = (haptic_config & HAPTIC_NONCE_bm) >> HAPTIC_NONCE_bp;
+  state &= ~STATE_HAPTIC_CONFIG_NONCE_bm;
+  state |= ((uint32_t)haptic_nonce << STATE_HAPTIC_CONFIG_NONCE_bp) & STATE_HAPTIC_CONFIG_NONCE_bm;
+
   // Pack double tap nonce into state (TODO: calculate on tap changes instead of every loop)
   state &= ~STATE_DOUBLE_TAP_NONCE_bm;
   state |= ((uint32_t)double_tap_nonce << STATE_DOUBLE_TAP_NONCE_bp) & STATE_DOUBLE_TAP_NONCE_bm;
