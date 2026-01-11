@@ -10,8 +10,8 @@ DEPENDENCIES = ["i2c"]
 my_custom_sensor_ns = cg.esphome_ns.namespace("motorFaderESPHomeComponent")
 MotorFaderESPHomeComponent = my_custom_sensor_ns.class_("MotorFaderESPHomeComponent", cg.PollingComponent, i2c.I2CDevice)
 
-# Define haptic mode enum
-HapticMode = my_custom_sensor_ns.enum("HapticMode")
+# Define haptic mode enum (in global namespace, shared with firmware)
+HapticMode = cg.global_ns.enum("HapticMode")
 HAPTIC_MODES = {
     "smooth": HapticMode.HAPTIC_NO_HAPTICS,
     "smooth_with_magnets": HapticMode.HAPTIC_SMOOTH_WITH_MAGNET_ENDS,

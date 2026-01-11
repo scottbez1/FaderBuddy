@@ -59,6 +59,22 @@ void MotorFaderESPHomeComponent::setup() {
         return;
     }
 
+    // Initialize firmware with layer 0 haptic config
+    // Since we start on layer 0, send its config to ensure sync with firmware
+    uint32_t cached_config = layer_state_[0].haptic_config;
+    uint8_t nonce = (cached_config >> HAPTIC_NONCE_bp) & 0x07;
+    uint8_t mode = (cached_config >> HAPTIC_MODE_bp) & 0x07;
+    uint8_t detent_count = (cached_config >> HAPTIC_DETENT_COUNT_bp) & 0x0F;
+    uint8_t detent_strength = (cached_config >> HAPTIC_DETENT_STRENGTH_bp) & 0x07;
+
+    // Start at position 0 (no target position during init)
+    uint32_t init_config = make_haptic_config_internal_(
+        nonce, mode, detent_count, detent_strength, 0
+    );
+
+    ESP_LOGD(TAG, "Sending initial haptic config for layer 0 (mode=%d)", mode);
+    write_haptic_config_(init_config);
+
     if (this->get_update_interval() < App.get_loop_interval()) {
         high_freq_.start();
     }
