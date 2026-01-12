@@ -82,9 +82,9 @@ void MotorFaderESPHomeComponent::update() {
       if (time_since_last_trigger >= layer_states_[layer].value_change_min_interval) {
         // Min interval period has passed - trigger deferred USER-FACING value
         ESP_LOGI(TAG, "Deferred movement to %03d (user) on layer %d\n", layer_states_[layer].deferred_value, layer);
-        on_manual_move_->trigger(layer_states_[layer].deferred_value, layer);
         layer_states_[layer].last_trigger_time = now;
         layer_states_[layer].has_deferred_value = false;
+        on_manual_move_->trigger(layer_states_[layer].deferred_value, layer);
       }
     }
   }
@@ -144,9 +144,9 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
         if (time_since_last_trigger >= layer_states_[active_layer].value_change_min_interval) {
           // Min interval period has passed
           ESP_LOGI(TAG, "Movement to %03d (user) on layer %d\n", user_position, active_layer);
-          on_manual_move_->trigger(user_position, active_layer);
           layer_states_[active_layer].last_trigger_time = now;
           layer_states_[active_layer].has_deferred_value = false;
+          on_manual_move_->trigger(user_position, active_layer);
         } else {
           // Defer the trigger
           layer_states_[active_layer].deferred_value = user_position;
@@ -161,15 +161,15 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
   // Check for touch state change
   if (touch != last_touch_) {
     ESP_LOGI(TAG, "Touch changed to %s on layer %d\n", touch ? "true" : "false", active_layer);
-    on_touch_change_->trigger(touch, active_layer);
     last_touch_ = touch;
+    on_touch_change_->trigger(touch, active_layer);
   }
 
   // Check for double tap
   if (double_tap_nonce != last_double_tap_nonce_) {
     ESP_LOGI(TAG, "Double tap detected on layer %d\n", active_layer);
-    on_double_tap_->trigger(active_layer);
     last_double_tap_nonce_ = double_tap_nonce;
+    on_double_tap_->trigger(active_layer);
   }
 
   if (state != last_state_) {
