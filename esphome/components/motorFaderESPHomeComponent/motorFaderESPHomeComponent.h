@@ -57,20 +57,20 @@ class MotorFaderESPHomeComponent : public PollingComponent, public i2c::I2CDevic
 
     private:
         // State variables
-        uint16_t last_hw_position_{0};  // Last HARDWARE position from firmware (0-255, raw from I2C)
-        uint8_t last_position_nonce_{0};
         uint32_t last_state_{0};
         HighFrequencyLoopRequester high_freq_;
         bool invert_{false};
         bool last_touch_{false};
         uint8_t last_double_tap_nonce_{0};
 
-        // Per-layer state for value change rate limiting
+        // Per-layer state for value change rate limiting and position tracking
         struct LayerState {
             uint32_t value_change_min_interval{0};  // 0 = no rate limiting
             uint32_t last_trigger_time{0};
             uint8_t deferred_value{0};  // USER-FACING position for deferred trigger
             bool has_deferred_value{false};
+            uint16_t last_hw_position{0};  // Last HARDWARE position from firmware (0-255, raw from I2C)
+            uint8_t last_position_nonce{0};
         };
         LayerState layer_states_[8] = {};
 

@@ -54,6 +54,7 @@ void MotorFaderESPHomeComponent::setup() {
                                 initial_haptic_configs_[i].detent_strength);
     }
   }
+  set_active_layer(0);
 
   if (this->get_update_interval() < App.get_loop_interval()) {
     high_freq_.start();
@@ -124,8 +125,9 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
   // No more nonce validation or layer switching logic!
   // Firmware handles all layer management - we just process triggers
 
-  // Check for position changes
-  if (hw_position != last_hw_position_ || position_nonce != last_position_nonce_) {
+  // Check for position changes (per-layer tracking)
+  if (hw_position != layer_states_[active_layer].last_hw_position ||
+      position_nonce != layer_states_[active_layer].last_position_nonce) {
     if (mode == MODE_INPUT_ACTIVE || mode == MODE_INPUT_IDLE) {
       // Convert HARDWARE position to USER-FACING position
       uint8_t user_position = invert_ ? (255 - hw_position) : hw_position;
@@ -152,8 +154,8 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
         }
       }
     }
-    last_hw_position_ = hw_position;
-    last_position_nonce_ = position_nonce;
+    layer_states_[active_layer].last_hw_position = hw_position;
+    layer_states_[active_layer].last_position_nonce = position_nonce;
   }
 
   // Check for touch state change

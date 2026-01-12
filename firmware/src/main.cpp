@@ -1004,6 +1004,9 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
           delay(6);
           TCA0.SPLIT.HCMP1 = 0;    // Stop
           TCA0.SPLIT.HCMP2 = 0;
+
+          // Set state to idle after double-tap completion
+          set_mode(MODE_INPUT_IDLE);
         }
       } else {
         // Invalid tap (too long or too much movement)
