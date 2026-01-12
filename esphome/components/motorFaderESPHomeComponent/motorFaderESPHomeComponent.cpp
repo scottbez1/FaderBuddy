@@ -124,7 +124,7 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
 
   if (state != last_state_) {
     last_state_ = state;
-    ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", state, hw_position, position_nonce, touch, mode, raw_adc, double_tap_nonce);
+    // ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", state, hw_position, position_nonce, touch, mode, raw_adc, double_tap_nonce);
   }
 
   // Check for position changes (per-layer tracking)
@@ -135,28 +135,21 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
     if (mode == MODE_INPUT_ACTIVE || mode == MODE_INPUT_IDLE) {
       // Convert HARDWARE position to USER-FACING position
       uint8_t user_position = invert_ ? (255 - hw_position) : hw_position;
+      layer_states_[active_layer].deferred_value = user_position;
+      layer_states_[active_layer].has_deferred_value = true;
+    }
+  }
 
-      // Fire trigger with active layer from STATE register (use per-layer rate limiting)
-      if (layer_states_[active_layer].value_change_min_interval == 0) {
-        // No rate limiting
-        ESP_LOGI(TAG, "Movement to %03d (user) on layer %d\n", user_position, active_layer);
-        on_manual_move_->trigger(user_position, active_layer);
-      } else {
-        uint32_t now = millis();
-        uint32_t time_since_last_trigger = now - layer_states_[active_layer].last_trigger_time;
-
-        if (time_since_last_trigger >= layer_states_[active_layer].value_change_min_interval) {
-          // Min interval period has passed
-          ESP_LOGI(TAG, "Movement to %03d (user) on layer %d\n", user_position, active_layer);
-          layer_states_[active_layer].last_trigger_time = now;
-          layer_states_[active_layer].has_deferred_value = false;
-          on_manual_move_->trigger(user_position, active_layer);
-        } else {
-          // Defer the trigger
-          layer_states_[active_layer].deferred_value = user_position;
-          layer_states_[active_layer].has_deferred_value = true;
-        }
-      }
+  if (layer_states_[active_layer].has_deferred_value) {
+    uint32_t now = millis();
+    uint32_t time_since_last_trigger = now - layer_states_[active_layer].last_trigger_time;
+    if (time_since_last_trigger >= layer_states_[active_layer].value_change_min_interval) {
+      // Min interval period has passed
+      ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, active_layer: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", state, hw_position, position_nonce, active_layer, touch, mode, raw_adc, double_tap_nonce);
+      ESP_LOGI(TAG, "Movement to %03d (user) on layer %d\n", layer_states_[active_layer].deferred_value, active_layer);
+      layer_states_[active_layer].last_trigger_time = now;
+      layer_states_[active_layer].has_deferred_value = false;
+      on_manual_move_->trigger(layer_states_[active_layer].deferred_value, active_layer);
     }
   }
 
