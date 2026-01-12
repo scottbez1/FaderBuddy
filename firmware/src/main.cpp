@@ -181,10 +181,10 @@ void onI2cRequest() {
   if (r == REG_VERSION) {
       Wire.write(I2C_PROTOCOL_VERSION);
   } else if (r == REG_STATE) {
-      Wire.write((state >> 24) & 0xFF);
-      Wire.write((state >> 16) & 0xFF);
-      Wire.write((state >> 8) & 0xFF);
-      Wire.write(state & 0xFF);
+      Wire.write((outgoing_state >> 24) & 0xFF);
+      Wire.write((outgoing_state >> 16) & 0xFF);
+      Wire.write((outgoing_state >> 8) & 0xFF);
+      Wire.write(outgoing_state & 0xFF);
   } else if (r == REG_UPTIME) {
       uint32_t uptime = millis();
       Wire.write((uptime >> 24) & 0xFF);
@@ -221,12 +221,6 @@ void onI2cRequest() {
       // Touch recalibration count (unsigned 16-bit)
       Wire.write((touch_recal_count >> 8) & 0xFF);  // High byte
       Wire.write(touch_recal_count & 0xFF);         // Low byte
-  } else if (r == REG_HAPTIC_CONFIG) {
-      // Haptic configuration (unsigned 32-bit, bit-packed) [DEPRECATED in v5]
-      Wire.write((haptic_config >> 24) & 0xFF);
-      Wire.write((haptic_config >> 16) & 0xFF);
-      Wire.write((haptic_config >> 8) & 0xFF);
-      Wire.write(haptic_config & 0xFF);
   } else if (r == REG_ACTIVE_LAYER) {
       Wire.write(active_layer);
   } else if (r == REG_LAYER_TARGET) {
@@ -261,50 +255,6 @@ void onI2cReceive(int howMany) {
         self_calibration_stage = 0;
         self_calibration_start = millis();
         set_mode(MODE_SELF_CALIBRATION);
-      }
-      break;
-    case REG_HAPTIC_CONFIG:
-      if (howMany == 5) {  // 1 byte register + 4 bytes data (u32)
-        uint32_t new_config = 0;
-        new_config = ((uint32_t)Wire.read() << 24) |
-                     ((uint32_t)Wire.read() << 16) |
-                     ((uint32_t)Wire.read() << 8) |
-                     ((uint32_t)Wire.read());
-
-        // Validate haptic configuration before applying
-        HapticMode new_haptic_mode = static_cast<HapticMode>((new_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
-
-        if (new_haptic_mode == HAPTIC_DETENTS) {
-          uint8_t detent_count = (new_config & HAPTIC_DETENT_COUNT_bm) >> HAPTIC_DETENT_COUNT_bp;
-
-          // Validate detent count (must be 1-10)
-          if (detent_count < 1 || detent_count > 10) {
-            // Invalid config - reject by not updating config or nonce
-            break;
-          }
-        }
-
-        // Extract nonce from new config
-        uint8_t new_nonce = (new_config & HAPTIC_NONCE_bm) >> HAPTIC_NONCE_bp;
-
-        // Check if nonce changed
-        if (new_nonce != last_haptic_nonce) {
-          // Extract target position from haptic config
-          uint8_t haptic_target = (new_config & HAPTIC_TARGET_POSITION_bm) >> HAPTIC_TARGET_POSITION_bp;
-
-          // Apply target position and start movement (even if in INPUT_ACTIVE)
-          target_adc = BOUNDED_LERP_UINT16(haptic_target, 0, 255, input_calib_min, input_calib_max);
-          set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
-          remote_movement_start = millis();
-          remote_movement_start_position = input_ewma;
-          remote_movement_steady_start = millis();
-
-          // Update stored nonce
-          last_haptic_nonce = new_nonce;
-        }
-
-        // Always update the stored config
-        haptic_config = new_config;
       }
       break;
     case REG_ACTIVE_LAYER:
@@ -424,12 +374,14 @@ void increment_position_nonce() {
   position_nonce++;
   position_nonce &= ((1 << STATE_POSITION_NONCE_bs) - 1);
   state &= ~STATE_POSITION_NONCE_bm;
-  state |= position_nonce << STATE_POSITION_NONCE_bp;
+  state |= ((uint32_t)position_nonce << STATE_POSITION_NONCE_bp);// & STATE_POSITION_NONCE_bm;
 }
 
 void increment_double_tap_nonce() {
   double_tap_nonce++;
-  double_tap_nonce &= 0x03;  // Keep only 2 bits (0-3)
+  double_tap_nonce &= ((1 << STATE_DOUBLE_TAP_NONCE_bs) - 1);
+  state &= ~STATE_DOUBLE_TAP_NONCE_bm;
+  state |= ((uint32_t)double_tap_nonce << STATE_DOUBLE_TAP_NONCE_bp);// & STATE_DOUBLE_TAP_NONCE_bm;
 }
 
 void reset_tap_detection() {
@@ -815,10 +767,6 @@ void motor_update() {
   state &= ~STATE_ACTIVE_LAYER_bm;
   state |= ((uint32_t)active_layer << STATE_ACTIVE_LAYER_bp) & STATE_ACTIVE_LAYER_bm;
 
-  // Pack double tap nonce into state (TODO: calculate on tap changes instead of every loop)
-  state &= ~STATE_DOUBLE_TAP_NONCE_bm;
-  state |= ((uint32_t)double_tap_nonce << STATE_DOUBLE_TAP_NONCE_bp) & STATE_DOUBLE_TAP_NONCE_bm;
-
 #if SERIAL_ENABLED
   static uint32_t last_print;
   if (now - last_print > 200) {
@@ -1005,8 +953,9 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
           TCA0.SPLIT.HCMP1 = 0;    // Stop
           TCA0.SPLIT.HCMP2 = 0;
 
-          // Set state to idle after double-tap completion
-          set_mode(MODE_INPUT_IDLE);
+          // // Force state to idle after double-tap completion
+          // input_last_change_millis = now - IDLE_DURATION_THRESHOLD;
+          // set_mode(MODE_INPUT_IDLE);
         }
       } else {
         // Invalid tap (too long or too much movement)

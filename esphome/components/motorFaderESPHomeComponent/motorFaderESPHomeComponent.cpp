@@ -122,12 +122,16 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
   uint8_t double_tap_nonce = (state & STATE_DOUBLE_TAP_NONCE_bm) >> STATE_DOUBLE_TAP_NONCE_bp;
   uint8_t active_layer = (state & STATE_ACTIVE_LAYER_bm) >> STATE_ACTIVE_LAYER_bp;
 
-  // No more nonce validation or layer switching logic!
-  // Firmware handles all layer management - we just process triggers
+  if (state != last_state_) {
+    last_state_ = state;
+    ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", state, position, position_nonce, touch, mode, raw_adc, double_tap_nonce);
+  }
 
   // Check for position changes (per-layer tracking)
   if (hw_position != layer_states_[active_layer].last_hw_position ||
       position_nonce != layer_states_[active_layer].last_position_nonce) {
+    layer_states_[active_layer].last_hw_position = hw_position;
+    layer_states_[active_layer].last_position_nonce = position_nonce;
     if (mode == MODE_INPUT_ACTIVE || mode == MODE_INPUT_IDLE) {
       // Convert HARDWARE position to USER-FACING position
       uint8_t user_position = invert_ ? (255 - hw_position) : hw_position;
@@ -154,8 +158,6 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
         }
       }
     }
-    layer_states_[active_layer].last_hw_position = hw_position;
-    layer_states_[active_layer].last_position_nonce = position_nonce;
   }
 
   // Check for touch state change
@@ -167,13 +169,9 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
 
   // Check for double tap
   if (double_tap_nonce != last_double_tap_nonce_) {
-    ESP_LOGI(TAG, "Double tap detected on layer %d\n", active_layer);
+    ESP_LOGI(TAG, "Double tap detected on layer %d -- %d\n", active_layer, double_tap_nonce);
     last_double_tap_nonce_ = double_tap_nonce;
     on_double_tap_->trigger(active_layer);
-  }
-
-  if (state != last_state_) {
-    last_state_ = state;
   }
 
   return true;

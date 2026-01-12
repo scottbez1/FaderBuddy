@@ -72,7 +72,7 @@
 #define REG_TOUCH_DELTA 0x09  // Touch delta (signed 16-bit)
 #define REG_TOUCH_REF 0x0A  // Touch reference value (unsigned 16-bit)
 #define REG_TOUCH_RECAL 0x0B  // Touch recalibration count (unsigned 16-bit)
-#define REG_HAPTIC_CONFIG 0x0C  // Haptic configuration (unsigned 32-bit, bit-packed) [DEPRECATED in v5]
+// 0x0C removed in v5 - use REG_LAYER_HAPTIC_CONFIG instead
 #define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
@@ -106,15 +106,10 @@ enum HapticMode : uint8_t {
 #define STATE_MODE_bs (3)
 #define STATE_MODE_bm (((1U << STATE_MODE_bs) - 1) << STATE_MODE_bp)
 
-// Haptic config nonce: 3 bits at position 4 [DEPRECATED in v5 - use STATE_ACTIVE_LAYER instead]
-#define STATE_HAPTIC_CONFIG_NONCE_bp      (4)
-#define STATE_HAPTIC_CONFIG_NONCE_bs      (3)
-#define STATE_HAPTIC_CONFIG_NONCE_bm      (((1U << STATE_HAPTIC_CONFIG_NONCE_bs) - 1) << STATE_HAPTIC_CONFIG_NONCE_bp)
-
 // Active layer: 3 bits at position 4 (replaces haptic_config_nonce in v5)
-#define STATE_ACTIVE_LAYER_bp STATE_HAPTIC_CONFIG_NONCE_bp
-#define STATE_ACTIVE_LAYER_bs STATE_HAPTIC_CONFIG_NONCE_bs
-#define STATE_ACTIVE_LAYER_bm STATE_HAPTIC_CONFIG_NONCE_bm
+#define STATE_ACTIVE_LAYER_bp      (4)
+#define STATE_ACTIVE_LAYER_bs      (3)
+#define STATE_ACTIVE_LAYER_bm      (((1U << STATE_ACTIVE_LAYER_bs) - 1) << STATE_ACTIVE_LAYER_bp)
 
 // Position: 8 bits at position 7
 #define STATE_POSITION_bp            (7)
@@ -124,7 +119,7 @@ enum HapticMode : uint8_t {
 // Position nonce: 2 bits at position 15
 #define STATE_POSITION_NONCE_bp            (15)
 #define STATE_POSITION_NONCE_bs            (2)
-#define STATE_POSITION_NONCE_bm            (((1U << STATE_POSITION_NONCE_bs) - 1) << STATE_POSITION_NONCE_bp)
+#define STATE_POSITION_NONCE_bm            (((1UL << STATE_POSITION_NONCE_bs) - 1) << STATE_POSITION_NONCE_bp)
 
 // Raw ADC: 11 bits at position 17
 #define STATE_RAW_ADC_bp            (17)
@@ -159,31 +154,3 @@ enum HapticMode : uint8_t {
 #define HAPTIC_DETENT_STRENGTH_bm   (((1U << HAPTIC_DETENT_STRENGTH_bs) - 1) << HAPTIC_DETENT_STRENGTH_bp)
 
 // Reserved: 6 bits at position 10-15 (must be 0)
-
-/*
- * DEPRECATED v4 Haptic Bitfields (for backward compatibility with REG_HAPTIC_CONFIG)
- */
-// Haptic nonce: 3 bits at position 0 [v4 only]
-#define HAPTIC_NONCE_bp             (0)
-#define HAPTIC_NONCE_bs             (3)
-#define HAPTIC_NONCE_bm             (((1U << HAPTIC_NONCE_bs) - 1) << HAPTIC_NONCE_bp)
-
-// Haptic mode: 3 bits at position 3 [v4 only - same as v5]
-#define HAPTIC_MODE_V4_bp           (3)
-#define HAPTIC_MODE_V4_bs           (3)
-#define HAPTIC_MODE_V4_bm           (((1U << HAPTIC_MODE_V4_bs) - 1) << HAPTIC_MODE_V4_bp)
-
-// Detent count: 4 bits at position 6 [v4 only]
-#define HAPTIC_DETENT_COUNT_V4_bp   (6)
-#define HAPTIC_DETENT_COUNT_V4_bs   (4)
-#define HAPTIC_DETENT_COUNT_V4_bm   (((1U << HAPTIC_DETENT_COUNT_V4_bs) - 1) << HAPTIC_DETENT_COUNT_V4_bp)
-
-// Detent strength: 3 bits at position 10 [v4 only]
-#define HAPTIC_DETENT_STRENGTH_V4_bp   (10)
-#define HAPTIC_DETENT_STRENGTH_V4_bs   (3)
-#define HAPTIC_DETENT_STRENGTH_V4_bm   (((1U << HAPTIC_DETENT_STRENGTH_V4_bs) - 1) << HAPTIC_DETENT_STRENGTH_V4_bp)
-
-// Target position: 8 bits at position 13 [v4 only]
-#define HAPTIC_TARGET_POSITION_bp   (13)
-#define HAPTIC_TARGET_POSITION_bs   (8)
-#define HAPTIC_TARGET_POSITION_bm   (((1UL << HAPTIC_TARGET_POSITION_bs) - 1) << HAPTIC_TARGET_POSITION_bp)
