@@ -124,7 +124,7 @@ bool MotorFaderESPHomeComponent::read_sensor_data_() {
 
   if (state != last_state_) {
     last_state_ = state;
-    ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", state, position, position_nonce, touch, mode, raw_adc, double_tap_nonce);
+    ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", state, hw_position, position_nonce, touch, mode, raw_adc, double_tap_nonce);
   }
 
   // Check for position changes (per-layer tracking)

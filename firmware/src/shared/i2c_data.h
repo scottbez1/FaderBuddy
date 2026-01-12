@@ -99,22 +99,22 @@ enum HapticMode : uint8_t {
 // Touch: 1 bit at position 0
 #define STATE_TOUCH_bp (0)
 #define STATE_TOUCH_bs (1)
-#define STATE_TOUCH_bm (((1U << STATE_TOUCH_bs) - 1) << STATE_TOUCH_bp)
+#define STATE_TOUCH_bm (((1UL << STATE_TOUCH_bs) - 1) << STATE_TOUCH_bp)
 
 // Mode: 3 bits at position 1
 #define STATE_MODE_bp (1)
 #define STATE_MODE_bs (3)
-#define STATE_MODE_bm (((1U << STATE_MODE_bs) - 1) << STATE_MODE_bp)
+#define STATE_MODE_bm (((1UL << STATE_MODE_bs) - 1) << STATE_MODE_bp)
 
 // Active layer: 3 bits at position 4 (replaces haptic_config_nonce in v5)
 #define STATE_ACTIVE_LAYER_bp      (4)
 #define STATE_ACTIVE_LAYER_bs      (3)
-#define STATE_ACTIVE_LAYER_bm      (((1U << STATE_ACTIVE_LAYER_bs) - 1) << STATE_ACTIVE_LAYER_bp)
+#define STATE_ACTIVE_LAYER_bm      (((1UL << STATE_ACTIVE_LAYER_bs) - 1) << STATE_ACTIVE_LAYER_bp)
 
 // Position: 8 bits at position 7
 #define STATE_POSITION_bp            (7)
 #define STATE_POSITION_bs            (8)
-#define STATE_POSITION_bm            (((1U << STATE_POSITION_bs) - 1) << STATE_POSITION_bp)
+#define STATE_POSITION_bm            (((1UL << STATE_POSITION_bs) - 1) << STATE_POSITION_bp)
 
 // Position nonce: 2 bits at position 15
 #define STATE_POSITION_NONCE_bp            (15)

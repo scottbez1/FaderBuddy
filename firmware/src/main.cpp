@@ -438,42 +438,29 @@ void request_layer_change(uint8_t new_layer) {
   if (new_layer == active_layer) return;  // Already on this layer
 
   Mode mode = get_mode();
-  if (mode == MODE_INPUT_IDLE || mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
-    apply_layer_change(new_layer);  // Apply immediately
-  } else if (mode == MODE_INPUT_ACTIVE || mode == MODE_SELF_CALIBRATION) {
-    pending_layer_change = new_layer;  // Defer until mode transition
-  } else if (mode == MODE_ERROR) {
+  if (mode == MODE_ERROR) {
     return;  // Ignore - no deferral
   }
+  pending_layer_change = new_layer;  // Defer until idle
 }
 
 // Apply layer change and start movement to new layer's restore position
 void apply_layer_change(uint8_t new_layer) {
-  Mode mode = get_mode();
-
-  // Save current position to outgoing layer (only if in input mode)
-  if (mode == MODE_INPUT_ACTIVE) {
-    uint8_t current_pos = BOUNDED_LERP_UINT16(position, input_calib_min, input_calib_max, 0, 255);
-    layer_restore_positions[active_layer] = current_pos;
-  }
-
-  // Switch to new layer
-  active_layer = new_layer;
-  pending_layer_change = 0xFF;
-
-  // Load new layer's haptic config
-  haptic_config = layer_haptic_configs[new_layer];
-
   // Start movement to new layer's restore position
   target_adc = BOUNDED_LERP_UINT16(
     layer_restore_positions[new_layer], 0, 255,
     input_calib_min, input_calib_max
   );
-
-  set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
   remote_movement_start = millis();
   remote_movement_start_position = input_ewma;
   remote_movement_steady_start = millis();
+  set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+
+  // Load new layer's haptic config
+  haptic_config = layer_haptic_configs[new_layer];
+
+  pending_layer_change = 0xFF;
+  active_layer = new_layer;
 }
 
 // Write target position to a specific layer
@@ -612,12 +599,6 @@ void motor_update() {
           increment_position_nonce();
         }
         set_mode(Mode::MODE_INPUT_IDLE);
-
-        // Apply pending layer change if deferred
-        if (pending_layer_change != 0xFF) {
-          apply_layer_change(pending_layer_change);
-          break;  // Exit switch - apply_layer_change sets mode to REMOTE_MOVEMENT
-        }
       } else {
         // Haptics - extract current mode from haptic_config
         HapticMode haptic_mode = static_cast<HapticMode>((haptic_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
@@ -737,18 +718,12 @@ void motor_update() {
             // Save calibration to EEPROM
             saveCalibration();
 
-            // Check for pending layer change
-            if (pending_layer_change != 0xFF) {
-              apply_layer_change(pending_layer_change);
-            } else {
-              // Normal case: restore previous target position
-              // Since we moved the position, do a remote movement to the previous target
-              remote_movement_start = millis();
-              remote_movement_start_position = input_ewma;
-              remote_movement_steady_start = millis();
-              // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
-              set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
-            }
+            // Since we moved the position, do a remote movement to the previous target
+            remote_movement_start = millis();
+            remote_movement_start_position = input_ewma;
+            remote_movement_steady_start = millis();
+            // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
+            set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
           }
           break;
       }
@@ -940,22 +915,23 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
           tap_state = TAP_WAITING_FOR_DOUBLE;
         } else if (tap_state == TAP_SECOND_PRESSED) {
           // Double-tap complete!
+
+          // // Haptic kick for double-tap confirmation
+          // TCA0.SPLIT.HCMP1 = 250;  // Motor direction A
+          // TCA0.SPLIT.HCMP2 = 0;
+          // delay(6);
+          // TCA0.SPLIT.HCMP1 = 0;
+          // TCA0.SPLIT.HCMP2 = 250;  // Motor direction B
+          // delay(6);
+          // TCA0.SPLIT.HCMP1 = 0;    // Stop
+          // TCA0.SPLIT.HCMP2 = 0;
+
           increment_double_tap_nonce();
           reset_tap_detection();
 
-          // Haptic kick for double-tap confirmation
-          TCA0.SPLIT.HCMP1 = 250;  // Motor direction A
-          TCA0.SPLIT.HCMP2 = 0;
-          delay(6);
-          TCA0.SPLIT.HCMP1 = 0;
-          TCA0.SPLIT.HCMP2 = 250;  // Motor direction B
-          delay(6);
-          TCA0.SPLIT.HCMP1 = 0;    // Stop
-          TCA0.SPLIT.HCMP2 = 0;
-
-          // // Force state to idle after double-tap completion
-          // input_last_change_millis = now - IDLE_DURATION_THRESHOLD;
-          // set_mode(MODE_INPUT_IDLE);
+          // Force state to idle after double-tap completion
+          input_last_change_millis = now - IDLE_DURATION_THRESHOLD;
+          set_mode(MODE_INPUT_IDLE);
         }
       } else {
         // Invalid tap (too long or too much movement)
