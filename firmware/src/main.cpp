@@ -105,7 +105,33 @@ int16_t position_window_lower = 0;
 int16_t position = 0;
 
 uint32_t state = (Mode::MODE_INPUT_IDLE << STATE_MODE_bp);
-volatile uint32_t outgoing_state = state;
+
+// ============================================================================
+// ISR <-> Main Loop Communication
+// ============================================================================
+// All variables used to pass data between ISR and main loop are prefixed with i2c_
+
+// Main loop -> ISR communication (outgoing state for I2C reads)
+volatile uint32_t i2c_outgoing_state = state;
+
+// ISR -> Main loop communication (incoming requests from I2C writes)
+volatile bool i2c_clear_error_request = false;
+volatile bool i2c_self_cal_request = false;
+volatile uint8_t i2c_layer_change_request = 0xFF;  // 0xFF = none, 0-7 = layer
+
+struct LayerTargetWrite {
+  uint8_t layer;
+  uint8_t target;
+  bool valid;
+};
+volatile LayerTargetWrite i2c_layer_target_write = {0, 0, false};
+
+struct LayerHapticWrite {
+  uint8_t layer;
+  uint16_t config;
+  bool valid;
+};
+volatile LayerHapticWrite i2c_layer_haptic_write = {0, 0, false};
 
 uint32_t remote_movement_start = 0;
 uint32_t touch_state_change_millis = 0;
@@ -176,15 +202,16 @@ void setup_tca0() {
 }
 
 // I2C request handler - called when master requests data
+// IMPORTANT: This runs in ISR context - only read i2c_ prefixed state!
 void onI2cRequest() {
   uint8_t r = current_register;
   if (r == REG_VERSION) {
       Wire.write(I2C_PROTOCOL_VERSION);
   } else if (r == REG_STATE) {
-      Wire.write((outgoing_state >> 24) & 0xFF);
-      Wire.write((outgoing_state >> 16) & 0xFF);
-      Wire.write((outgoing_state >> 8) & 0xFF);
-      Wire.write(outgoing_state & 0xFF);
+      Wire.write((i2c_outgoing_state >> 24) & 0xFF);
+      Wire.write((i2c_outgoing_state >> 16) & 0xFF);
+      Wire.write((i2c_outgoing_state >> 8) & 0xFF);
+      Wire.write(i2c_outgoing_state & 0xFF);
   } else if (r == REG_UPTIME) {
       uint32_t uptime = millis();
       Wire.write((uptime >> 24) & 0xFF);
@@ -235,32 +262,29 @@ void onI2cRequest() {
 }
 
 // I2C receive handler - called when master sends data
+// IMPORTANT: This runs in ISR context - only set flags/copy data, no state changes!
 void onI2cReceive(int howMany) {
   if (howMany == 0) return;
-  
+
   // First byte is always the register address
   current_register = Wire.read();
-  
+
   switch (current_register) {
     case REG_CAL_TOUCH:
       pending_calibrate_touch = true;
       break;
     case REG_CLEAR_ERROR:
-      if (get_mode() == MODE_ERROR) {
-        set_mode(MODE_INPUT_IDLE);
-      }
+      // Set flag for main loop to process
+      i2c_clear_error_request = true;
       break;
     case REG_SELF_CAL:
-      if (get_mode() != MODE_ERROR) {
-        self_calibration_stage = 0;
-        self_calibration_start = millis();
-        set_mode(MODE_SELF_CALIBRATION);
-      }
+      // Set flag for main loop to process
+      i2c_self_cal_request = true;
       break;
     case REG_ACTIVE_LAYER:
       if (howMany == 2) {  // register + 1 byte layer index
         uint8_t new_layer = Wire.read() & 0x07;  // Clamp to 0-7
-        request_layer_change(new_layer);
+        i2c_layer_change_request = new_layer;
       }
       break;
     case REG_LAYER_TARGET:
@@ -269,9 +293,10 @@ void onI2cReceive(int howMany) {
         queried_layer = Wire.read() & 0x07;
       } else if (howMany == 3) {
         // Write: register + layer + target position
-        uint8_t layer = Wire.read() & 0x07;
-        uint8_t target = Wire.read();
-        write_layer_target(layer, target);
+        // Copy data to volatile struct for main loop to process
+        i2c_layer_target_write.layer = Wire.read() & 0x07;
+        i2c_layer_target_write.target = Wire.read();
+        i2c_layer_target_write.valid = true;
       }
       break;
     case REG_LAYER_HAPTIC_CONFIG:
@@ -280,9 +305,10 @@ void onI2cReceive(int howMany) {
         queried_layer = Wire.read() & 0x07;
       } else if (howMany == 4) {
         // Write: register + layer + 2 bytes config (big-endian)
-        uint8_t layer = Wire.read() & 0x07;
-        uint16_t config = ((uint16_t)Wire.read() << 8) | Wire.read();
-        write_layer_haptic_config(layer, config);
+        // Copy data to volatile struct for main loop to process
+        i2c_layer_haptic_write.layer = Wire.read() & 0x07;
+        i2c_layer_haptic_write.config = ((uint16_t)Wire.read() << 8) | Wire.read();
+        i2c_layer_haptic_write.valid = true;
       }
       break;
     case REG_VERSION:
@@ -297,7 +323,7 @@ void onI2cReceive(int howMany) {
       // Discard any excess data
       while (Wire.available()) Wire.read();
       break;
-      
+
     default:
       // Unknown register, discard data
       // Discard any excess data
@@ -441,7 +467,8 @@ void request_layer_change(uint8_t new_layer) {
   if (mode == MODE_ERROR) {
     return;  // Ignore - no deferral
   }
-  pending_layer_change = new_layer;  // Defer until idle
+
+  pending_layer_change = new_layer;  // Defer until appropriate to apply
 }
 
 // Apply layer change and start movement to new layer's restore position
@@ -552,6 +579,11 @@ void motor_update() {
       } else if ((state & STATE_TOUCH_bm) && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       } else {
+        // Apply pending layer change
+        if (pending_layer_change != 0xFF) {
+          apply_layer_change(pending_layer_change);
+          break;  // Exit switch since state may change
+        }
         float delta = (target_adc - input_ewma) * 1.2;
         if (delta > 4) {
           uint8_t pwm = delta + 80 > 254 ? 254 : delta + 80;
@@ -666,10 +698,10 @@ void motor_update() {
       TCA0.SPLIT.HCMP1 = 0;    // Motor A
       TCA0.SPLIT.HCMP2 = 0;    // Motor B
 
-      // Apply pending layer change (may be deferred from SELF_CALIBRATION)
+      // Apply pending layer change
       if (pending_layer_change != 0xFF) {
         apply_layer_change(pending_layer_change);
-        break;  // Exit switch - apply_layer_change sets mode to REMOTE_MOVEMENT
+        break;  // Exit switch since state may change
       }
 
       if (now < input_last_change_millis + IDLE_DURATION_THRESHOLD || ((state & STATE_TOUCH_bm) != 0 && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD)) {
@@ -827,7 +859,80 @@ void setup() {
   pending_calibrate_touch = true;
 }
 
+// Process I2C requests that were queued by ISR callbacks
+// This must be called from main loop (non-ISR context) before motor_update()
+void process_i2c_requests() {
+  // Local copies of all i2c requests
+  bool clear_error = false;
+  bool self_cal = false;
+  uint8_t layer_change = 0xFF;
+  bool has_layer_target = false;
+  uint8_t layer_target_layer = 0;
+  uint8_t layer_target_target = 0;
+  bool has_layer_haptic = false;
+  uint8_t layer_haptic_layer = 0;
+  uint16_t layer_haptic_config = 0;
+
+  // Atomically copy all i2c requests in a single critical section
+  noInterrupts();
+
+  clear_error = i2c_clear_error_request;
+  i2c_clear_error_request = false;
+
+  self_cal = i2c_self_cal_request;
+  i2c_self_cal_request = false;
+
+  layer_change = i2c_layer_change_request;
+  i2c_layer_change_request = 0xFF;
+
+  if (i2c_layer_target_write.valid) {
+    has_layer_target = true;
+    layer_target_layer = i2c_layer_target_write.layer;
+    layer_target_target = i2c_layer_target_write.target;
+    i2c_layer_target_write.valid = false;
+  }
+
+  if (i2c_layer_haptic_write.valid) {
+    has_layer_haptic = true;
+    layer_haptic_layer = i2c_layer_haptic_write.layer;
+    layer_haptic_config = i2c_layer_haptic_write.config;
+    i2c_layer_haptic_write.valid = false;
+  }
+
+  interrupts();
+
+  // Process all requests outside critical section
+  if (clear_error) {
+    if (get_mode() == MODE_ERROR) {
+      set_mode(MODE_INPUT_IDLE);
+    }
+  }
+
+  if (self_cal) {
+    if (get_mode() != MODE_ERROR) {
+      self_calibration_stage = 0;
+      self_calibration_start = millis();
+      set_mode(MODE_SELF_CALIBRATION);
+    }
+  }
+
+  if (has_layer_target) {
+    write_layer_target(layer_target_layer, layer_target_target);
+  }
+
+  if (layer_change != 0xFF) {
+    request_layer_change(layer_change);
+  }
+
+  if (has_layer_haptic) {
+    write_layer_haptic_config(layer_haptic_layer, layer_haptic_config);
+  }
+}
+
 void loop() {
+  // Process any I2C requests that were queued by ISR callbacks
+  process_i2c_requests();
+
   if (pending_calibrate_touch) {
     pending_calibrate_touch = false;
     TCA0.SPLIT.HCMP1 = 0;    // Motor A
@@ -842,9 +947,10 @@ void loop() {
     }
   }
   motor_update();
-  
+
+  // Copy state to i2c_outgoing_state atomically for ISR reads
   noInterrupts();
-  outgoing_state = state;
+  i2c_outgoing_state = state;
   interrupts();
 
   ptc_process(millis());
