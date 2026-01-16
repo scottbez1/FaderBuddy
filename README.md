@@ -35,12 +35,14 @@ into Home Assistant.
 - Compact PCB design optimized for JLCPCB assembly
 
 **Firmware:**
-- Programmable haptic modes (TODO):
+- Programmable haptic modes:
   - Smooth operation (no detents)
   - Magnetic endpoints (snap to 0% and 100%)
-  - Configurable detents (2-10 positions)
+  - Configurable detents (1-15 positions)
+- **8 independent layers** per fader - each with its own position and haptic configuration
 - Touch-aware motor control prevents unnecessary power consumption
 - High level interface ("move to position X") with arbitration allows for stable bidirectional control even with tens of milliseconds of latency between remote and local systems
+- Double-tap gesture detection
 
 ## PCB Fabrication
 
@@ -55,15 +57,34 @@ Latest auto-generated (untested and likely broken!) artifacts⚠️:
   - [BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/bom.csv)
   - [CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/pos.csv)
 
+## ESPHome Integration
+
+The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
+- Bidirectional position sync with Home Assistant entities
+- Layer-aware automation triggers (manual_move, touch_change, double_tap)
+- Per-layer haptic configuration
+- Multiple faders on a single ESP32 via I2C
+
+See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and examples.
+
 ## Project Structure
 
 ```
 motorFader/
 ├── electronics/          # KiCad PCB design files
 ├── firmware/            # ATtiny1616 firmware source (PlatformIO)
-└── production_tools/
-    └── programAndTest/  # ESP32-based production test fixture
+├── esphome/             # ESPHome custom component
+│   ├── components/      # Component source code
+│   └── examples/        # Example configurations
+├── software/            # WebHID browser demo tool
+├── production_tools/    # ESP32-based production test fixture
+└── ci/                  # CI scripts for PCB export
 ```
+
+## Documentation
+
+- **[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md)** - ESPHome setup and API reference
+- **[ABOUT_LAYERS.md](ABOUT_LAYERS.md)** - Layer architecture and implementation details
 
 ## Production Testing
 
