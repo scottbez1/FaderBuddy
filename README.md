@@ -1,18 +1,22 @@
 # motorFader
 
-The motorFader is a physical, bidirectional control interface for things like lighting, volume, and more -- "birdirectionality"
-means that you can move the fader to control your lights by hand, but the fader will also physically move to reflect any 
-external changes (like from another switch, dashboard, or automation)!
+The motorFader is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
+one (or many) to project with just 2 I/O pins (I2C, which can be shared with your other I2C peripherals)!
 
-The motorFader is a fully-integrated control board that fits directly onto Soundwell 60mm motorized faders for a compact,
-modular system. Many faders can be chained together via the I2C bus, and 0.1" headers allow for easy, wire-free connections
-between adjacent modules.
+The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules without wires,
+and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (note: a
+separate 5v supply wire to power the motor is needed when using 3.3v STEMMA QT/QWIIC; 5v STEMMA QT can power the
+motor directly without an additional power wire).
 
-Each module is independent, with an ATTiny1616 microcontroller powering the motor control loop, capacitive touch input, and
-I2C communications.
+TODO: photo of chaining
 
-When combined with an ESP32 main controller, the associated ESPHome component allows faders to be seamlessly integrated
-into Home Assistant. 
+The onboard ATtiny1616 microcontroller handles all the complex real-time logic (PID motor control and capacitive
+touch handling) and provides a simple interface for controlling bidirectional input/output and haptic feedback
+from your main microcontroller.
+
+When combined with an ESP32 main controller, the provided [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
+faders to be seamlessly integrated into Home Assistant. Or, use a simple I2C<>USB adapter like an MCP2221A to
+connect faders to your computer.
 
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
@@ -28,6 +32,7 @@ into Home Assistant.
 
 **Hardware:**
 - ATtiny1616 microcontroller with UPDI programming interface
+- Supports 3.3v or 5v logic (with 3.3v logic, 5v is still required for powering the motor; with 5v logic Vio and Vmot can be combined for only 4 wires)
 - Capacitive touch sensing for fader touch detection
 - Motor driver with position feedback (potentiometer)
 - I2C communication interface for host integration
@@ -35,7 +40,7 @@ into Home Assistant.
 - Compact PCB design optimized for JLCPCB assembly
 
 **Firmware:**
-- Programmable haptic modes:
+- Programmable haptic-feedback modes:
   - Smooth operation (no detents)
   - Magnetic endpoints (snap to 0% and 100%)
   - Configurable detents (1-15 positions)
@@ -60,7 +65,7 @@ Latest auto-generated (untested and likely broken!) artifacts⚠️:
 ## ESPHome Integration
 
 The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
-- Bidirectional position sync with Home Assistant entities
+- Bidirectional (input & output) position sync with Home Assistant entities
 - Layer-aware automation triggers (manual_move, touch_change, double_tap)
 - Per-layer haptic configuration
 - Multiple faders on a single ESP32 via I2C
