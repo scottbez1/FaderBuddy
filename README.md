@@ -81,7 +81,8 @@ motorFader/
 ├── esphome/             # ESPHome custom component
 │   ├── components/      # Component source code
 │   └── examples/        # Example configurations
-├── software/            # WebHID browser demo tool
+├── software/            # Software tools and demos
+│   └── mcp2221-webhid/  # WebHID browser demo tool
 ├── production_tools/    # ESP32-based production test fixture
 └── ci/                  # CI scripts for PCB export
 ```

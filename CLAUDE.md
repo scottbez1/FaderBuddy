@@ -15,9 +15,8 @@ motorFader is a bidirectional motor fader control system with integrated capacit
 - **esphome/** - ESPHome custom component for Home Assistant integration
   - `components/motor_fader/` - Layer-aware motor fader component
   - `examples/multi-fader-display.yaml` - ESP32-S3 example with LVGL display
-- **software/** - WebHID-based browser demo tool
-  - Web interface for I2C control via MCP2221 USB-to-I2C bridge
-  - Real-time monitoring, touch diagnostics, calibration triggering
+- **software/** - Software tools and demos
+  - `mcp2221-webhid/` - WebHID-based browser demo tool for I2C control via MCP2221 USB-to-I2C bridge
 - **production_tools/programAndTest/** - ESP32-based production test fixture
   - ESP32 PlatformIO project with display and current monitoring
   - Python test scripts for automated hardware validation
@@ -112,7 +111,7 @@ See `esphome/examples/multi-fader-display.yaml` for ESP32-S3 with LVGL display i
 Browser-based control interface for testing and diagnostics:
 
 ```bash
-cd software
+cd software/mcp2221-webhid
 npm install
 npm run build
 # Open index.html in Chrome/Edge browser
