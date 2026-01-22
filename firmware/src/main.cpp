@@ -939,12 +939,12 @@ void loop() {
     TCA0.SPLIT.HCMP2 = 0;    // Motor B
     delay(10);
     ptc_node_request_recal(&touch_sensor);
-    for (uint8_t i = 0; i < 4; i++) {
-      digitalWrite(PIN_LED, HIGH);
-      delay(100);
-      digitalWrite(PIN_LED, LOW);
-      delay(100);
-    }
+    // for (uint8_t i = 0; i < 4; i++) {
+    //   digitalWrite(PIN_LED, HIGH);
+    //   delay(100);
+    //   digitalWrite(PIN_LED, LOW);
+    //   delay(100);
+    // }
   }
   motor_update();
 

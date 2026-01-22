@@ -39,7 +39,7 @@ external_components:
       type: git
       url: https://github.com/scottbez1/motorFader.git
       ref: main  # or specify a specific tag/branch
-    components: [motorFaderESPHomeComponent]
+    components: [motor_fader]
 ```
 
 ## Basic Configuration
@@ -49,7 +49,7 @@ external_components:
 Here's a minimal configuration for one motor fader:
 
 ```yaml
-motorFaderESPHomeComponent:
+motor_fader:
   - id: my_fader
     address: 0x20          # I2C address (default 0x20)
     update_interval: 10ms  # How often to poll the fader
@@ -60,7 +60,7 @@ motorFaderESPHomeComponent:
 To use multiple faders, add multiple entries with unique IDs and addresses:
 
 ```yaml
-motorFaderESPHomeComponent:
+motor_fader:
   - id: fader_1
     address: 0x20
     update_interval: 10ms
@@ -82,8 +82,8 @@ motorFaderESPHomeComponent:
 - **address** (optional, default: `0x20`): I2C address of the fader (0x20-0x27)
 - **update_interval** (optional, default: `50ms`): How often to poll the fader for state updates
 - **invert** (optional, default: `false`): Reverse the fader direction (position 0 becomes 255, and vice versa)
-- **layer_haptics** (optional): List of haptic configurations for specific layers. See `ABOUT_LAYERS.md` more more details on layers!
-  - **layer** (required): Layer index (0-7)
+- **layer_haptics** (optional): List of haptic configurations for specific layers. See `ABOUT_LAYERS.md` for more details on layers
+  - **layer** (required): Layer index (0-7) for this list item
   - **mode** (required): Haptic mode - one of:
     - `smooth`: No haptic feedback, completely smooth movement
     - `smooth_with_magnets`: Smooth with magnetic endpoints that pull the fader to min/max
@@ -101,7 +101,7 @@ The component provides three triggers that fire when the user interacts with the
 Fires when the user moves the fader or when the fader position changes. Provides the current position (0-255) and active layer index.
 
 ```yaml
-motorFaderESPHomeComponent:
+motor_fader:
   - id: my_fader
     on_manual_move:
       then:
@@ -116,7 +116,7 @@ motorFaderESPHomeComponent:
 Fires when the user touches or releases the fader. Provides touch state (true/false) and active layer index.
 
 ```yaml
-motorFaderESPHomeComponent:
+motor_fader:
   - id: my_fader
     on_touch_change:
       then:
@@ -131,7 +131,7 @@ motorFaderESPHomeComponent:
 Fires when the user double-taps the fader. Provides the active layer index.
 
 ```yaml
-motorFaderESPHomeComponent:
+motor_fader:
   - id: my_fader
     on_double_tap:
       then:
@@ -142,13 +142,13 @@ motorFaderESPHomeComponent:
 
 ## Actions
 
-### motorFaderESPHomeComponent.remote_move_to
+### motor_fader.remote_move_to
 
 Command the fader to move to a specific position.
 
 ```yaml
 # Example: Move fader to position 128
-- motorFaderESPHomeComponent.remote_move_to:
+- motor_fader.remote_move_to:
     id: my_fader
     position: 128
     layer: 0  # Optional, defaults to layer 0
@@ -158,7 +158,7 @@ Command the fader to move to a specific position.
 
 **Layer:** Optional layer index (0-7). If the specified layer is not currently active, the position is stored and will be restored when that layer becomes active.
 
-### motorFaderESPHomeComponent.set_active_layer
+### motor_fader.set_active_layer
 
 Switch to a different layer (0-7). The fader will automatically move to that layer's last position.
 
@@ -168,18 +168,18 @@ binary_sensor:
   - platform: gpio
     pin: GPIO4
     on_press:
-      - motorFaderESPHomeComponent.set_active_layer:
+      - motor_fader.set_active_layer:
           id: my_fader
           layer: 1
 ```
 
-### motorFaderESPHomeComponent.set_layer_haptic_config
+### motor_fader.set_layer_haptic_config
 
 Dynamically change the haptic configuration for a layer.
 
 ```yaml
 # Example: Set layer 2 to detents mode with 10 detents
-- motorFaderESPHomeComponent.set_layer_haptic_config:
+- motor_fader.set_layer_haptic_config:
     id: my_fader
     layer: 2
     mode: detents
@@ -187,7 +187,7 @@ Dynamically change the haptic configuration for a layer.
     detent_strength: 5
 ```
 
-### motorFaderESPHomeComponent.run_self_calibration
+### motor_fader.run_self_calibration
 
 Trigger the fader's self-calibration routine. The fader will automatically move to both endpoints to calibrate its potentiometer range.
 
@@ -197,7 +197,7 @@ button:
   - platform: template
     name: "Calibrate Fader"
     on_press:
-      - motorFaderESPHomeComponent.run_self_calibration:
+      - motor_fader.run_self_calibration:
           id: my_fader
 ```
 
@@ -227,7 +227,7 @@ id(my_fader).run_self_calibration();
 This example shows a single fader controlling a Home Assistant light's brightness:
 
 ```yaml
-motorFaderESPHomeComponent:
+motor_fader:
   - id: brightness_fader
     address: 0x20
     update_interval: 10ms
@@ -280,7 +280,7 @@ For complete working examples, see the `esphome/examples/` directory:
 - This can be useful if you have a bidirectional setup (i.e. moving the fader controls a light in HASS, and changing a light in HASS moves the fader) and the on_manual_move trigger takes a while to be confirmed/reflected, for example when updating a high-roundtrip-latency light like a Zigbee light. Without rate-limiting, this can often result in weird motor movements after manually moving the fader, as HASS may queue up brightness changes that happen too quickly and then deliver them for while after you've already let go, causing the motor to almost replay your previous movement.
 
 **Fader doesn't move to commanded position:**
-- Run self-calibration: `motorFaderESPHomeComponent.run_self_calibration`
+- Run self-calibration: `motor_fader.run_self_calibration`
 - Check that you're not in an error state (power cycle if needed)
 
 ## Additional Resources

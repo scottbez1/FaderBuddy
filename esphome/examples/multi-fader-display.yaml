@@ -33,7 +33,7 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [motorFaderESPHomeComponent]
+    components: [motor_fader]
 
   # For use outside this repo, use the GitHub source instead:
   # - source:
@@ -41,7 +41,7 @@ external_components:
   #     url: https://github.com/scottbez1/motorFader.git
   #     ref: main  # or specify a tag/branch
   #   refresh: 0s
-  #   components: [motorFaderESPHomeComponent]
+  #   components: [motor_fader]
     
 
 # I2C Bus Configuration
@@ -215,7 +215,7 @@ font:
     id: mdi_icons
     size: 48
 
-motorFaderESPHomeComponent:
+motor_fader:
   - id: motor_fader
     address: 0x22
     update_interval: 10ms

@@ -13,7 +13,7 @@ motorFader is a bidirectional motor fader control system with integrated capacit
   - `src/main.cpp` - Main firmware logic with motor control loop and I2C peripheral
   - `src/shared/i2c_data.h` - I2C protocol v5 definitions (shared across all components)
 - **esphome/** - ESPHome custom component for Home Assistant integration
-  - `components/motorFaderESPHomeComponent/` - Layer-aware motor fader component
+  - `components/motor_fader/` - Layer-aware motor fader component
   - `examples/multi-fader-display.yaml` - ESP32-S3 example with LVGL display
 - **software/** - WebHID-based browser demo tool
   - Web interface for I2C control via MCP2221 USB-to-I2C bridge
@@ -200,7 +200,7 @@ This allows the host controller to distinguish between position updates caused b
 
 The file `firmware/src/shared/i2c_data.h` contains the I2C protocol definitions and is shared between:
 - The ATtiny1616 firmware (I2C peripheral implementation)
-- The ESPHome component (`esphome/components/motorFaderESPHomeComponent/i2c_data.h`)
+- The ESPHome component (`esphome/components/motor_fader/i2c_data.h`)
 - The production test tool (ESP32 I2C controller)
 - The WebHID demo tool (JavaScript implementation)
 

@@ -3,7 +3,7 @@
 The motorFader is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
 one (or many) to project with just 2 I/O pins (I2C, which can be shared with your other I2C peripherals)!
 
-The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules without wires,
+The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules with minimal wiring,
 and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (note: a
 separate 5v supply wire to power the motor is needed when using 3.3v STEMMA QT/QWIIC; 5v STEMMA QT can power the
 motor directly without an additional power wire).
