@@ -285,6 +285,6 @@ For complete working examples, see the `esphome/examples/` directory:
 
 ## Additional Resources
 
-- **Layer Architecture:** See `LAYERS_DESIGN.md` for detailed information about the layer system
+- **Layer Architecture:** See `ABOUT_LAYERS.md` for detailed information about the layer system
 - **I2C Protocol:** See `firmware/src/shared/i2c_data.h` for low-level protocol details
 - **Example Configurations:** See `esphome/examples/` directory

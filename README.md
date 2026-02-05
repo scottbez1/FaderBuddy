@@ -10,6 +10,14 @@ motor directly without an additional power wire).
 
 TODO: photo of chaining
 
+### Wiring Overview
+
+TODO: Add wiring diagram showing:
+- Motor fader board pinout (Vio, Vmot, SDA, SCL, GND, UPDI)
+- Connection from fader board to ESP32
+- Daisy-chaining multiple fader boards via headers
+- Power supply connections (3.3V logic + 5V motor)
+
 The onboard ATtiny1616 microcontroller handles all the complex real-time logic (PID motor control and capacitive
 touch handling) and provides a simple interface for controlling bidirectional input/output and haptic feedback
 from your main microcontroller.
@@ -49,6 +57,43 @@ connect faders to your computer.
 - High level interface ("move to position X") with arbitration allows for stable bidirectional control even with tens of milliseconds of latency between remote and local systems
 - Double-tap gesture detection
 
+## What You'll Need
+
+To build a complete motor fader setup, you'll need the following. This list covers a single-fader setup; add one fader + one PCB per additional channel.
+
+**Motor Fader Hardware:**
+| Item | Qty | Notes |
+|------|-----|-------|
+| Soundwell motorized fader | 1+ | TODO: specific model number / link |
+| motorFader PCB (assembled) | 1+ | Order from JLCPCB using fabrication files below |
+| TODO: connectors/headers? | | TODO: what connectors are needed, if any, beyond what JLCPCB assembles? |
+
+**Host Controller:**
+| Item | Qty | Notes |
+|------|-----|-------|
+| ESP32 dev board | 1 | TODO: recommended board(s)? ESP32-S3-DevKitC-1 used in example |
+| USB cable for ESP32 | 1 | For programming and power (USB-C or micro-B depending on board) |
+
+**Firmware Programming:**
+| Item | Qty | Notes |
+|------|-----|-------|
+| [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) | 1 | USB-to-UPDI programmer for flashing ATtiny1616 firmware. See [Firmware Flashing](#firmware-flashing) below |
+| TODO: jumper wires / pogo pins? | | TODO: what's needed to connect the UPDI Friend to the board? |
+
+**Power Supply:**
+| Item | Qty | Notes |
+|------|-----|-------|
+| 5V power supply | 1 | TODO: current requirements per fader? Recommended supply? |
+| TODO: wiring/connectors? | | TODO: how does 5V get to the fader boards? |
+
+**Optional:**
+| Item | Qty | Notes |
+|------|-----|-------|
+| MCP2221A USB-to-I2C bridge | 1 | Only needed for WebHID debug tool (not required for normal use) |
+| STEMMA QT / QWIIC cable | 1+ | Alternative to header wiring for I2C connection |
+
+> **Note:** The motorFader PCB is designed for JLCPCB SMT assembly -- most surface-mount components are placed by the factory. See [PCB Fabrication](#pcb-fabrication) below for ordering instructions.
+
 ## PCB Fabrication
 
 Latest auto-generated (untested and likely broken!) artifacts⚠️:
@@ -71,6 +116,51 @@ The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Ho
 - Multiple faders on a single ESP32 via I2C
 
 See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and examples.
+
+## Firmware Flashing
+
+The motorFader PCBs ship from JLCPCB with a blank ATtiny1616 microcontroller -- you'll need to flash the firmware yourself using a UPDI programmer. This only needs to be done once per board (unless you want to update the firmware later).
+
+### What You'll Need
+
+- [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) -- a compact USB-to-UPDI programmer
+- [PlatformIO](https://platformio.org/) -- the build system used for compiling and uploading firmware
+- TODO: connection details -- jumper wires, pogo pins, or header connection to the board's UPDI pad/header
+
+### Connecting the UPDI Friend
+
+TODO: fill in specific connection details:
+- Which pad/pin on the motorFader board is UPDI?
+- Which pads/pins are GND?
+- Photo or diagram of the UPDI Friend connected to the board
+- Are pogo pins needed, or is there a header?
+
+### Flashing Steps
+
+1. **Install PlatformIO:**
+
+   If you don't already have PlatformIO installed, the easiest way is via VS Code: install the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode). Alternatively, install the CLI:
+   ```bash
+   pip install platformio
+   ```
+
+2. **Connect the UPDI Friend** to the motorFader board's UPDI and GND pads, and plug it into your computer via USB.
+
+3. **Build and upload the firmware:**
+   ```bash
+   cd firmware
+   pio run --target upload
+   ```
+
+   PlatformIO will automatically download the required toolchain, compile the firmware, and upload it to the ATtiny1616 via the UPDI Friend.
+
+4. **Verify** the board is working by connecting it to an I2C bus -- it should appear at its configured address (default 0x20). You can verify with the ESPHome I2C scan (`scan: true`) or the WebHID debug tool.
+
+### Troubleshooting Firmware Upload
+
+- **"No device found" or upload fails:** Check your UPDI and GND connections. UPDI requires only a single data line plus ground.
+- **Wrong serial port:** PlatformIO should auto-detect, but you can set the upload port explicitly in `platformio.ini` or via command line: `pio run --target upload --upload-port /dev/ttyUSB0`
+- **Permission denied (Linux):** You may need to add your user to the `dialout` group: `sudo usermod -a -G dialout $USER` (then log out and back in).
 
 ## Project Structure
 
