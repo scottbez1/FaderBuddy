@@ -64,9 +64,8 @@ To build a complete motor fader setup, you'll need the following. This list cove
 **Motor Fader Hardware:**
 | Item | Qty | Notes |
 |------|-----|-------|
-| Soundwell motorized fader | 1+ | TODO: specific model number / link |
+| 60mm motorized fader | 1+ | Designed for Soundwell 60mm travel faders. Available retail as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers), [B&H](https://www.bhphotovideo.com/c/product/1821670-REG/behringer_motor_fader_mf60t_high_performance_60mm_motor_faders.html), and [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC) |
 | motorFader PCB (assembled) | 1+ | Order from JLCPCB using fabrication files below |
-| TODO: connectors/headers? | | TODO: what connectors are needed, if any, beyond what JLCPCB assembles? |
 
 **Host Controller:**
 | Item | Qty | Notes |
@@ -92,7 +91,17 @@ To build a complete motor fader setup, you'll need the following. This list cove
 | MCP2221A USB-to-I2C bridge | 1 | Only needed for WebHID debug tool (not required for normal use) |
 | STEMMA QT / QWIIC cable | 1+ | Alternative to header wiring for I2C connection |
 
-> **Note:** The motorFader PCB is designed for JLCPCB SMT assembly -- most surface-mount components are placed by the factory. See [PCB Fabrication](#pcb-fabrication) below for ordering instructions.
+> **Note:** The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory. See [PCB Fabrication](#pcb-fabrication) below for ordering instructions.
+
+### Assembly
+
+The PCB comes fully assembled from JLCPCB. The only soldering required is attaching the PCB to the fader itself -- a handful of through-hole solder joints, nothing too small:
+
+- **2 connections** for the motor
+- **4 connections** for the fader potentiometer
+- 2 optional mechanical-only connections (recommend skipping these)
+
+No fine-pitch or SMD soldering is required. If you're comfortable with basic through-hole soldering, you can do this.
 
 ## PCB Fabrication
 
