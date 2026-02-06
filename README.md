@@ -77,13 +77,12 @@ To build a complete motor fader setup, you'll need the following. This list cove
 | Item | Qty | Notes |
 |------|-----|-------|
 | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) | 1 | USB-to-UPDI programmer for flashing ATtiny1616 firmware. See [Firmware Flashing](#firmware-flashing) below |
-| TODO: jumper wires / pogo pins? | | TODO: what's needed to connect the UPDI Friend to the board? |
+| Jumper wires or 0.1" pin headers | | For connecting the UPDI Friend to the test points on the back of the PCB (3 pins at 0.1" spacing). You can solder on pin headers for repeated use, or just hold jumper wires against the pads for a one-time flash |
 
 **Power Supply:**
 | Item | Qty | Notes |
 |------|-----|-------|
-| 5V power supply | 1 | TODO: current requirements per fader? Recommended supply? |
-| TODO: wiring/connectors? | | TODO: how does 5V get to the fader boards? |
+| USB power (from ESP32) | 1 | Multiple faders can be powered from the ESP32's USB supply -- no external power supply needed. Power (both Vmot and Vio) is carried through the daisy-chain headers, so only the first board in the chain needs a direct connection to the ESP32. TODO: max current draw per fader |
 
 **Optional:**
 | Item | Qty | Notes |
@@ -134,15 +133,21 @@ The motorFader PCBs ship from JLCPCB with a blank ATtiny1616 microcontroller -- 
 
 - [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) -- a compact USB-to-UPDI programmer
 - [PlatformIO](https://platformio.org/) -- the build system used for compiling and uploading firmware
-- TODO: connection details -- jumper wires, pogo pins, or header connection to the board's UPDI pad/header
+- Jumper wires or 0.1" pin headers for connecting to the board's UPDI test points
 
 ### Connecting the UPDI Friend
 
-TODO: fill in specific connection details:
-- Which pad/pin on the motorFader board is UPDI?
-- Which pads/pins are GND?
-- Photo or diagram of the UPDI Friend connected to the board
-- Are pogo pins needed, or is there a header?
+On the back of the motorFader PCB, there are three through-hole test points labeled for UPDI programming, laid out at 0.1" spacing. You can solder on standard pin headers for repeated use, or simply hold jumper wires against the pads for a one-time flash.
+
+Connect the Adafruit UPDI Friend to the test points as follows:
+
+| UPDI Friend wire | motorFader pad |
+|------------------|----------------|
+| Black (GND)      | **-**          |
+| Red (VCC)        | **+**          |
+| White (UPDI)     | **U**          |
+
+TODO: photo of UPDI Friend connected to the back of the board
 
 ### Flashing Steps
 
