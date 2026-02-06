@@ -1,30 +1,24 @@
 # motorFader
 
 The motorFader is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
-one (or many) to project with just 2 I/O pins (I2C, which can be shared with your other I2C peripherals)!
+one (or many) to project with just 2 I/O pins for I2C!
+
+TODO: photo of assembled fader
+
+The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project).
+
+The onboard ATtiny1616 microcontroller handles all the real-time logic (PID motor control and capacitive
+touch handling) and provides a simple I2C interface for controlling bidirectional input/output and haptic feedback
+from your ESP32 or other main microcontroller.
+
+An [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
+motorFader assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
 
 The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules with minimal wiring,
-and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (note: a
-separate 5v supply wire to power the motor is needed when using 3.3v STEMMA QT/QWIIC; 5v STEMMA QT can power the
-motor directly without an additional power wire).
+and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design.
 
 TODO: photo of chaining
 
-### Wiring Overview
-
-TODO: Add wiring diagram showing:
-- Motor fader board pinout (Vio, Vmot, SDA, SCL, GND, UPDI)
-- Connection from fader board to ESP32
-- Daisy-chaining multiple fader boards via headers
-- Power supply connections (3.3V logic + 5V motor)
-
-The onboard ATtiny1616 microcontroller handles all the complex real-time logic (PID motor control and capacitive
-touch handling) and provides a simple interface for controlling bidirectional input/output and haptic feedback
-from your main microcontroller.
-
-When combined with an ESP32 main controller, the provided [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
-faders to be seamlessly integrated into Home Assistant. Or, use a simple I2C<>USB adapter like an MCP2221A to
-connect faders to your computer.
 
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
@@ -53,9 +47,8 @@ connect faders to your computer.
   - Magnetic endpoints (snap to 0% and 100%)
   - Configurable detents (1-15 positions)
 - **8 independent layers** per fader - each with its own position and haptic configuration
-- Touch-aware motor control prevents unnecessary power consumption
+- Touch-aware motor control avoids fighting against user input and supports touch and double-tap detection
 - High level interface ("move to position X") with arbitration allows for stable bidirectional control even with tens of milliseconds of latency between remote and local systems
-- Double-tap gesture detection
 
 ## What You'll Need
 
@@ -64,45 +57,43 @@ To build a complete motor fader setup, you'll need the following. This list cove
 **Motor Fader Hardware:**
 | Item | Qty | Notes |
 |------|-----|-------|
-| 60mm motorized fader | 1+ | Designed for Soundwell 60mm travel faders. Available retail as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers), [B&H](https://www.bhphotovideo.com/c/product/1821670-REG/behringer_motor_fader_mf60t_high_performance_60mm_motor_faders.html), and [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC) |
-| motorFader PCB (assembled) | 1+ | Order from JLCPCB using fabrication files below |
+| 60mm motor fader | 1 each | Designed for Soundwell 60mm travel faders. Available retail as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC) |
+| motorFader PCB (assembled) | 1 each | Order from Bezek Labs LLC or from JLCPCB using provided fabrication files and instructions |
+
 
 **Host Controller:**
 | Item | Qty | Notes |
 |------|-----|-------|
-| ESP32 dev board | 1 | Any ESPHome-compatible ESP32 board. The example config uses an ESP32-S3-DevKitC-1, but any ESP32 variant with available I2C pins will work |
-| USB cable for ESP32 | 1 | For programming and power (USB-C or micro-B depending on board) |
+| ESP32 dev board | 1 total | Any ESPHome-compatible ESP32 board. Requires 2 free GPIO pins for I2C. |
 
-**Firmware Programming:**
+**Firmware Programming (only needed when ordering from JLCPCB)**
+
+motorFader boards from Bezek Labs come pre-flashed with stable firmware, but boards ordered directly from JLCPCB will need firmware flashed before they will work. You might also want an UPDI programmer to update the motorFader firmware to the latest.
+
 | Item | Qty | Notes |
 |------|-----|-------|
-| [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) | 1 | USB-to-UPDI programmer for flashing ATtiny1616 firmware. See [Firmware Flashing](#firmware-flashing) below |
-| Jumper wires or 0.1" pin headers | | For connecting the UPDI Friend to the test points on the back of the PCB (3 pins at 0.1" spacing). You can solder on pin headers for repeated use, or just hold jumper wires against the pads for a one-time flash |
+| UPDI programmer | 1 total | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is recommended, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)). See [Firmware Flashing](#firmware-flashing) below for UPDI programming instructions |
 
-**Power Supply:**
-| Item | Qty | Notes |
-|------|-----|-------|
-| USB power (from ESP32) | 1 | Multiple faders can be powered from the ESP32's USB supply -- no external power supply needed. Power (both Vmot and Vio) is carried through the daisy-chain headers, so only the first board in the chain needs a direct connection to the ESP32. TODO: max current draw per fader |
 
 **Optional:**
 | Item | Qty | Notes |
 |------|-----|-------|
-| MCP2221A USB-to-I2C bridge | 1 | Only needed for WebHID debug tool (not required for normal use) |
-| STEMMA QT / QWIIC cable | 1+ | Alternative to header wiring for I2C connection |
-
-> **Note:** The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory. See [PCB Fabrication](#pcb-fabrication) below for ordering instructions.
-
-### Assembly
-
-The PCB comes fully assembled from JLCPCB. The only soldering required is attaching the PCB to the fader itself -- a handful of through-hole solder joints, nothing too small:
-
-- **2 connections** for the motor
-- **4 connections** for the fader potentiometer
-- 2 optional mechanical-only connections (recommend skipping these)
-
-No fine-pitch or SMD soldering is required. If you're comfortable with basic through-hole soldering, you can do this.
+| MCP2221A USB-to-I2C bridge | 1 total | Can be used with the WebHID debug tool (not required for normal use) to connect to a computer directly using I2C over USB HID |
+| STEMMA QT / QWIIC cable | 1 each | Easier alternative to header wiring for I2C connection, especially when using MCP2221A set to 5V (no separate motor power wire needed). Different lengths available, e.g. [Adafruit 100mm](https://www.adafruit.com/product/4210) |
 
 ## PCB Fabrication
+The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
+
+| Item | Qty | Notes |
+|------|-----|-------|
+| 5 pin right-angle male pin headers 0.1" spacing | 1 each | Included with Bezek Labs motorFaders, can be purchased separately from electronics suppliers like [LCSC - 40-pin break-apart headers](https://www.lcsc.com/product-detail/C429956.html)|
+| 5 pin right-angle female pin headers 0.1" spacing | 1 each | Included with Bezek Labs motorFaders, can be purchased separately from electronics suppliers like [LCSC](https://www.lcsc.com/product-detail/C2935995.html) |
+
+
+Use the files from the [latest release](https://github.com/scottbez1/motorFader/releases) when ordering!
+
+> [!CAUTION]
+> The files below are auto-generated from the current (untested) design files, and are provided for design reference ONLY. They are NOT considered stable for manufacturing. Use the latest stable release linked above! 
 
 Latest auto-generated (untested and likely broken!) artifacts⚠️:
 - Review
@@ -111,29 +102,36 @@ Latest auto-generated (untested and likely broken!) artifacts⚠️:
   - [PCB Packet](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-pcb-packet.pdf)
 - Ordering (Configured for JLCPCB)
   - 1.6mm, any color, HASL lead-free
-  - [Gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/gerbers.zip)
-  - [BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/bom.csv)
-  - [CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/pos.csv)
+  - [Untested gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/gerbers.zip)
+  - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/bom.csv)
+  - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/pos.csv)
 
-## ESPHome Integration
 
-The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
-- Bidirectional (input & output) position sync with Home Assistant entities
-- Layer-aware automation triggers (manual_move, touch_change, double_tap)
-- Per-layer haptic configuration
-- Multiple faders on a single ESP32 via I2C
 
-See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and examples.
+### Assembly
+
+The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering required is attaching the PCB to the fader itself and the optional daisy-chaining headers, which are all through-hole connections:
+
+- **2 connections** for the motor
+- **4 connections** for the fader potentiometer
+- 2 optional mechanical-only connections (I recommend skipping these)
+- **5 connections** for the female daisy-chaining pin headers
+- **5 connections** for the male daisy-chaining pin headers
+
+No fine-pitch or SMD soldering is required.
+
+## Wiring Overview
+
+TODO: Add wiring diagram showing:
+- Motor fader board pinout (Vio, Vmot, SDA, SCL, GND)
+- Connection from fader board to ESP32
+- Daisy-chaining multiple fader boards via headers
+- Power supply connections (3.3V logic + 5V motor)
+
 
 ## Firmware Flashing
 
 The motorFader PCBs ship from JLCPCB with a blank ATtiny1616 microcontroller -- you'll need to flash the firmware yourself using a UPDI programmer. This only needs to be done once per board (unless you want to update the firmware later).
-
-### What You'll Need
-
-- [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) -- a compact USB-to-UPDI programmer
-- [PlatformIO](https://platformio.org/) -- the build system used for compiling and uploading firmware
-- Jumper wires or 0.1" pin headers for connecting to the board's UPDI test points
 
 ### Connecting the UPDI Friend
 
@@ -153,20 +151,12 @@ TODO: photo of UPDI Friend connected to the back of the board
 
 1. **Install PlatformIO:**
 
-   If you don't already have PlatformIO installed, the easiest way is via VS Code: install the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode). Alternatively, install the CLI:
-   ```bash
-   pip install platformio
-   ```
+   If you don't already have PlatformIO installed, the easiest way is via VS Code: install the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode).
 
 2. **Connect the UPDI Friend** to the motorFader board's UPDI and GND pads, and plug it into your computer via USB.
 
 3. **Build and upload the firmware:**
-   ```bash
-   cd firmware
-   pio run --target upload
-   ```
-
-   PlatformIO will automatically download the required toolchain, compile the firmware, and upload it to the ATtiny1616 via the UPDI Friend.
+   Use the "Upload" option in the PlatformIO extension. PlatformIO will automatically download the required toolchain, compile the firmware, and upload it to the ATtiny1616 via the UPDI Friend.
 
 4. **Verify** the board is working by connecting it to an I2C bus -- it should appear at its configured address (default 0x20). You can verify with the ESPHome I2C scan (`scan: true`) or the WebHID debug tool.
 
@@ -176,8 +166,22 @@ TODO: photo of UPDI Friend connected to the back of the board
 - **Wrong serial port:** PlatformIO should auto-detect, but you can set the upload port explicitly in `platformio.ini` or via command line: `pio run --target upload --upload-port /dev/ttyUSB0`
 - **Permission denied (Linux):** You may need to add your user to the `dialout` group: `sudo usermod -a -G dialout $USER` (then log out and back in).
 
-## Project Structure
+## ESPHome Integration
 
+The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
+- Bidirectional (input & output) position sync with Home Assistant entities
+- Layer-aware automation triggers (manual_move, touch_change, double_tap)
+- Per-layer haptic configuration
+- Multiple faders on a single ESP32 via I2C
+
+See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and examples.
+
+
+## Documentation
+- **[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md)** - ESPHome setup and API reference
+- **[ABOUT_LAYERS.md](ABOUT_LAYERS.md)** - Layer architecture and implementation details
+
+### Project Structure
 ```
 motorFader/
 ├── electronics/          # KiCad PCB design files
@@ -191,10 +195,6 @@ motorFader/
 └── ci/                  # CI scripts for PCB export
 ```
 
-## Documentation
-
-- **[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md)** - ESPHome setup and API reference
-- **[ABOUT_LAYERS.md](ABOUT_LAYERS.md)** - Layer architecture and implementation details
 
 ## Production Testing
 
