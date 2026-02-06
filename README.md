@@ -70,7 +70,7 @@ To build a complete motor fader setup, you'll need the following. This list cove
 **Host Controller:**
 | Item | Qty | Notes |
 |------|-----|-------|
-| ESP32 dev board | 1 | TODO: recommended board(s)? ESP32-S3-DevKitC-1 used in example |
+| ESP32 dev board | 1 | Any ESPHome-compatible ESP32 board. The example config uses an ESP32-S3-DevKitC-1, but any ESP32 variant with available I2C pins will work |
 | USB cable for ESP32 | 1 | For programming and power (USB-C or micro-B depending on board) |
 
 **Firmware Programming:**
