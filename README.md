@@ -7,6 +7,16 @@ TODO: photo of assembled fader
 
 The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project).
 
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
+</a>
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png" width="300" />
+</a>
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
+</a>
+
 The onboard ATtiny1616 microcontroller handles all the real-time logic (PID motor control and capacitive
 touch handling) and provides a simple I2C interface for controlling bidirectional input/output and haptic feedback
 from your ESP32 or other main microcontroller.
@@ -20,15 +30,6 @@ and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to th
 TODO: photo of chaining
 
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
-</a>
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png" width="300" />
-</a>
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
-</a>
 
 ## Features
 
@@ -54,32 +55,25 @@ TODO: photo of chaining
 
 To build a complete motor fader setup, you'll need the following. This list covers a single-fader setup; add one fader + one PCB per additional channel.
 
-**Motor Fader Hardware:**
+### Motor Fader Hardware:
 | Item | Qty | Notes |
 |------|-----|-------|
 | 60mm motor fader | 1 each | Designed for Soundwell 60mm travel faders. Available retail as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC) |
 | motorFader PCB (assembled) | 1 each | Order from Bezek Labs LLC or from JLCPCB using provided fabrication files and instructions |
 
 
-**Host Controller:**
+### Host Controller:
 | Item | Qty | Notes |
 |------|-----|-------|
 | ESP32 dev board | 1 total | Any ESPHome-compatible ESP32 board. Requires 2 free GPIO pins for I2C. |
 
-**Firmware Programming (only needed when ordering from JLCPCB)**
+### Firmware Programming (only needed when ordering from JLCPCB)
 
 motorFader boards from Bezek Labs come pre-flashed with stable firmware, but boards ordered directly from JLCPCB will need firmware flashed before they will work. You might also want an UPDI programmer to update the motorFader firmware to the latest.
 
 | Item | Qty | Notes |
 |------|-----|-------|
 | UPDI programmer | 1 total | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is recommended, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)). See [Firmware Flashing](#firmware-flashing) below for UPDI programming instructions |
-
-
-**Optional:**
-| Item | Qty | Notes |
-|------|-----|-------|
-| MCP2221A USB-to-I2C bridge | 1 total | Can be used with the WebHID debug tool (not required for normal use) to connect to a computer directly using I2C over USB HID |
-| STEMMA QT / QWIIC cable | 1 each | Easier alternative to header wiring for I2C connection, especially when using MCP2221A set to 5V (no separate motor power wire needed). Different lengths available, e.g. [Adafruit 100mm](https://www.adafruit.com/product/4210) |
 
 ## PCB Fabrication
 The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
@@ -121,13 +115,41 @@ The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering
 No fine-pitch or SMD soldering is required.
 
 ## Wiring Overview
+### 3.3v MCU direct wired, direct chaining
+Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to motorFader. 5v powers the motor and 3.3v powers the logic.
+| HOST | motorFader |
+| --- | ---------- |
+| 5v  | Vmot |
+| 3.3v | Vio |
+| GND | GND |
+| SDA | SDA |
+| SCL | SCL |
+<img width="1028" height="548" alt="motorFader wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
 
-TODO: Add wiring diagram showing:
-- Motor fader board pinout (Vio, Vmot, SDA, SCL, GND)
-- Connection from fader board to ESP32
-- Daisy-chaining multiple fader boards via headers
-- Power supply connections (3.3V logic + 5V motor)
+### 3.3v MCU STEMMA QT, direct chaining
+For a microcontroller with a STEMMA QT connector, the motorFader requires an additional 5v wire to power the motor. When more motorFaders are chained directly using the pin headers, no additional wires are required
+| HOST | motorFader |
+| --- | ---------- |
+| STEMMA QT | STEMMA QT |
+| 5v  | Vmot |
+<img width="1366" height="946" alt="motorFader wiring(2)" src="https://github.com/user-attachments/assets/760fd565-01b0-48c2-9add-047ffbaf16b8" />
 
+### 3.3v MCU STEMMA QT
+For a microcontroller with a STEMMA QT connector, the motorFader requires an additional 5v wire to power the motor. When more motorFaders are chained using STEMMA QT, both a STEMMA QT cable AND a 5v wire are required between each motorFader board.
+| HOST | motorFader |
+| --- | ---------- |
+| STEMMA QT | STEMMA QT |
+| 5v  | Vmot |
+<img width="1554" height="724" alt="motorFader wiring(1)" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
+
+### 5v STEAMMA QT
+If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 with the solder jumper bridged to set 5v IO)
+| HOST | motorFader |
+| --- | ---------- |
+| STEMMA QT | STEMMA QT |
+<img width="1508" height="726" alt="motorFader wiring(4)" src="https://github.com/user-attachments/assets/ef7156ee-8c56-41c3-901f-95f443d2d1f1" />
+
+(Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
 ## Firmware Flashing
 
