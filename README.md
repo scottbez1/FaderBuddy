@@ -228,3 +228,9 @@ motorFader/
 ## Production Testing
 
 The `production_tools/programAndTest` directory contains unsupported (source-provided) code for programming and quality control of motor fader boards during production.
+
+## License
+
+motorFader is released under the [Apache 2.0 License](LICENSE.txt).
+
+In plain terms: you're free to use, modify, and distribute this project — including in commercial products — as long as you include the license and indicate any changes you made. You don't have to share your modifications, but you can't claim the original work is yours or use the project name/branding to endorse your product.
