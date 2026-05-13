@@ -1,22 +1,31 @@
 # motorFader
 
 The motorFader is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
-one (or many) to project with just 2 I/O pins for I2C!
+one (or many) to a project with just 2 I/O pins for I2C!
+
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
+</a>
 
 TODO: photo of assembled fader
 
 ![motor_fader_demo_tiny](https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a)
 
-The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules with minimal wiring,
-and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (note: a
-separate 5v supply wire to power the motor is needed when using 3.3v STEMMA QT/QWIIC; 5v STEMMA QT can power the
-motor directly without an additional power wire).
+The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project), all easily controlled over an I2C bus from a host controller like an ESP32.
 
-The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project).
+An [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
+motorFader assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
-</a>
+The 0.1" pitch headers make them easily chainable with 18-19mm spacing between modules,
+and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
+
+
+<img width="400" alt="motorFader wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
+
+
+The onboard ATtiny1616 microcontroller handles all the real-time logic (closed-loop motor control and capacitive
+touch handling) and provides a simple I2C bus interface - no need to wire a motor driver/H-bridge or implement a PID control loop for each motor fader yourself.
+
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png" width="300" />
 </a>
@@ -24,19 +33,32 @@ The control board allows you to **read** the fader position, **move** the fader 
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
 </a>
 
-The onboard ATtiny1616 microcontroller handles all the real-time logic (PID motor control and capacitive
-touch handling) and provides a simple I2C interface for controlling bidirectional input/output and haptic feedback
-from your ESP32 or other main microcontroller.
+## ESPHome Integration
 
-An [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
-motorFader assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
+The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
+- Bidirectional (input & output) position sync with Home Assistant entities
+- Layer-aware automation triggers (manual_move, touch_change, double_tap)
+- Per-layer haptic configuration
+- Multiple faders on a single ESP32 via I2C
 
-The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules with minimal wiring,
-and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design.
+A simple example looks like:
+```yaml
+motor_fader:
+  - id: my_fader
+    on_manual_move:
+      then:
+        - lambda: |-
+            ESP_LOGD("fader", "Fader moved to %d on layer %d", x, layer);
+```
 
-TODO: photo of chaining
+and to move the fader from a lambda:
+```cpp
+id(my_fader).remote_move_to(position, layer);
+```
 
+That's pretty much all there is to it!
 
+See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and many more examples.
 
 ## Features
 
@@ -57,6 +79,7 @@ TODO: photo of chaining
 - **8 independent layers** per fader - each with its own position and haptic configuration
 - Touch-aware motor control avoids fighting against user input and supports touch and double-tap detection
 - High level interface ("move to position X") with arbitration allows for stable bidirectional control even with tens of milliseconds of latency between remote and local systems
+
 
 ## What You'll Need
 
@@ -80,7 +103,7 @@ motorFader boards from Bezek Labs come pre-flashed with stable firmware, but boa
 
 | Item | Qty | Notes |
 |------|-----|-------|
-| UPDI programmer | 1 total | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is recommended, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)). See [Firmware Flashing](#firmware-flashing) below for UPDI programming instructions |
+| UPDI programmer | 1 total | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is recommended, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)). See [Firmware Flashing](ABOUT_UPDATING_FIRMWARE.md) for UPDI programming instructions |
 
 ## PCB Fabrication
 The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
@@ -158,57 +181,14 @@ If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 w
 
 (Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
-## Firmware Flashing
 
-The motorFader PCBs ship from JLCPCB with a blank ATtiny1616 microcontroller -- you'll need to flash the firmware yourself using a UPDI programmer. This only needs to be done once per board (unless you want to update the firmware later).
+## Additional Documentation
+This README covers the basics, but there are a number of additional pages with more detailed documentation:
 
-### Connecting the UPDI Friend
-
-On the back of the motorFader PCB, there are three through-hole test points labeled for UPDI programming, laid out at 0.1" spacing. You can solder on standard pin headers for repeated use, or simply hold jumper wires against the pads for a one-time flash.
-
-Connect the Adafruit UPDI Friend to the test points as follows:
-
-| UPDI Friend wire | motorFader pad |
-|------------------|----------------|
-| Black (GND)      | **-**          |
-| Red (VCC)        | **+**          |
-| White (UPDI)     | **U**          |
-
-TODO: photo of UPDI Friend connected to the back of the board
-
-### Flashing Steps
-
-1. **Install PlatformIO:**
-
-   If you don't already have PlatformIO installed, the easiest way is via VS Code: install the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode).
-
-2. **Connect the UPDI Friend** to the motorFader board's UPDI and GND pads, and plug it into your computer via USB.
-
-3. **Build and upload the firmware:**
-   Use the "Upload" option in the PlatformIO extension. PlatformIO will automatically download the required toolchain, compile the firmware, and upload it to the ATtiny1616 via the UPDI Friend.
-
-4. **Verify** the board is working by connecting it to an I2C bus -- it should appear at its configured address (default 0x20). You can verify with the ESPHome I2C scan (`scan: true`) or the WebHID debug tool.
-
-### Troubleshooting Firmware Upload
-
-- **"No device found" or upload fails:** Check your UPDI and GND connections. UPDI requires only a single data line plus ground.
-- **Wrong serial port:** PlatformIO should auto-detect, but you can set the upload port explicitly in `platformio.ini` or via command line: `pio run --target upload --upload-port /dev/ttyUSB0`
-- **Permission denied (Linux):** You may need to add your user to the `dialout` group: `sudo usermod -a -G dialout $USER` (then log out and back in).
-
-## ESPHome Integration
-
-The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
-- Bidirectional (input & output) position sync with Home Assistant entities
-- Layer-aware automation triggers (manual_move, touch_change, double_tap)
-- Per-layer haptic configuration
-- Multiple faders on a single ESP32 via I2C
-
-See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and examples.
-
-
-## Documentation
 - **[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md)** - ESPHome setup and API reference
 - **[ABOUT_LAYERS.md](ABOUT_LAYERS.md)** - Layer architecture and implementation details
+- **[ABOUT_MF60T_LOW_PROFILE_MOD.md](ABOUT_MF60T_LOW_PROFILE_MOD.md)** - Optional instructions for modifying the MF60T faders so they can fit in smaller areas
+- **[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)** - How to upload firmware to the motorFader microcontroller using UPDI
 
 ### Project Structure
 ```

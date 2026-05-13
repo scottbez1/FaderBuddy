@@ -211,7 +211,6 @@ id(my_fader).set_active_layer(layer_index);       // Switch to layer 0-7
 uint8_t layer = id(my_fader).get_active_layer();  // Get current active layer
 
 // Position control
-id(my_fader).remote_move_to(position);            // Move on default layer (0)
 id(my_fader).remote_move_to(position, layer);     // Move on specific layer
 uint8_t pos = id(my_fader).get_position(layer);   // Get position for layer
 
