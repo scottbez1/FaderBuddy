@@ -31,6 +31,19 @@ touch handling) and provides a simple I2C bus interface - no need to wire a moto
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
 </a>
 
+---
+
+Want to help support development or just say "thanks"? Consider a one-time or monthly sponsorship:
+
+| [:heart: Sponsor scottbez1 on GitHub](https://github.com/sponsors/scottbez1) |
+|---|
+
+<a href="https://www.youtube.com/watch?v=UAQJJAQSg_g" target="_blank">
+  <img src="renders/howItWorksThumbnail.jpg" height=320 />
+</a>
+
+**Using this project in a commercial setting or for paid client work?** Go right ahead - it's open source (just make sure to follow the terms of the Apache License including attribution)! I would, however, ask that you consider [sponsoring the project](https://github.com/sponsors/scottbez1). Sponsorships allow me to pay for prototypes and development tools that make this project possible. Unlike pure software projects, every iteration has real hardware costs; sponsorships allow me to keep iterating and improving this and other projects faster. Thank you!
+
 ## ESPHome Integration
 
 The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
