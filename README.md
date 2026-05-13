@@ -7,8 +7,6 @@ one (or many) to a project with just 2 I/O pins for I2C!
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
 </a>
 
-TODO: photo of assembled fader
-
 ![motor_fader_demo_tiny](https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a)
 
 The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project), all easily controlled over an I2C bus from a host controller like an ESP32.
@@ -105,44 +103,6 @@ motorFader boards from Bezek Labs come pre-flashed with stable firmware, but boa
 |------|-----|-------|
 | UPDI programmer | 1 total | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is recommended, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)). See [Firmware Flashing](ABOUT_UPDATING_FIRMWARE.md) for UPDI programming instructions |
 
-## PCB Fabrication
-The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
-
-| Item | Qty | Notes |
-|------|-----|-------|
-| 5 pin right-angle male pin headers 0.1" spacing | 1 each | Included with Bezek Labs motorFaders, can be purchased separately from electronics suppliers like [LCSC - 40-pin break-apart headers](https://www.lcsc.com/product-detail/C429956.html)|
-| 5 pin right-angle female pin headers 0.1" spacing | 1 each | Included with Bezek Labs motorFaders, can be purchased separately from electronics suppliers like [LCSC](https://www.lcsc.com/product-detail/C2935995.html) |
-
-
-Use the files from the [latest release](https://github.com/scottbez1/motorFader/releases) when ordering!
-
-> [!CAUTION]
-> The files below are auto-generated from the current (untested) design files, and are provided for design reference ONLY. They are NOT considered stable for manufacturing. Use the latest stable release linked above! 
-
-Latest auto-generated (untested and likely broken!) artifacts⚠️:
-- Review
-  - [Schematic](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-schematic.pdf)
-  - [Interactive BOM](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-ibom.html)
-  - [PCB Packet](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-pcb-packet.pdf)
-- Ordering (Configured for JLCPCB)
-  - 1.6mm, any color, HASL lead-free
-  - [Untested gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/gerbers.zip)
-  - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/bom.csv)
-  - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/pos.csv)
-
-
-
-### Assembly
-
-The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering required is attaching the PCB to the fader itself and the optional daisy-chaining headers, which are all through-hole connections:
-
-- **2 connections** for the motor
-- **4 connections** for the fader potentiometer
-- 2 optional mechanical-only connections (I recommend skipping these)
-- **5 connections** for the female daisy-chaining pin headers
-- **5 connections** for the male daisy-chaining pin headers
-
-No fine-pitch or SMD soldering is required.
 
 ## Wiring Overview
 ### 3.3v MCU direct wired, direct chaining
@@ -181,6 +141,31 @@ If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 w
 
 (Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
+## About the Board Design
+The most plug-and-play option (if you're in the US) is to buy the motorFader PCBs pre-assembled from my Bezek Labs store, which come with firmware already flashed and the hardware tested and helps support this project and future development!
+
+To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for more info on ordering.
+
+
+The board is relatively straightforward:
+* ATtiny1616 MCU (supports 3.3v or 5v operation)
+* DRV8837 motor driver
+* JST connectors for I2C (QWIIC/STEMMA QT-compatible)
+* 0.1" pin headers for directly chaining I2C bus
+* LEDs
+* supporting components
+
+
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-schematic.pdf">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-schematic.png" width="600" />
+</a>
+
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png" width="300" />
+</a>
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
+</a>
 
 ## Additional Documentation
 This README covers the basics, but there are a number of additional pages with more detailed documentation:
@@ -188,6 +173,7 @@ This README covers the basics, but there are a number of additional pages with m
 - **[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md)** - ESPHome setup and API reference
 - **[ABOUT_LAYERS.md](ABOUT_LAYERS.md)** - Layer architecture and implementation details
 - **[ABOUT_MF60T_LOW_PROFILE_MOD.md](ABOUT_MF60T_LOW_PROFILE_MOD.md)** - Optional instructions for modifying the MF60T faders so they can fit in smaller areas
+- **[ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md)** - How to order and assemble your own motorFader boards directly
 - **[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)** - How to upload firmware to the motorFader microcontroller using UPDI
 
 ### Project Structure

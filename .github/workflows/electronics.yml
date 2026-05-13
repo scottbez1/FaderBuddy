@@ -46,6 +46,12 @@ jobs:
         run: |
           sudo chown runner:docker electronics/build/outputs/*
 
+      - name: motor_fader_main -- Rasterize schematic PDF
+        run: |
+          convert -density 96 electronics/build/outputs/motor_fader_main-schematic.pdf \
+            -background white -alpha remove \
+            electronics/build/outputs/motor_fader_main-schematic.png
+
       - name: motor_fader_main -- Annotate images
         run: |
           ./ci/util/annotate_image.sh electronics/build/outputs/motor_fader_main-3D_top.png
