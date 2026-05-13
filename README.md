@@ -38,10 +38,6 @@ Want to help support development or just say "thanks"? Consider a one-time or mo
 | [:heart: Sponsor scottbez1 on GitHub](https://github.com/sponsors/scottbez1) |
 |---|
 
-<a href="https://www.youtube.com/watch?v=UAQJJAQSg_g" target="_blank">
-  <img src="renders/howItWorksThumbnail.jpg" height=320 />
-</a>
-
 **Using this project in a commercial setting or for paid client work?** Go right ahead - it's open source (just make sure to follow the terms of the Apache License including attribution)! I would, however, ask that you consider [sponsoring the project](https://github.com/sponsors/scottbez1). Sponsorships allow me to pay for prototypes and development tools that make this project possible. Unlike pure software projects, every iteration has real hardware costs; sponsorships allow me to keep iterating and improving this and other projects faster. Thank you!
 
 ## ESPHome Integration
