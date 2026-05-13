@@ -18,7 +18,7 @@ Connect the Adafruit UPDI Friend to the test points as follows:
 | Red (VCC)        | VIO **+**          |
 | White (UPDI)     | **U**          |
 
-TODO: photo of UPDI Friend connected to the back of the board
+<img width="654" height="660" alt="motorFader wiring(6)" src="https://github.com/user-attachments/assets/c0eb65ca-65b3-4f0f-8f84-f7e84c4d8df0" />
 
 ### Flashing Steps
 
