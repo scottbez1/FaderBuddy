@@ -88,29 +88,13 @@ See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instr
 - High level interface ("move to position X") with arbitration allows for stable bidirectional control even with tens of milliseconds of latency between remote and local systems
 
 
-## What You'll Need
+## Getting Started
 
-To build a complete motor fader setup, you'll need the following. This list covers a single-fader setup; add one fader + one PCB per additional channel.
+- **Motorized fader**: Designed for Soundwell 60mm travel faders, available as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC)
+- **motorFader PCB**: Available pre-assembled from Bezek Labs, or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
+- **ESP32**: Any ESPHome-compatible ESP32 board with 2 free GPIO pins for I2C.
 
-### Motor Fader Hardware:
-| Item | Qty | Notes |
-|------|-----|-------|
-| 60mm motor fader | 1 each | Designed for Soundwell 60mm travel faders. Available retail as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC) |
-| motorFader PCB (assembled) | 1 each | Order from Bezek Labs LLC or from JLCPCB using provided fabrication files and instructions |
-
-
-### Host Controller:
-| Item | Qty | Notes |
-|------|-----|-------|
-| ESP32 dev board | 1 total | Any ESPHome-compatible ESP32 board. Requires 2 free GPIO pins for I2C. |
-
-### Firmware Programming (only needed when ordering from JLCPCB)
-
-motorFader boards from Bezek Labs come pre-flashed with stable firmware, but boards ordered directly from JLCPCB will need firmware flashed before they will work. You might also want an UPDI programmer to update the motorFader firmware to the latest.
-
-| Item | Qty | Notes |
-|------|-----|-------|
-| UPDI programmer | 1 total | [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is recommended, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)). See [Firmware Flashing](ABOUT_UPDATING_FIRMWARE.md) for UPDI programming instructions |
+If fabricating your own boards via JLCPCB, you'll also need to flash the firmware before use. See [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) for instructions.
 
 
 ## Wiring Overview
@@ -125,20 +109,15 @@ Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to mo
 | SCL | SCL |
 <img width="1028" height="548" alt="motorFader wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
 
-### 3.3v MCU STEMMA QT, direct chaining
-For a microcontroller with a STEMMA QT connector, the motorFader requires an additional 5v wire to power the motor. When more motorFaders are chained directly using the pin headers, no additional wires are required
+### 3.3v MCU STEMMA QT
+For a microcontroller with a STEMMA QT connector, the motorFader requires an additional 5v wire to power the motor. Additional faders can be chained directly using the pin headers with no extra wires.
 | HOST | motorFader |
 | --- | ---------- |
 | STEMMA QT | STEMMA QT |
 | 5v  | Vmot |
 <img width="1366" height="946" alt="motorFader wiring(2)" src="https://github.com/user-attachments/assets/760fd565-01b0-48c2-9add-047ffbaf16b8" />
 
-### 3.3v MCU STEMMA QT
-For a microcontroller with a STEMMA QT connector, the motorFader requires an additional 5v wire to power the motor. When more motorFaders are chained using STEMMA QT, both a STEMMA QT cable AND a 5v wire are required between each motorFader board.
-| HOST | motorFader |
-| --- | ---------- |
-| STEMMA QT | STEMMA QT |
-| 5v  | Vmot |
+Alternatively, motorFaders can be chained using STEMMA QT cables, but an additional 5v wire is also required between each board in that case.
 <img width="1554" height="724" alt="motorFader wiring(1)" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
 
 ### 5v STEAMMA QT
