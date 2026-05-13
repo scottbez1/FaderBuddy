@@ -5,6 +5,13 @@ one (or many) to project with just 2 I/O pins for I2C!
 
 TODO: photo of assembled fader
 
+![motor_fader_demo_tiny](https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a)
+
+The 0.1" pitch headers make them easily chainable with 18mm or 19mm spacing between modules with minimal wiring,
+and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (note: a
+separate 5v supply wire to power the motor is needed when using 3.3v STEMMA QT/QWIIC; 5v STEMMA QT can power the
+motor directly without an additional power wire).
+
 The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project).
 
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
