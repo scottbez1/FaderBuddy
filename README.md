@@ -42,7 +42,7 @@ Want to help support development or just say "thanks"? Consider a one-time or mo
 
 ## ESPHome Integration
 
-The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
+The FaderBuddy integrates seamlessly with [ESPHome](https://esphome.io/) for Home Assistant automation. The custom component provides:
 - Bidirectional (input & output) position sync with Home Assistant entities
 - Layer-aware automation triggers (manual_move, touch_change, double_tap)
 - Per-layer haptic configuration

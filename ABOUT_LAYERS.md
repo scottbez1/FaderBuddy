@@ -1,8 +1,8 @@
-# Motor Fader Layers Architecture
+# FaderBuddy Layers Architecture
 
 ## Overview
 
-The motor fader system implements **8 independent layers** per physical fader, allowing a single fader to represent multiple logical controls. Each layer maintains its own position and haptic configuration, enabling use cases like multi-scene mixing, parameter banks, or controlling multiple Home Assistant entities from one fader.
+The FaderBuddy system implements **8 independent layers** per physical fader, allowing a single fader to represent multiple logical controls. Each layer maintains its own position and haptic configuration, enabling use cases like multi-scene mixing, parameter banks, or controlling multiple Home Assistant entities from one fader.
 
 ## Key Concepts
 
@@ -110,7 +110,7 @@ Each layer's restore position is updated automatically:
 
 The ESPHome component acts as a **thin protocol wrapper**, allowing static initial layer configurations to be defined in yaml, and forwarding layer operations to the firmware:
 
-**Component location**: `esphome/components/motor_fader/`
+**Component location**: `esphome/components/fader_buddy/`
 
 ### Key Methods
 These can be called from within lambdas.
@@ -160,7 +160,7 @@ This example shows a single fader controlling two different lights based on the 
 esphome:
   name: fader-controller
 
-motor_fader:
+fader_buddy:
   - id: my_fader
     address: 0x20
     update_interval: 10ms
@@ -204,7 +204,7 @@ binary_sensor:
     pin: GPIO4
     name: "Living Room Button"
     on_press:
-      - motor_fader.set_active_layer:
+      - fader_buddy.set_active_layer:
           id: my_fader
           layer: 0
 
@@ -212,7 +212,7 @@ binary_sensor:
     pin: GPIO5
     name: "Bedroom Button"
     on_press:
-      - motor_fader.set_active_layer:
+      - fader_buddy.set_active_layer:
           id: my_fader
           layer: 1
 ```
@@ -265,11 +265,11 @@ Haptic configs can be set statically in YAML or changed dynamically via actions.
 
 ### ESPHome
 
-**Configuration** (`esphome/components/motor_fader/__init__.py`):
+**Configuration** (`esphome/components/fader_buddy/__init__.py`):
 - Python schema for `layer_haptics` YAML configuration
 - Code generation for actions and triggers with layer parameters
 
-**Component** (`motor_fader.cpp`):
+**Component** (`fader_buddy.cpp`):
 - I2C wrapper methods that forward operations to firmware
 - Trigger firing with active layer extracted from STATE register
 - No layer state management - firmware is source of truth
@@ -278,5 +278,5 @@ Haptic configs can be set statically in YAML or changed dynamically via actions.
 
 - **I2C Protocol and register definitions**: `firmware/src/shared/i2c_data.h`
 - **Firmware implementation**: `firmware/src/main.cpp`
-- **ESPHome component**: `esphome/components/motor_fader/`
+- **ESPHome component**: `esphome/components/fader_buddy/`
 - **Complete example with display**: `esphome/examples/multi-fader-display.yaml`

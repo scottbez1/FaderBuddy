@@ -13,7 +13,7 @@ FaderBuddy is a bidirectional motor fader control system with integrated capacit
   - `src/main.cpp` - Main firmware logic with motor control loop and I2C peripheral
   - `src/shared/i2c_data.h` - I2C protocol v5 definitions (shared across all components)
 - **esphome/** - ESPHome custom component for Home Assistant integration
-  - `components/fader_buddy/` - Layer-aware motor fader component
+  - `components/fader_buddy/` - Core component for interfacing with FaderBuddy boards
   - `examples/multi-fader-display.yaml` - ESP32-S3 example with LVGL display
 - **software/** - Software tools and demos
   - `mcp2221-webhid/` - WebHID-based browser demo tool for I2C control via MCP2221 USB-to-I2C bridge
@@ -133,7 +133,7 @@ npm run build
 
 ### I2C Protocol
 
-The motor fader acts as an I2C peripheral with a configurable address (base 0x20 + 3-bit hardware address from jumpers). The protocol is defined in `firmware/src/shared/i2c_data.h`.
+The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 + 3-bit hardware address from jumpers). The protocol is defined in `firmware/src/shared/i2c_data.h`.
 
 **Current Protocol Version:** v5
 

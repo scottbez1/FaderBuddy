@@ -1,12 +1,12 @@
-# Motor Fader ESPHome Integration
+# FaderBuddy ESPHome Integration
 
-This guide shows you how to use the motor fader with ESPHome to create smart motorized controls for Home Assistant or other home automation systems.
+This guide shows you how to use the FaderBuddy with ESPHome to create smart motorized controls for Home Assistant or other home automation systems.
 
 ## Hardware Setup
 
 ### Wiring
 
-Connect your motor fader(s) to your ESP32 via I2C:
+Connect your FaderBuddy board(s) to your ESP32 via I2C:
 
 - **SDA** → ESP32 GPIO pin (e.g., GPIO12)
 - **SCL** → ESP32 GPIO pin (e.g., GPIO13)
@@ -14,7 +14,7 @@ Connect your motor fader(s) to your ESP32 via I2C:
 - **Vio** → 3.3V power supply
 - **Vmot** → 5V power supply
 
-**I2C Addressing**: Each motor fader has a configurable I2C address (default 0x20, configurable via hardware jumpers to 0x20-0x27). When using multiple faders on the same I2C bus, ensure each has a unique address.
+**I2C Addressing**: Each FaderBuddy has a configurable I2C address (default 0x20, configurable via hardware jumpers to 0x20-0x27). When using multiple faders on the same I2C bus, ensure each has a unique address.
 
 ### I2C Bus Configuration
 
@@ -31,7 +31,7 @@ i2c:
 
 ### External Component Reference
 
-Add the motor fader component to your ESPHome configuration using the GitHub repository:
+Add the fader_buddy component to your ESPHome configuration using the GitHub repository:
 
 ```yaml
 external_components:
@@ -39,17 +39,17 @@ external_components:
       type: git
       url: https://github.com/scottbez1/FaderBuddy.git
       ref: main  # or specify a specific tag/branch
-    components: [motor_fader]
+    components: [fader_buddy]
 ```
 
 ## Basic Configuration
 
 ### Single Fader Setup
 
-Here's a minimal configuration for one motor fader:
+Here's a minimal configuration for one FaderBuddy:
 
 ```yaml
-motor_fader:
+fader_buddy:
   - id: my_fader
     address: 0x20          # I2C address (default 0x20)
     update_interval: 10ms  # How often to poll the fader
@@ -60,7 +60,7 @@ motor_fader:
 To use multiple faders, add multiple entries with unique IDs and addresses:
 
 ```yaml
-motor_fader:
+fader_buddy:
   - id: fader_1
     address: 0x20
     update_interval: 10ms
@@ -101,7 +101,7 @@ The component provides three triggers that fire when the user interacts with the
 Fires when the user moves the fader or when the fader position changes. Provides the current position (0-255) and active layer index.
 
 ```yaml
-motor_fader:
+fader_buddy:
   - id: my_fader
     on_manual_move:
       then:
@@ -116,7 +116,7 @@ motor_fader:
 Fires when the user touches or releases the fader. Provides touch state (true/false) and active layer index.
 
 ```yaml
-motor_fader:
+fader_buddy:
   - id: my_fader
     on_touch_change:
       then:
@@ -131,7 +131,7 @@ motor_fader:
 Fires when the user double-taps the fader. Provides the active layer index.
 
 ```yaml
-motor_fader:
+fader_buddy:
   - id: my_fader
     on_double_tap:
       then:
@@ -142,13 +142,13 @@ motor_fader:
 
 ## Actions
 
-### motor_fader.remote_move_to
+### fader_buddy.remote_move_to
 
 Command the fader to move to a specific position.
 
 ```yaml
 # Example: Move fader to position 128
-- motor_fader.remote_move_to:
+- fader_buddy.remote_move_to:
     id: my_fader
     position: 128
     layer: 0  # Optional, defaults to layer 0
@@ -158,7 +158,7 @@ Command the fader to move to a specific position.
 
 **Layer:** Optional layer index (0-7). If the specified layer is not currently active, the position is stored and will be restored when that layer becomes active.
 
-### motor_fader.set_active_layer
+### fader_buddy.set_active_layer
 
 Switch to a different layer (0-7). The fader will automatically move to that layer's last position.
 
@@ -168,18 +168,18 @@ binary_sensor:
   - platform: gpio
     pin: GPIO4
     on_press:
-      - motor_fader.set_active_layer:
+      - fader_buddy.set_active_layer:
           id: my_fader
           layer: 1
 ```
 
-### motor_fader.set_layer_haptic_config
+### fader_buddy.set_layer_haptic_config
 
 Dynamically change the haptic configuration for a layer.
 
 ```yaml
 # Example: Set layer 2 to detents mode with 10 detents
-- motor_fader.set_layer_haptic_config:
+- fader_buddy.set_layer_haptic_config:
     id: my_fader
     layer: 2
     mode: detents
@@ -187,7 +187,7 @@ Dynamically change the haptic configuration for a layer.
     detent_strength: 5
 ```
 
-### motor_fader.run_self_calibration
+### fader_buddy.run_self_calibration
 
 Trigger the fader's self-calibration routine. The fader will automatically move to both endpoints to calibrate its potentiometer range.
 
@@ -197,7 +197,7 @@ button:
   - platform: template
     name: "Calibrate Fader"
     on_press:
-      - motor_fader.run_self_calibration:
+      - fader_buddy.run_self_calibration:
           id: my_fader
 ```
 
@@ -226,7 +226,7 @@ id(my_fader).run_self_calibration();
 This example shows a single fader controlling a Home Assistant light's brightness:
 
 ```yaml
-motor_fader:
+fader_buddy:
   - id: brightness_fader
     address: 0x20
     update_interval: 10ms
@@ -279,7 +279,7 @@ For complete working examples, see the `esphome/examples/` directory:
 - This can be useful if you have a bidirectional setup (i.e. moving the fader controls a light in HASS, and changing a light in HASS moves the fader) and the on_manual_move trigger takes a while to be confirmed/reflected, for example when updating a high-roundtrip-latency light like a Zigbee light. Without rate-limiting, this can often result in weird motor movements after manually moving the fader, as HASS may queue up brightness changes that happen too quickly and then deliver them for while after you've already let go, causing the motor to almost replay your previous movement.
 
 **Fader doesn't move to commanded position:**
-- Run self-calibration: `motor_fader.run_self_calibration`
+- Run self-calibration: `fader_buddy.run_self_calibration`
 - Check that you're not in an error state (power cycle if needed)
 
 ## Additional Resources
