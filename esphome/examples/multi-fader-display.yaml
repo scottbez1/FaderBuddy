@@ -33,15 +33,15 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [motor_fader]
+    components: [fader_buddy]
 
   # For use outside this repo, use the GitHub source instead:
   # - source:
   #     type: git
-  #     url: https://github.com/scottbez1/motorFader.git
+  #     url: https://github.com/scottbez1/FaderBuddy.git
   #     ref: main  # or specify a tag/branch
   #   refresh: 0s
-  #   components: [motor_fader]
+  #   components: [fader_buddy]
     
 
 # I2C Bus Configuration
@@ -215,8 +215,8 @@ font:
     id: mdi_icons
     size: 48
 
-motor_fader:
-  - id: motor_fader
+fader_buddy:
+  - id: fader_buddy
     address: 0x22
     update_interval: 10ms
     invert: true
@@ -244,7 +244,7 @@ motor_fader:
                 return 0;
               }
 
-  - id: motor_fader2
+  - id: fader_buddy_2
     address: 0x21
     update_interval: 10ms
     invert: true
@@ -274,7 +274,7 @@ motor_fader:
                 return 0;
               }
 
-  - id: motor_fader3
+  - id: fader_buddy_3
     address: 0x20
     update_interval: 10ms
     invert: true
@@ -305,7 +305,7 @@ sensor:
         # Send home assistant light brightness to the fader
         - lambda: |-
             ESP_LOGD("main", "Brightness changed to: %f", x);
-            id(motor_fader).remote_move_to(isnan(x) ? 0 : x);
+            id(fader_buddy).remote_move_to(isnan(x) ? 0 : x);
   - platform: homeassistant
     name: "Desk Lamp Brightness"
     entity_id: light.esphome_web_318bc2_desk_light
@@ -317,7 +317,7 @@ sensor:
         # Send home assistant light brightness to the fader
         - lambda: |-
             ESP_LOGD("main", "Brightness changed to: %f", x);
-            id(motor_fader2).remote_move_to(isnan(x) ? 0 : x);
+            id(fader_buddy_2).remote_move_to(isnan(x) ? 0 : x);
 
 button:
   - platform: template
@@ -325,17 +325,17 @@ button:
     id: btn_self_cal_1
     on_press:
       - lambda: |-
-          id(motor_fader).run_self_calibration();
+          id(fader_buddy).run_self_calibration();
   - platform: template
     name: Self Calibrate 2
     id: btn_self_cal_2
     on_press:
       - lambda: |-
-          id(motor_fader2).run_self_calibration();
+          id(fader_buddy_2).run_self_calibration();
   - platform: template
     name: Self Calibrate 3
     id: btn_self_cal_3
     on_press:
       - lambda: |-
-          id(motor_fader3).run_self_calibration();
+          id(fader_buddy_3).run_self_calibration();
 

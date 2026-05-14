@@ -20,8 +20,8 @@ from esphome.const import CONF_ID, CONF_MODE
 MULTI_CONF = True
 DEPENDENCIES = ["i2c"]
 
-motor_fader_ns = cg.esphome_ns.namespace("motor_fader")
-MotorFader = motor_fader_ns.class_("MotorFader", cg.PollingComponent, i2c.I2CDevice)
+fader_buddy_ns = cg.esphome_ns.namespace("fader_buddy")
+FaderBuddy = fader_buddy_ns.class_("FaderBuddy", cg.PollingComponent, i2c.I2CDevice)
 
 # Define haptic mode enum (in global namespace, shared with firmware)
 HapticMode = cg.global_ns.enum("HapticMode")
@@ -53,7 +53,7 @@ LAYER_HAPTIC_SCHEMA = cv.Schema({
 
 CONFIG_SCHEMA = (
     cv.Schema({
-        cv.GenerateID(): cv.declare_id(MotorFader),
+        cv.GenerateID(): cv.declare_id(FaderBuddy),
         cv.Optional(CONF_ON_MANUAL_MOVE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_DOUBLE_TAP): automation.validate_automation(single=True),
@@ -103,17 +103,17 @@ async def to_code(config):
 
 
 # Actions
-SetActiveLayerAction = motor_fader_ns.class_("SetActiveLayerAction", automation.Action)
-RemoteMoveToAction = motor_fader_ns.class_("RemoteMoveToAction", automation.Action)
-SetLayerHapticConfigAction = motor_fader_ns.class_("SetLayerHapticConfigAction", automation.Action)
-RunSelfCalibrationAction = motor_fader_ns.class_("RunSelfCalibrationAction", automation.Action)
+SetActiveLayerAction = fader_buddy_ns.class_("SetActiveLayerAction", automation.Action)
+RemoteMoveToAction = fader_buddy_ns.class_("RemoteMoveToAction", automation.Action)
+SetLayerHapticConfigAction = fader_buddy_ns.class_("SetLayerHapticConfigAction", automation.Action)
+RunSelfCalibrationAction = fader_buddy_ns.class_("RunSelfCalibrationAction", automation.Action)
 
 
 @automation.register_action(
-    "motor_fader.set_active_layer",
+    "fader_buddy.set_active_layer",
     SetActiveLayerAction,
     cv.Schema({
-        cv.Required(CONF_ID): cv.use_id(MotorFader),
+        cv.Required(CONF_ID): cv.use_id(FaderBuddy),
         cv.Required(CONF_LAYER): cv.templatable(cv.int_range(min=0, max=7)),
     })
 )
@@ -126,10 +126,10 @@ async def set_active_layer_action_to_code(config, action_id, template_arg, args)
 
 
 @automation.register_action(
-    "motor_fader.remote_move_to",
+    "fader_buddy.remote_move_to",
     RemoteMoveToAction,
     cv.Schema({
-        cv.Required(CONF_ID): cv.use_id(MotorFader),
+        cv.Required(CONF_ID): cv.use_id(FaderBuddy),
         cv.Required(CONF_POSITION): cv.templatable(cv.int_range(min=0, max=255)),
         cv.Optional(CONF_LAYER, default=0): cv.templatable(cv.int_range(min=0, max=7)),
     })
@@ -145,10 +145,10 @@ async def remote_move_to_action_to_code(config, action_id, template_arg, args):
 
 
 @automation.register_action(
-    "motor_fader.set_layer_haptic_config",
+    "fader_buddy.set_layer_haptic_config",
     SetLayerHapticConfigAction,
     cv.Schema({
-        cv.Required(CONF_ID): cv.use_id(MotorFader),
+        cv.Required(CONF_ID): cv.use_id(FaderBuddy),
         cv.Required(CONF_LAYER): cv.templatable(cv.int_range(min=0, max=7)),
         cv.Required(CONF_MODE): cv.templatable(cv.enum(HAPTIC_MODES, lower=True)),
         cv.Optional(CONF_DETENT_COUNT, default=0): cv.templatable(cv.int_range(min=0, max=15)),
@@ -170,10 +170,10 @@ async def set_layer_haptic_config_action_to_code(config, action_id, template_arg
 
 
 @automation.register_action(
-    "motor_fader.run_self_calibration",
+    "fader_buddy.run_self_calibration",
     RunSelfCalibrationAction,
     cv.Schema({
-        cv.Required(CONF_ID): cv.use_id(MotorFader),
+        cv.Required(CONF_ID): cv.use_id(FaderBuddy),
     })
 )
 async def run_self_calibration_action_to_code(config, action_id, template_arg, args):

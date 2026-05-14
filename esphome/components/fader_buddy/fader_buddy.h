@@ -21,16 +21,16 @@
 #include "esphome/core/optional.h"
 
 namespace esphome {
-namespace motor_fader {
+namespace fader_buddy {
 
 // Protocol v5: Layer management is now handled in firmware
 // ESPHome component is a simple protocol wrapper
 
-class MotorFader : public PollingComponent, public i2c::I2CDevice {
+class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
 
  public:
      // Constructor
-     MotorFader();
+     FaderBuddy();
 
      // Standard component functions to override
      void setup() override;
@@ -103,19 +103,19 @@ class MotorFader : public PollingComponent, public i2c::I2CDevice {
 // Action classes for automation
 template<typename... Ts> class SetActiveLayerAction : public Action<Ts...> {
  public:
-  SetActiveLayerAction(MotorFader *parent) : parent_(parent) {}
+  SetActiveLayerAction(FaderBuddy *parent) : parent_(parent) {}
 
   TEMPLATABLE_VALUE(uint8_t, layer)
 
   void play(Ts... x) override { this->parent_->set_active_layer(this->layer_.value(x...)); }
 
  protected:
-  MotorFader *parent_;
+  FaderBuddy *parent_;
 };
 
 template<typename... Ts> class RemoteMoveToAction : public Action<Ts...> {
  public:
-  RemoteMoveToAction(MotorFader *parent) : parent_(parent) {}
+  RemoteMoveToAction(FaderBuddy *parent) : parent_(parent) {}
 
   TEMPLATABLE_VALUE(uint8_t, position)
   TEMPLATABLE_VALUE(uint8_t, layer)
@@ -125,12 +125,12 @@ template<typename... Ts> class RemoteMoveToAction : public Action<Ts...> {
   }
 
  protected:
-  MotorFader *parent_;
+  FaderBuddy *parent_;
 };
 
 template<typename... Ts> class SetLayerHapticConfigAction : public Action<Ts...> {
  public:
-  SetLayerHapticConfigAction(MotorFader *parent) : parent_(parent) {}
+  SetLayerHapticConfigAction(FaderBuddy *parent) : parent_(parent) {}
 
   TEMPLATABLE_VALUE(uint8_t, layer)
   TEMPLATABLE_VALUE(uint8_t, mode)
@@ -147,18 +147,18 @@ template<typename... Ts> class SetLayerHapticConfigAction : public Action<Ts...>
   }
 
  protected:
-  MotorFader *parent_;
+  FaderBuddy *parent_;
 };
 
 template<typename... Ts> class RunSelfCalibrationAction : public Action<Ts...> {
  public:
-  RunSelfCalibrationAction(MotorFader *parent) : parent_(parent) {}
+  RunSelfCalibrationAction(FaderBuddy *parent) : parent_(parent) {}
 
   void play(Ts... x) override { this->parent_->run_self_calibration(); }
 
  protected:
-  MotorFader *parent_;
+  FaderBuddy *parent_;
 };
 
-}  // namespace motor_fader
+}  // namespace fader_buddy
 }  // namespace esphome

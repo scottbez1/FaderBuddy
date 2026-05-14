@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-#include "motor_fader.h"
+#include "fader_buddy.h"
 
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -21,16 +21,16 @@
 #include "i2c_data.h"
 
 namespace esphome {
-namespace motor_fader {
+namespace fader_buddy {
 
-static const char *const TAG = "motor_fader";
+static const char *const TAG = "fader_buddy";
 
-MotorFader::MotorFader() : PollingComponent(), i2c::I2CDevice() {
+FaderBuddy::FaderBuddy() : PollingComponent(), i2c::I2CDevice() {
   // Protocol v5: No layer state initialization needed - firmware manages layers
 }
 
-void MotorFader::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up motor_fader...");
+void FaderBuddy::setup() {
+  ESP_LOGCONFIG(TAG, "Setting up FaderBuddy...");
 
   // Check protocol version
   uint8_t reg = REG_VERSION;
@@ -55,7 +55,7 @@ void MotorFader::setup() {
     return;
   }
 
-  ESP_LOGCONFIG(TAG, "Motor Fader initialized (protocol v%d)", buffer);
+  ESP_LOGCONFIG(TAG, "FaderBuddy initialized (protocol v%d)", buffer);
 
   // Send initial haptic configurations to firmware
   for (uint8_t i = 0; i < 8; i++) {
@@ -75,7 +75,7 @@ void MotorFader::setup() {
   }
 }
 
-void MotorFader::dump_config() {
+void FaderBuddy::dump_config() {
   LOG_I2C_DEVICE(this);
   if (this->is_failed()) {
     ESP_LOGE(TAG, "Communication failed");
@@ -84,9 +84,9 @@ void MotorFader::dump_config() {
   LOG_UPDATE_INTERVAL(this);
 }
 
-float MotorFader::get_setup_priority() const { return setup_priority::DATA; }
+float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }
 
-void MotorFader::update() {
+void FaderBuddy::update() {
   // Check all layers for deferred triggers to fire
   for (uint8_t layer = 0; layer < 8; layer++) {
     if (layer_states_[layer].has_deferred_value && layer_states_[layer].value_change_min_interval > 0) {
@@ -108,7 +108,7 @@ void MotorFader::update() {
   }
 }
 
-bool MotorFader::read_sensor_data_() {
+bool FaderBuddy::read_sensor_data_() {
   uint8_t reg = REG_STATE;
   uint8_t buffer[4];
 
@@ -185,7 +185,7 @@ bool MotorFader::read_sensor_data_() {
 }
 
 // Set the active layer (Protocol v5: simple write to firmware)
-void MotorFader::set_active_layer(uint8_t layer_index) {
+void FaderBuddy::set_active_layer(uint8_t layer_index) {
   if (layer_index > 7) {
     ESP_LOGE(TAG, "Invalid layer index: %d", layer_index);
     return;
@@ -201,7 +201,7 @@ void MotorFader::set_active_layer(uint8_t layer_index) {
 }
 
 // Get the active layer (Protocol v5: read from firmware)
-uint8_t MotorFader::get_active_layer() const {
+uint8_t FaderBuddy::get_active_layer() const {
   uint8_t reg = REG_ACTIVE_LAYER;
   uint8_t buffer = 0;
 
@@ -223,7 +223,7 @@ uint8_t MotorFader::get_active_layer() const {
 // Move fader to a specific position (Protocol v5: use REG_LAYER_TARGET)
 // position: USER-FACING position (0-255)
 // layer: which layer to move (0-7)
-void MotorFader::remote_move_to(uint8_t position, uint8_t layer) {
+void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer) {
   if (layer > 7) {
     ESP_LOGE(TAG, "Invalid layer index: %d", layer);
     return;
@@ -243,7 +243,7 @@ void MotorFader::remote_move_to(uint8_t position, uint8_t layer) {
 
 // Get the restore position for a layer (Protocol v5: layer-addressed read)
 // Returns USER-FACING position (0-255)
-uint8_t MotorFader::get_position(uint8_t layer) const {
+uint8_t FaderBuddy::get_position(uint8_t layer) const {
   if (layer > 7) {
     ESP_LOGE(TAG, "Invalid layer index: %d", layer);
     return 0;
@@ -270,7 +270,7 @@ uint8_t MotorFader::get_position(uint8_t layer) const {
 }
 
 // Helper: Write to I2C with retries for transient failures
-bool MotorFader::write_with_retry_(const uint8_t *data, size_t len, uint8_t retries) {
+bool FaderBuddy::write_with_retry_(const uint8_t *data, size_t len, uint8_t retries) {
   for (uint8_t attempt = 0; attempt < retries; attempt++) {
     auto result = this->write(data, len);
     if (result == esphome::i2c::ErrorCode::NO_ERROR) {
@@ -286,7 +286,7 @@ bool MotorFader::write_with_retry_(const uint8_t *data, size_t len, uint8_t retr
 }
 
 // Helper: Send haptic config to firmware over I2C (Protocol v5: 16-bit format)
-void MotorFader::send_layer_haptic_config_(
+void FaderBuddy::send_layer_haptic_config_(
     uint8_t layer,
     uint8_t mode,
     uint8_t detent_count,
@@ -311,7 +311,7 @@ void MotorFader::send_layer_haptic_config_(
 }
 
 // Store initial haptic config (called only from codegen, before setup)
-void MotorFader::store_initial_layer_haptic_config(
+void FaderBuddy::store_initial_layer_haptic_config(
     uint8_t layer,
     uint8_t mode,
     uint8_t detent_count,
@@ -330,7 +330,7 @@ void MotorFader::store_initial_layer_haptic_config(
 }
 
 // Set haptic configuration at runtime (sends immediately to firmware)
-void MotorFader::set_layer_haptic_config(
+void FaderBuddy::set_layer_haptic_config(
     uint8_t layer,
     uint8_t mode,
     uint8_t detent_count,
@@ -346,7 +346,7 @@ void MotorFader::set_layer_haptic_config(
   send_layer_haptic_config_(layer, mode, detent_count, detent_strength);
 }
 
-void MotorFader::set_layer_value_change_min_interval(uint8_t layer, uint32_t min_interval_ms) {
+void FaderBuddy::set_layer_value_change_min_interval(uint8_t layer, uint32_t min_interval_ms) {
   if (layer > 7) {
     ESP_LOGE(TAG, "Invalid layer index: %d", layer);
     return;
@@ -354,12 +354,12 @@ void MotorFader::set_layer_value_change_min_interval(uint8_t layer, uint32_t min
   layer_states_[layer].value_change_min_interval = min_interval_ms;
 }
 
-void MotorFader::run_self_calibration() {
+void FaderBuddy::run_self_calibration() {
   uint8_t buffer = REG_SELF_CAL;
   if (!write_with_retry_(&buffer, 1)) {
     ESP_LOGE(TAG, "Failed to write self-calibration command");
   }
 }
 
-}  // namespace motor_fader
+}  // namespace fader_buddy
 }  // namespace esphome
