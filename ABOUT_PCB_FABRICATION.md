@@ -14,14 +14,14 @@ Use the files from the [latest release](https://github.com/scottbez1/FaderBuddy/
 
 Latest auto-generated (untested and likely broken!) artifacts⚠️:
 - Review
-  - [Schematic](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-schematic.pdf)
-  - [Interactive BOM](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-ibom.html)
-  - [PCB Packet](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-pcb-packet.pdf)
+  - [Schematic](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-schematic.pdf)
+  - [Interactive BOM](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-ibom.html)
+  - [PCB Packet](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-pcb-packet.pdf)
 - Ordering (Configured for JLCPCB)
   - 1.6mm, any color, HASL lead-free
-  - [Untested gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/gerbers.zip)
-  - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/bom.csv)
-  - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-jlc/pos.csv)
+  - [Untested gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/gerbers.zip)
+  - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/bom.csv)
+  - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/pos.csv)
 
 ### Assembly
 

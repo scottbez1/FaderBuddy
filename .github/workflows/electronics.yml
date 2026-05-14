@@ -21,42 +21,42 @@ jobs:
 
 
 
-      - name: motor_fader_main -- Gen JLCPCB fabrication files 
+      - name: fader_buddy_main -- Gen JLCPCB fabrication files 
         run: |
-          ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ --assembly-schematic electronics/motor_fader_main.kicad_sch electronics/motor_fader_main.kicad_pcb
-          cp -r electronics/build/motor_fader_main-jlc electronics/build/outputs
+          ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ --assembly-schematic electronics/fader_buddy_main.kicad_sch electronics/fader_buddy_main.kicad_pcb
+          cp -r electronics/build/fader_buddy_main-jlc electronics/build/outputs
 
-      - name: motor_fader_main -- Gen PCB overview PDF
+      - name: fader_buddy_main -- Gen PCB overview PDF
         run: |
-          ./ci/electronics/generate_pdf.py --release-prefix releases/electronics/ electronics/motor_fader_main.kicad_pcb
-          cp electronics/build/motor_fader_main-pcb-packet.pdf electronics/build/outputs
+          ./ci/electronics/generate_pdf.py --release-prefix releases/electronics/ electronics/fader_buddy_main.kicad_pcb
+          cp electronics/build/fader_buddy_main-pcb-packet.pdf electronics/build/outputs
         env:
           PYTHONUNBUFFERED: 1
 
-      - name: motor_fader_main -- Gen schematic, iBOM, 3d (KiBot)
+      - name: fader_buddy_main -- Gen schematic, iBOM, 3d (KiBot)
         uses: INTI-CMNB/KiBot@dd0a8b73273df642978889244ca60b8b612c36d4
         with:
-          config: electronics/motor_fader_main.kibot.yml
+          config: electronics/fader_buddy_main.kibot.yml
           dir: electronics/build/outputs
-          schema: 'electronics/motor_fader_main.kicad_sch'
-          board: 'electronics/motor_fader_main.kicad_pcb'
+          schema: 'electronics/fader_buddy_main.kicad_sch'
+          board: 'electronics/fader_buddy_main.kicad_pcb'
 
-      - name: motor_fader_main -- KiBot fix permissions
+      - name: fader_buddy_main -- KiBot fix permissions
         # Need to chown files back to runner, as ownership gets set to root by the KiBot Actions
         run: |
           sudo chown runner:docker electronics/build/outputs/*
 
-      - name: motor_fader_main -- Rasterize schematic PDF
+      - name: fader_buddy_main -- Rasterize schematic PDF
         run: |
-          convert -density 96 electronics/build/outputs/motor_fader_main-schematic.pdf \
+          convert -density 96 electronics/build/outputs/fader_buddy_main-schematic.pdf \
             -background white -alpha remove \
-            electronics/build/outputs/motor_fader_main-schematic.png
+            electronics/build/outputs/fader_buddy_main-schematic.png
 
-      - name: motor_fader_main -- Annotate images
+      - name: fader_buddy_main -- Annotate images
         run: |
-          ./ci/util/annotate_image.sh electronics/build/outputs/motor_fader_main-3D_top.png
-          ./ci/util/annotate_image.sh electronics/build/outputs/motor_fader_main-3D_bottom.png
-          ./ci/util/annotate_image.sh electronics/build/outputs/motor_fader_main-3D_perspective.png
+          ./ci/util/annotate_image.sh electronics/build/outputs/fader_buddy_main-3D_top.png
+          ./ci/util/annotate_image.sh electronics/build/outputs/fader_buddy_main-3D_bottom.png
+          ./ci/util/annotate_image.sh electronics/build/outputs/fader_buddy_main-3D_perspective.png
         env:
           PYTHONUNBUFFERED: 1
 

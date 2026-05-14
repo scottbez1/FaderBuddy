@@ -233,7 +233,7 @@
 		(property ki_fp_filters "C_*")
 		(path "/74b304c0-e007-4378-9d30-5e2328a64fdb")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.14058 0.51)
@@ -455,7 +455,7 @@
 		(property ki_fp_filters "C_*")
 		(path "/ecdb2244-9c1f-4866-914a-5ba97b609c0c")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.14058 0.51)
@@ -667,7 +667,7 @@
 		(property ki_fp_filters "Potentiometer*")
 		(path "/a538371c-815d-4b5c-b90d-8454763b70a4")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr through_hole)
 		(fp_rect
 			(start -46.3 -7.5)
@@ -1060,7 +1060,7 @@
 		(property ki_fp_filters "VQFN*1EP*3x3mm*P0.4mm*")
 		(path "/cda97462-1863-4288-9259-64dc5a53a6ad")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start 1.61 -1.61)
@@ -1701,7 +1701,7 @@
 		(property ki_fp_filters "Connector*:*_1x??_*")
 		(path "/24be118c-cce8-4fd6-a05c-329672a15f78")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr through_hole)
 		(fp_line
 			(start 1.44 11.49)
@@ -2685,7 +2685,7 @@
 		(property ki_fp_filters "R_*")
 		(path "/7e8959f0-cc96-4c94-b39f-19f52f5a66c7")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.237258 0.5225)
@@ -2894,7 +2894,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/0c2d7b04-ea9d-4616-b351-cfa9f6ee1b61")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(pad "" np_thru_hole circle
 			(at 0 0)
@@ -2989,7 +2989,7 @@
 		(property ki_fp_filters "C_*")
 		(path "/41836df8-80f3-4332-81a3-dea76176fea9")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.261252 -0.735)
@@ -3202,7 +3202,7 @@
 		(property ki_fp_filters "Connector*:*_1x??-1MP*")
 		(path "/c71401f1-2dea-4ae2-b083-df3e2016b754")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -3.11 -1.785)
@@ -3538,7 +3538,7 @@
 		(property ki_fp_filters "R_*")
 		(path "/5052dc69-c7e4-4782-8edb-8b9bf168a9c9")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.237258 0.5225)
@@ -3760,7 +3760,7 @@
 		(property ki_fp_filters "C_*")
 		(path "/627dde11-0cd3-4f5d-a04a-dc9cd3ed6df7")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.14058 -0.51)
@@ -3982,7 +3982,7 @@
 		(property ki_fp_filters "CP_*")
 		(path "/b7c08424-bd66-420c-8267-81ccca45dd8a")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -2.345563 3.41)
@@ -4448,7 +4448,7 @@
 		(property ki_fp_filters "LED* LED_SMD:* LED_THT:*")
 		(path "/7bdf718a-3e18-43d6-90cc-42f01255c4a7")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start 0.8 -0.735)
@@ -4693,7 +4693,7 @@
 		(property ki_fp_filters "Connector*:*_1x??_*")
 		(path "/f90af9f2-52ba-4c9d-924c-6e975bad0550")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr through_hole)
 		(fp_line
 			(start -10.09 11.49)
@@ -5308,7 +5308,7 @@
 		(property ki_fp_filters "Connector*:*_1x??-1MP*")
 		(path "/267852c9-7acf-42fe-a44b-5bee4f2b2832")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start 3.11 0.715)
@@ -5644,7 +5644,7 @@
 		(property ki_fp_filters "WSON*1EP*2x2mm*P0.5mm*")
 		(path "/4d9c43b0-1369-428b-8025-d2b8eeb64f10")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start 0.5 1.12)
@@ -5939,7 +5939,7 @@
 		(property ki_fp_filters "MountingHole*")
 		(path "/4119c209-89e7-464d-b23c-eea5e1cd858f")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(pad "" np_thru_hole circle
 			(at 0 0)
@@ -6034,7 +6034,7 @@
 		(property ki_fp_filters "R_*")
 		(path "/c7899765-1c83-4096-b8dc-2502d7de95e9")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.237258 -0.5225)
@@ -6269,7 +6269,7 @@
 		(property ki_fp_filters "LED* LED_SMD:* LED_THT:*")
 		(path "/ba209b62-e540-4ff8-89ed-8a5c6c553537")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start 0.8 -0.735)
@@ -6513,7 +6513,7 @@
 		(property ki_fp_filters "R_*")
 		(path "/2132ac06-cc4d-41a1-8701-61a96fd6c078")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.237258 0.5225)
@@ -6735,7 +6735,7 @@
 		(property ki_fp_filters "R_*")
 		(path "/15ee09ca-5c0f-4903-b5d2-194fb1196e7a")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr smd)
 		(fp_line
 			(start -0.237258 -0.5225)
@@ -6950,7 +6950,7 @@
 		(property ki_fp_filters "Connector*:*_1x??_*")
 		(path "/cf682aab-7e7e-45f8-ae74-1c11c5ef365a")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_rect
 			(start -1.778 -8.89)
@@ -7210,7 +7210,7 @@
 		(property ki_fp_filters "Pin* Test*")
 		(path "/fb03de1f-75f2-4543-9e51-ad3fe59492f9")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_circle
 			(center 0 0)
@@ -7321,7 +7321,7 @@
 		(property ki_fp_filters "Pin* Test*")
 		(path "/637e9cba-1c7b-469b-81ee-68b487400f79")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_circle
 			(center 0 0)
@@ -7432,7 +7432,7 @@
 		(property ki_fp_filters "Jumper* TestPoint*2Pads* TestPoint*Bridge*")
 		(path "/2bb2a041-91e7-4e9f-aee9-1a84e1f7701b")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_line
 			(start -1.4 1)
@@ -7631,7 +7631,7 @@
 		(property ki_fp_filters "Pin* Test*")
 		(path "/339c096b-0255-4b92-82f6-eb88b7c80e34")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_circle
 			(center 0 0)
@@ -7742,7 +7742,7 @@
 		(property ki_fp_filters "Jumper* TestPoint*2Pads* TestPoint*Bridge*")
 		(path "/0576e037-4d9c-41e1-8954-6e92dc2a403a")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_line
 			(start -1.4 1)
@@ -7938,7 +7938,7 @@
 		(property ki_fp_filters "Jumper* TestPoint*2Pads* TestPoint*Bridge*")
 		(path "/882540c1-f3a0-4914-96c0-9825c663a534")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_line
 			(start -1.4 1)
@@ -8138,7 +8138,7 @@
 		(property ki_fp_filters "Jumper* TestPoint*2Pads* TestPoint*Bridge*")
 		(path "/eb902992-8331-4173-b3b1-f0265d38a80f")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_line
 			(start -1.65 -1.25)
@@ -8297,7 +8297,7 @@
 		(property ki_fp_filters "Pin* Test*")
 		(path "/b1e8572d-4c18-4e52-bbcf-003c1679ea7a")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_circle
 			(center 0 0)
@@ -8421,7 +8421,7 @@
 		(property ki_fp_filters "Pin* Test*")
 		(path "/3b0ab619-ae14-4667-a23c-1f0de121b730")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_circle
 			(center 0 0)
@@ -8549,7 +8549,7 @@
 		(property ki_fp_filters "Pin* Test*")
 		(path "/46d02397-2b46-4514-b084-9892e7e89336")
 		(sheetname "Root")
-		(sheetfile "motor_fader_main.kicad_sch")
+		(sheetfile "fader_buddy_main.kicad_sch")
 		(attr exclude_from_pos_files exclude_from_bom)
 		(fp_circle
 			(center 0 0)

@@ -459,7 +459,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "motor_fader_main.kicad_pro",
+    "filename": "fader_buddy_main.kicad_pro",
     "version": 1
   },
   "net_settings": {
@@ -497,7 +497,7 @@
       "plot": "",
       "pos_files": "",
       "specctra_dsn": "",
-      "step": "motor_fader_main.step",
+      "step": "fader_buddy_main.step",
       "svg": "",
       "vrml": ""
     },

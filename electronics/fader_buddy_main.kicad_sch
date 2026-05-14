@@ -4940,7 +4940,7 @@
 			(uuid "441c381a-2b4d-4437-83fb-256c962e8653")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR03")
 					(unit 1)
@@ -5381,7 +5381,7 @@
 			(uuid "6e340213-a827-4cf6-8477-6c8778d07d31")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "J3")
 					(unit 1)
@@ -5469,7 +5469,7 @@
 			(uuid "ac544b19-c44b-4919-98e2-4b69169fe31f")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "J5")
 					(unit 1)
@@ -5603,7 +5603,7 @@
 			(uuid "c1fb4c79-cf06-4a95-a4e4-ded408cdf312")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR08")
 					(unit 1)
@@ -5670,7 +5670,7 @@
 			(uuid "1ea41ec2-b1f4-4d45-b686-d6378b6033b3")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#FLG03")
 					(unit 1)
@@ -5802,7 +5802,7 @@
 			(uuid "f4dcc69d-1740-4efa-af97-e8ef889e921a")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR012")
 					(unit 1)
@@ -6745,7 +6745,7 @@
 			(uuid "19af4e84-a173-4a6d-8533-421b0c32b4d6")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR01")
 					(unit 1)
@@ -7459,7 +7459,7 @@
 			(uuid "98f97768-9531-4705-a1b0-7a829b69071a")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "TP6")
 					(unit 1)
@@ -7755,7 +7755,7 @@
 			(uuid "bbc2ac01-4aed-4dad-8c85-cd857aa7ffb0")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR09")
 					(unit 1)
@@ -7821,7 +7821,7 @@
 			(uuid "41d1c590-c150-457b-9c77-f228e115869d")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR011")
 					(unit 1)
@@ -8263,7 +8263,7 @@
 			(uuid "25680ed6-db13-4e28-ba81-eee7107d91ba")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR06")
 					(unit 1)
@@ -8471,7 +8471,7 @@
 			(uuid "89c6fa68-fcc2-4e80-9c54-8dd69716ef8e")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR07")
 					(unit 1)
@@ -8537,7 +8537,7 @@
 			(uuid "fa603ccd-ac34-4705-bba6-6f5d1aa85270")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "#PWR02")
 					(unit 1)
@@ -8605,7 +8605,7 @@
 			(uuid "e7b22fc2-96bd-4c53-81d2-1934686a09ab")
 		)
 		(instances
-			(project "motor_fader_main"
+			(project "fader_buddy_main"
 				(path "/74d9b4a7-03d6-4669-9e54-5755a832b350"
 					(reference "JP4")
 					(unit 1)

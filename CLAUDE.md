@@ -74,12 +74,12 @@ Electronics artifacts (JLCPCB files, schematics, PDFs, 3D renders) are generated
 
 # Generate JLCPCB fabrication files (gerbers, BOM, CPL)
 ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ \
-  --assembly-schematic electronics/motor_fader_main.kicad_sch \
-  electronics/motor_fader_main.kicad_pcb
+  --assembly-schematic electronics/fader_buddy_main.kicad_sch \
+  electronics/fader_buddy_main.kicad_pcb
 
 # Generate PCB overview PDF
 ./ci/electronics/generate_pdf.py --release-prefix releases/electronics/ \
-  electronics/motor_fader_main.kicad_pcb
+  electronics/fader_buddy_main.kicad_pcb
 ```
 
 CI automatically exports all electronics artifacts on push (see `.github/workflows/electronics.yml`).

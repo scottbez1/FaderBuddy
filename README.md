@@ -3,8 +3,8 @@
 The FaderBuddy is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
 one (or many) to a project with just 2 I/O pins for I2C!
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png" width="300" />
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_perspective.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_perspective.png" width="300" />
 </a>
 
 ![motor_fader_demo_tiny](https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a)
@@ -24,11 +24,11 @@ and STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards
 The onboard ATtiny1616 microcontroller handles all the real-time logic (closed-loop motor control and capacitive
 touch handling) and provides a simple I2C bus interface - no need to wire a motor driver/H-bridge or implement a PID control loop for each motor fader yourself.
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png" width="300" />
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png" width="300" />
 </a>
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png" width="300" />
 </a>
 
 ---
@@ -50,7 +50,7 @@ The motor fader integrates seamlessly with [ESPHome](https://esphome.io/) for Ho
 
 A simple example looks like:
 ```yaml
-motor_fader:
+fader_buddy:
   - id: my_fader
     on_manual_move:
       then:
@@ -144,15 +144,15 @@ The board is relatively straightforward:
 * supporting components
 
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-schematic.pdf">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-schematic.png" width="600" />
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-schematic.pdf">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-schematic.png" width="600" />
 </a>
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_top.png" width="300" />
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png" width="300" />
 </a>
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_bottom.png" width="300" />
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png" width="300" />
 </a>
 
 ## Additional Documentation
