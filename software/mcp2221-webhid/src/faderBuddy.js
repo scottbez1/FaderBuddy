@@ -14,12 +14,12 @@
  */
 
 /**
- * motorFader I2C Protocol Implementation
+ * FaderBuddy I2C Protocol Implementation
  * Protocol version: 3
  * All multi-byte values are big-endian (MSB first)
  */
 
-export class MotorFader {
+export class FaderBuddy {
     constructor(i2cBus, address = 0x20) {
         this.bus = i2cBus;
         this.address = address;

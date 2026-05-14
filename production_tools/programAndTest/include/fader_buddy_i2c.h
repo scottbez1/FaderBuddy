@@ -19,11 +19,11 @@
 #include <Wire.h>
 #include "i2c_data.h"
 
-#define MOTOR_FADER_I2C_ADDR 0x20  // Motor fader I2C base address (see firmware/src/main.cpp)
+#define FADER_BUDDY_I2C_ADDR 0x20  // Motor fader I2C base address (see firmware/src/main.cpp)
 
-class MotorFaderI2C {
+class FaderBuddyI2C {
 public:
-  MotorFaderI2C(uint8_t address = MOTOR_FADER_I2C_ADDR);
+  FaderBuddyI2C(uint8_t address = FADER_BUDDY_I2C_ADDR);
 
   // Initialization
   void begin(TwoWire* wire);

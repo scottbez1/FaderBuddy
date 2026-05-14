@@ -21,7 +21,7 @@
 #include <LittleFS.h>
 
 #include "Adafruit_INA3221.h"
-#include "motor_fader_i2c.h"
+#include "fader_buddy_i2c.h"
 
 #define FlashFS LittleFS
 
@@ -37,8 +37,8 @@
 #define PIN_INA_SCL 13
 #define PIN_INA_SDA 17
 
-#define PIN_MOTOR_FADER_SCL 27
-#define PIN_MOTOR_FADER_SDA 26
+#define PIN_FADER_BUDDY_SCL 27
+#define PIN_FADER_BUDDY_SDA 26
 
 #define PIN_SERVO 32
 #define SERVO_TOUCH_POS 88
@@ -60,8 +60,8 @@ Adafruit_INA3221 ina3221;
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
 
-TwoWire WireMotorFader = TwoWire(1);  // Use second I2C peripheral
-MotorFaderI2C motorFader;
+TwoWire WireFaderBuddy = TwoWire(1);  // Use second I2C peripheral
+FaderBuddyI2C faderBuddy;
 
 uint32_t bootTime = 0;
 
@@ -88,13 +88,13 @@ TestState currentTestState = TEST_IDLE;
 bool lastPresenceState = false;
 
 // Motor fader version info (read once per test run)
-struct MotorFaderVersion {
+struct FaderBuddyVersion {
   uint8_t protocolVersion;
   bool valid;
 } versionInfo = {0, false};
 
 // Motor fader state (read continuously during diagnostics)
-struct MotorFaderState {
+struct FaderBuddyState {
   bool touch;
   uint8_t mode;
   uint8_t position;
@@ -104,7 +104,7 @@ struct MotorFaderState {
   uint16_t touchReference;
   uint16_t touchRecalCount;
   bool valid;
-} motorState = {false, 0, 0, 0, 0, 0, 0, 0, false};
+} faderState = {false, 0, 0, 0, 0, 0, 0, 0, false};
 
 // Test tracking
 struct TestTracking {
@@ -178,8 +178,8 @@ void setup() {
   Wire.begin(PIN_INA_SDA, PIN_INA_SCL);
 
   // Initialize motor fader I2C on separate bus
-  WireMotorFader.begin(PIN_MOTOR_FADER_SDA, PIN_MOTOR_FADER_SCL);
-  motorFader.begin(&WireMotorFader);
+  WireFaderBuddy.begin(PIN_FADER_BUDDY_SDA, PIN_FADER_BUDDY_SCL);
+  faderBuddy.begin(&WireFaderBuddy);
 
   // Initialize servo - move to clear position and disable after 2 seconds
   servo.attach(PIN_SERVO);
@@ -361,38 +361,38 @@ void updateDisplay(float v0, float c0, float v1, float c1) {
     sprite.print(versionInfo.protocolVersion);
   }
 
-  if (motorState.valid) {
+  if (faderState.valid) {
     sprite.setCursor(5, 110);
     sprite.setTextColor(TFT_CYAN, TFT_BLACK);
     sprite.print("Up:");
-    sprite.print(motorState.uptime / 1000.0, 1);
+    sprite.print(faderState.uptime / 1000.0, 1);
     sprite.print("s");
 
     sprite.setCursor(5, 130);
     sprite.setTextColor(TFT_YELLOW, TFT_BLACK);
-    sprite.print(getModeString(motorState.mode));
+    sprite.print(getModeString(faderState.mode));
 
     sprite.setCursor(5, 150);
     sprite.setTextColor(TFT_WHITE, TFT_BLACK);
     sprite.print("Pos:");
-    sprite.print(motorState.position);
+    sprite.print(faderState.position);
     sprite.print(" ADC:");
-    sprite.print(motorState.rawADC);
+    sprite.print(faderState.rawADC);
 
     sprite.setCursor(5, 170);
     sprite.setTextColor(TFT_WHITE, TFT_BLACK);
     sprite.print("Tch:");
-    sprite.setTextColor(motorState.touch ? TFT_GREEN : TFT_RED, TFT_BLACK);
-    sprite.print(motorState.touch ? "Y" : "N");
+    sprite.setTextColor(faderState.touch ? TFT_GREEN : TFT_RED, TFT_BLACK);
+    sprite.print(faderState.touch ? "Y" : "N");
 
     // Touch diagnostics (delta, reference, recal count)
     sprite.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     sprite.print(" d:");
-    sprite.print(motorState.touchDelta);
+    sprite.print(faderState.touchDelta);
     sprite.print(" r:");
-    sprite.print(motorState.touchReference);
+    sprite.print(faderState.touchReference);
     sprite.print(" rc:");
-    sprite.print(motorState.touchRecalCount);
+    sprite.print(faderState.touchRecalCount);
   }
 
   render_count++;
@@ -647,7 +647,7 @@ bool testFirmwareInstall() {
       {
         // Read serial number from motor fader and report to host
         uint8_t serial[10];
-        if (motorFader.readSerialNumber(serial)) {
+        if (faderBuddy.readSerialNumber(serial)) {
           // Format as hex string and send to host
           Serial.print(">>SERIAL:");
           for (int i = 0; i < 10; i++) {
@@ -762,10 +762,10 @@ bool testDebugLED() {
   return true;  // Test complete
 }
 
-void readMotorFaderVersionInfo() {
+void readFaderBuddyVersionInfo() {
   versionInfo.valid = false;
 
-  if (motorFader.readProtocolVersion(versionInfo.protocolVersion)) {
+  if (faderBuddy.readProtocolVersion(versionInfo.protocolVersion)) {
     Serial.print("Motor Fader Protocol Version: ");
     Serial.println(versionInfo.protocolVersion);
 
@@ -783,44 +783,44 @@ void readMotorFaderVersionInfo() {
   }
 }
 
-void readMotorFaderState() {
-  motorState.valid = false;
+void readFaderBuddyState() {
+  faderState.valid = false;
 
   uint32_t state;
-  if (!motorFader.readState(state)) {
+  if (!faderBuddy.readState(state)) {
     Serial.println("Failed to read motor fader state");
     return;
   }
 
   // Extract fields from state bitfield
-  motorState.touch = (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp;
-  motorState.mode = (state & STATE_MODE_bm) >> STATE_MODE_bp;
-  motorState.position = (state & STATE_POSITION_bm) >> STATE_POSITION_bp;
-  motorState.rawADC = (state & STATE_RAW_ADC_bm) >> STATE_RAW_ADC_bp;
+  faderState.touch = (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp;
+  faderState.mode = (state & STATE_MODE_bm) >> STATE_MODE_bp;
+  faderState.position = (state & STATE_POSITION_bm) >> STATE_POSITION_bp;
+  faderState.rawADC = (state & STATE_RAW_ADC_bm) >> STATE_RAW_ADC_bp;
 
   // Read uptime separately
-  if (!motorFader.readUptime(motorState.uptime)) {
+  if (!faderBuddy.readUptime(faderState.uptime)) {
     Serial.println("Failed to read uptime");
     return;
   }
 
   // Read touch diagnostics
-  if (!motorFader.readTouchDelta(motorState.touchDelta)) {
+  if (!faderBuddy.readTouchDelta(faderState.touchDelta)) {
     Serial.println("Failed to read touch delta");
     return;
   }
 
-  if (!motorFader.readTouchReference(motorState.touchReference)) {
+  if (!faderBuddy.readTouchReference(faderState.touchReference)) {
     Serial.println("Failed to read touch reference");
     return;
   }
 
-  if (!motorFader.readTouchRecalCount(motorState.touchRecalCount)) {
+  if (!faderBuddy.readTouchRecalCount(faderState.touchRecalCount)) {
     Serial.println("Failed to read touch recal count");
     return;
   }
 
-  motorState.valid = true;
+  faderState.valid = true;
 }
 
 bool testSelfCalibration() {
@@ -841,7 +841,7 @@ bool testSelfCalibration() {
 
   // Send self-calibration command on first call
   if (!testTracking.selfCalRequestSent) {
-    if (motorFader.selfCalibrate()) {
+    if (faderBuddy.selfCalibrate()) {
       Serial.println("Self-calibration command sent");
       testTracking.selfCalRequestSent = true;
     } else {
@@ -852,9 +852,9 @@ bool testSelfCalibration() {
   }
 
   // Read motor fader state continuously
-  readMotorFaderState();
+  readFaderBuddyState();
 
-  if (!motorState.valid) {
+  if (!faderState.valid) {
     // Can't read state, check for overall timeout
     if (millis() - testTracking.selfCalStartTime > TOTAL_TIMEOUT_MS) {
       testTracking.failedTestName = "CAL NO I2C";
@@ -865,42 +865,42 @@ bool testSelfCalibration() {
   }
 
   // Update min/max ADC values
-  if (motorState.rawADC < testTracking.selfCalMinADC) {
-    testTracking.selfCalMinADC = motorState.rawADC;
+  if (faderState.rawADC < testTracking.selfCalMinADC) {
+    testTracking.selfCalMinADC = faderState.rawADC;
     Serial.print("Self-cal: New min ADC = ");
-    Serial.println(motorState.rawADC);
+    Serial.println(faderState.rawADC);
   }
-  if (motorState.rawADC > testTracking.selfCalMaxADC) {
-    testTracking.selfCalMaxADC = motorState.rawADC;
+  if (faderState.rawADC > testTracking.selfCalMaxADC) {
+    testTracking.selfCalMaxADC = faderState.rawADC;
     Serial.print("Self-cal: New max ADC = ");
-    Serial.println(motorState.rawADC);
+    Serial.println(faderState.rawADC);
   }
 
   // Check if mode entered self-calibration
   if (!testTracking.selfCalEnteredMode) {
-    if (motorState.mode == MODE_SELF_CALIBRATION) {
+    if (faderState.mode == MODE_SELF_CALIBRATION) {
       testTracking.selfCalEnteredMode = true;
       Serial.println("Self-calibration mode entered");
     } else if (millis() - testTracking.selfCalStartTime > MODE_ENTRY_TIMEOUT_MS) {
       testTracking.failedTestName = "CAL NO ENTRY";
       Serial.print("FAILED: Did not enter calibration mode (current mode: ");
-      Serial.print(getModeString(motorState.mode));
+      Serial.print(getModeString(faderState.mode));
       Serial.println(")");
       return true;  // Test complete (failed)
     }
   }
 
   // Check for ERROR mode
-  if (motorState.mode == MODE_ERROR) {
+  if (faderState.mode == MODE_ERROR) {
     testTracking.failedTestName = "CAL ERROR";
     Serial.println("FAILED: Motor fader entered ERROR mode during calibration");
     return true;  // Test complete (failed)
   }
 
   // Check for calibration completion (transition away from MODE_SELF_CALIBRATION)
-  if (testTracking.selfCalEnteredMode && motorState.mode == MODE_INPUT_IDLE) {
+  if (testTracking.selfCalEnteredMode && faderState.mode == MODE_INPUT_IDLE) {
     Serial.print("Self-calibration completed. Mode: ");
-    Serial.println(getModeString(motorState.mode));
+    Serial.println(getModeString(faderState.mode));
     Serial.print("ADC range observed: ");
     Serial.print(testTracking.selfCalMinADC);
     Serial.print(" - ");
@@ -945,11 +945,11 @@ bool testDiagnostics() {
   // Initialize on first call
   if (testTracking.diagnosticsMovementStep == 0) {
     Serial.println("Starting I2C diagnostics...");
-    readMotorFaderVersionInfo();
+    readFaderBuddyVersionInfo();
   }
 
   // Continuously read motor state
-  readMotorFaderState();
+  readFaderBuddyState();
 
   // State machine for movements:
   // Step 0: Command position 10
@@ -962,14 +962,14 @@ bool testDiagnostics() {
 
   switch (testTracking.diagnosticsMovementStep) {
     case 0:  // Command position 10
-      motorFader.writeTargetPosition(10);
+      faderBuddy.writeTargetPosition(10);
       Serial.println("Commanding position 10");
       testTracking.testStartTime = millis();  // Start timeout for idle wait
       testTracking.diagnosticsMovementStep = 1;
       return false;
 
     case 1:  // Wait for idle after position 10
-      if (motorState.valid && motorState.mode == MODE_INPUT_IDLE) {
+      if (faderState.valid && faderState.mode == MODE_INPUT_IDLE) {
         Serial.println("Reached idle state");
         testTracking.diagnosticsMovementStep = 2;
         return false;
@@ -982,14 +982,14 @@ bool testDiagnostics() {
       return false;
 
     case 2:  // Command position 200
-      motorFader.writeTargetPosition(200);
+      faderBuddy.writeTargetPosition(200);
       Serial.println("Commanding position 200");
       testTracking.testStartTime = millis();  // Start timeout for idle wait
       testTracking.diagnosticsMovementStep = 3;
       return false;
 
     case 3:  // Wait for idle after position 200
-      if (motorState.valid && motorState.mode == MODE_INPUT_IDLE) {
+      if (faderState.valid && faderState.mode == MODE_INPUT_IDLE) {
         Serial.println("Reached idle state");
         testTracking.diagnosticsMovementStep = 4;
         return false;
@@ -1002,14 +1002,14 @@ bool testDiagnostics() {
       return false;
 
     case 4:  // Command position 80
-      motorFader.writeTargetPosition(80);
+      faderBuddy.writeTargetPosition(80);
       Serial.println("Commanding position 80");
       testTracking.testStartTime = millis();  // Start timeout for idle wait
       testTracking.diagnosticsMovementStep = 5;
       return false;
 
     case 5:  // Wait for idle after position 80
-      if (motorState.valid && motorState.mode == MODE_INPUT_IDLE) {
+      if (faderState.valid && faderState.mode == MODE_INPUT_IDLE) {
         Serial.println("Reached idle state");
         testTracking.diagnosticsMovementStep = 6;
         return false;
@@ -1044,9 +1044,9 @@ bool testTouchSensor() {
   }
 
   // Continuously read motor fader state throughout the test
-  readMotorFaderState();
+  readFaderBuddyState();
 
-  if (!motorState.valid) {
+  if (!faderState.valid) {
     Serial.println("Failed to read motor state during touch test");
     return false;  // Keep trying
   }
@@ -1054,7 +1054,7 @@ bool testTouchSensor() {
   switch (testTracking.touchTestPhase) {
     case TestTracking::TOUCH_PHASE_CHECK_NO_TOUCH:
       // Confirm touch is not detected before starting
-      if (motorState.touch) {
+      if (faderState.touch) {
         testTracking.failedTestName = "TCH INITIAL";
         Serial.println("FAILED: Touch detected at start of test");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
@@ -1072,7 +1072,7 @@ bool testTouchSensor() {
         // Give a small delay before commanding to ensure we're ready
         return false;
       }
-      if (!motorFader.writeTargetPosition(0)) {
+      if (!faderBuddy.writeTargetPosition(0)) {
         testTracking.failedTestName = "TCH CMD POS";
         Serial.println("FAILED: Could not command position 0");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
@@ -1086,7 +1086,7 @@ bool testTouchSensor() {
 
     case TestTracking::TOUCH_PHASE_WAIT_FOR_IDLE:
       // Wait for fader to report idle state (timeout 9 seconds)
-      if (motorState.mode == MODE_ERROR) {
+      if (faderState.mode == MODE_ERROR) {
         testTracking.failedTestName = "TCH ERROR";
         Serial.println("FAILED: Fader entered error state during movement");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
@@ -1094,7 +1094,7 @@ bool testTouchSensor() {
         return false;
       }
 
-      if (motorState.mode == MODE_INPUT_IDLE) {
+      if (faderState.mode == MODE_INPUT_IDLE) {
         Serial.println("Fader reached idle state");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_SERVO_TOUCH;
         testTracking.touchTestPhaseStartTime = millis();
@@ -1104,7 +1104,7 @@ bool testTouchSensor() {
       if (millis() - testTracking.touchTestPhaseStartTime > 9000) {
         testTracking.failedTestName = "TCH IDLE TMO";
         Serial.print("FAILED: Fader did not reach idle within 9 seconds (mode: ");
-        Serial.print(getModeString(motorState.mode));
+        Serial.print(getModeString(faderState.mode));
         Serial.println(")");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
         testTracking.touchTestPhaseStartTime = millis();
@@ -1122,7 +1122,7 @@ bool testTouchSensor() {
 
     case TestTracking::TOUCH_PHASE_WAIT_FOR_TOUCH_DETECT:
       // Wait for touch to be detected (timeout 3 seconds)
-      if (motorState.touch) {
+      if (faderState.touch) {
         Serial.println("Touch detected!");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CONFIRM_TOUCH;
         testTracking.touchTestPhaseStartTime = millis();
@@ -1145,7 +1145,7 @@ bool testTouchSensor() {
         return false;
       }
       if (millis() - testTracking.touchTestPhaseStartTime < 1000) {
-        if (!motorState.touch) {
+        if (!faderState.touch) {
           testTracking.failedTestName = "TCH LOST";
           Serial.println("FAILED: Touch lost during confirmation period");
           testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
@@ -1170,7 +1170,7 @@ bool testTouchSensor() {
 
     case TestTracking::TOUCH_PHASE_WAIT_FOR_TOUCH_CLEAR:
       // Wait for touch to clear (timeout 3 seconds)
-      if (!motorState.touch) {
+      if (!faderState.touch) {
         Serial.println("Touch cleared");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_FINAL_WAIT;
         testTracking.touchTestPhaseStartTime = millis();
@@ -1238,7 +1238,7 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
     currentTestState = TEST_IDLE;
     clearSerialBuffer();  // Clear serial buffer
     versionInfo.valid = false;
-    motorState.valid = false;
+    faderState.valid = false;
     lastPresenceState = presencePressed;
     return;
   }
@@ -1246,9 +1246,9 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
   switch (currentTestState) {
     case TEST_IDLE:
       // Continue refreshing motor state while idle (if available)
-      readMotorFaderState();
+      readFaderBuddyState();
       if (!versionInfo.valid) {
-        readMotorFaderVersionInfo();
+        readFaderBuddyVersionInfo();
       }
 
       if (presenceJustPressed) {
@@ -1274,7 +1274,7 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
         testTracking.touchTestPhaseStartTime = 0;
         clearSerialBuffer();  // Clear serial buffer
         versionInfo.valid = false;
-        motorState.valid = false;
+        faderState.valid = false;
         currentTestState = TEST_LOGIC_POWER;
       }
       break;
@@ -1363,25 +1363,25 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 
     case TEST_PASSED:
       // Continue refreshing motor state while in passed state
-      readMotorFaderState();
+      readFaderBuddyState();
 
       if (presenceJustReleased) {
         Serial.println("Returning to idle\n");
         currentTestState = TEST_IDLE;
         versionInfo.valid = false;
-        motorState.valid = false;
+        faderState.valid = false;
       }
       break;
 
     case TEST_FAILED:
       // Continue refreshing motor state while in failed state
-      readMotorFaderState();
+      readFaderBuddyState();
 
       if (presenceJustReleased) {
         Serial.println("Test failed, returning to idle\n");
         currentTestState = TEST_IDLE;
         versionInfo.valid = false;
-        motorState.valid = false;
+        faderState.valid = false;
       }
       break;
   }

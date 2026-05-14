@@ -1,7 +1,7 @@
 {
-  "name": "motorfader-webhid-demo",
+  "name": "faderbuddy-webhid-demo",
   "version": "1.0.0",
-  "description": "WebHID demo interface for motorFader control via MCP2221",
+  "description": "WebHID demo interface for FaderBuddy control via MCP2221",
   "type": "module",
   "scripts": {
     "build": "esbuild src/main.js --bundle --outfile=dist/bundle.js --format=esm",

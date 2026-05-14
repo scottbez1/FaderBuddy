@@ -15,7 +15,7 @@
 
 import { MCP2221 } from '@johntalton/mcp2221';
 import { I2CBusMCP2221 } from '@johntalton/i2c-bus-mcp2221';
-import { MotorFader } from './motorFader.js';
+import { FaderBuddy } from './faderBuddy.js';
 
 // UI State
 let chip = null;
@@ -207,7 +207,7 @@ document.getElementById('connectBtn').addEventListener('click', async () => {
 
         const addrStr = document.getElementById('i2cAddress').value;
         const addr = parseInt(addrStr);
-        fader = new MotorFader(bus, addr);
+        fader = new FaderBuddy(bus, addr);
 
         // Read version
         const version = await fader.readVersion();
@@ -376,4 +376,4 @@ document.getElementById('hapticDetentsBtn').addEventListener('click', async () =
     hapticNonce = (hapticNonce + 1) & 0x03;
 });
 
-log('motorFader WebHID Demo loaded. Click "Connect MCP2221" to begin.');
+log('FaderBuddy WebHID Demo loaded. Click "Connect MCP2221" to begin.');
