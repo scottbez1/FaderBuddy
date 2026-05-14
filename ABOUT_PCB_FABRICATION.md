@@ -1,13 +1,13 @@
 ## PCB Fabrication
-The motorFader PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
+The FaderBuddy PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
 
 | Item | Qty | Notes |
 |------|-----|-------|
-| 5 pin right-angle male pin headers 0.1" spacing | 1 each | Included with Bezek Labs motorFaders, can be purchased separately from electronics suppliers like [LCSC - 40-pin break-apart headers](https://www.lcsc.com/product-detail/C429956.html)|
-| 5 pin right-angle female pin headers 0.1" spacing | 1 each | Included with Bezek Labs motorFaders, can be purchased separately from electronics suppliers like [LCSC](https://www.lcsc.com/product-detail/C2935995.html) |
+| 5 pin right-angle male pin headers 0.1" spacing | 1 each | Included with Bezek Labs FaderBuddy boards, can be purchased separately from electronics suppliers like [LCSC - 40-pin break-apart headers](https://www.lcsc.com/product-detail/C429956.html)|
+| 5 pin right-angle female pin headers 0.1" spacing | 1 each | Included with Bezek Labs FaderBuddy boards, can be purchased separately from electronics suppliers like [LCSC](https://www.lcsc.com/product-detail/C2935995.html) |
 
 
-Use the files from the [latest release](https://github.com/scottbez1/motorFader/releases) when ordering!
+Use the files from the [latest release](https://github.com/scottbez1/FaderBuddy/releases) when ordering!
 
 > [!CAUTION]
 > The files below are auto-generated from the current (untested) design files, and are provided for design reference ONLY. They are NOT considered stable for manufacturing. Use the latest stable release linked above! 

@@ -37,7 +37,7 @@ Add the motor fader component to your ESPHome configuration using the GitHub rep
 external_components:
   - source:
       type: git
-      url: https://github.com/scottbez1/motorFader.git
+      url: https://github.com/scottbez1/FaderBuddy.git
       ref: main  # or specify a specific tag/branch
     components: [motor_fader]
 ```

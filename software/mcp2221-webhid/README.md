@@ -1,6 +1,6 @@
-# motorFader WebHID Demo
+# FaderBuddy WebHID Demo
 
-Web-based interface for controlling motorFader devices via MCP2221 USB-to-I2C bridge using WebHID.
+Web-based interface for controlling FaderBuddy devices via MCP2221 USB-to-I2C bridge using WebHID.
 
 ## Setup
 
@@ -26,11 +26,11 @@ npm run watch
 ## Usage
 
 1. Connect your MCP2221 USB device to your computer
-2. Ensure the motorFader is connected to the MCP2221's I2C pins
+2. Ensure the FaderBuddy is connected to the MCP2221's I2C pins
 3. Open `index.html` in your browser
 4. Click "Connect MCP2221" and select the device
 5. Verify the I2C address matches your fader (default: 0x20)
-6. Control and monitor your motorFader in real-time
+6. Control and monitor your FaderBuddy in real-time
 
 ## Features
 
@@ -46,4 +46,4 @@ npm run watch
 
 - WebHID-compatible browser (Chrome 89+, Edge 89+)
 - MCP2221/MCP2221A USB-to-I2C bridge
-- motorFader hardware with I2C interface
+- FaderBuddy hardware with I2C interface

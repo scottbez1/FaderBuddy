@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-motorFader is a bidirectional motor fader control system with integrated capacitive touch sensing and I2C communication. The hardware consists of a PCB that mounts directly onto Soundwell 60mm motorized faders, with an ATtiny1616 microcontroller managing motor control, touch detection, and I2C communication. Multiple faders can be chained together and controlled by an ESP32 host (designed for ESPHome/Home Assistant integration).
+FaderBuddy is a bidirectional motor fader control system with integrated capacitive touch sensing and I2C communication. The hardware consists of a PCB that mounts directly onto Soundwell 60mm motorized faders, with an ATtiny1616 microcontroller managing motor control, touch detection, and I2C communication. Multiple faders can be chained together and controlled by an ESP32 host (designed for ESPHome/Home Assistant integration).
 
 ## Project Structure
 

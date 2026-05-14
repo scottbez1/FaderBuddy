@@ -1,13 +1,13 @@
 # MF60T Low Profile Mod (Optional!)
 
-The stock MF60T is unnecessarily deep/tall, but if desired, you can shave off a LOT of height when installing a motorFader PCB with a little bit of work. This is only recommended for advanced users; most users should install the motorFader PCB on an unmodified MF60T as intended.
+The stock MF60T is unnecessarily deep/tall, but if desired, you can shave off a LOT of height when installing a FaderBuddy PCB with a little bit of work. This is only recommended for advanced users; most users should install the FaderBuddy PCB on an unmodified MF60T as intended.
 
 Here's a side-by-side comparison:
 <img width="1262" height="460" alt="IMG_0463 Large" src="https://github.com/user-attachments/assets/8a6aead6-1e5d-4326-adb1-c06b4a78a4c1" />
 
 
 ## Step 1: Remove pin extensions/brackets
-The MF60T comes with black plastic and metal pin extension brackets on both the 4 pins from the potentiometer, and on the 2 motor pins, designed to make PCBs (like the motorFader) easy to attach - we'll be removing these to save space.
+The MF60T comes with black plastic and metal pin extension brackets on both the 4 pins from the potentiometer, and on the 2 motor pins, designed to make PCBs (like the FaderBuddy) easy to attach - we'll be removing these to save space.
 <img width="1140" height="506" alt="IMG_0443 Large" src="https://github.com/user-attachments/assets/fa780a93-7877-4bd8-ab11-185e33db0e4e" />
 
 The 4-pin bracket can be pulled directly off the fader
@@ -30,7 +30,7 @@ The diagonally cut pins will fit into the PCB's through-holes - check the length
 <img width="837" height="811" alt="IMG_0452 Large" src="https://github.com/user-attachments/assets/1558f954-27b5-473e-9830-83c34e69ba19" />
 
 ## Step 3: Add motor wire extensions
-Because the motorFader PCB was designed to fit onto an **unmodified** MF60T, it will be too short and unable to directly solder to the motor pins on a modified MF60T.
+Because the FaderBuddy PCB was designed to fit onto an **unmodified** MF60T, it will be too short and unable to directly solder to the motor pins on a modified MF60T.
 
 I found that the easiest way to connect the motor is by adding a short wire extension to each, and specifically, it's easiest to assemble this by taking a wire, feeding it through the PCB and bending it appropriately to align with the motor pin, then soldering in place to the motor and PCB before finally cutting off the wire.
 <img width="1097" height="778" alt="IMG_0457 Large" src="https://github.com/user-attachments/assets/849b3dcf-fb7b-4d44-8677-ae2beec9d400" />

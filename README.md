@@ -1,6 +1,6 @@
-# motorFader
+# FaderBuddy
 
-The motorFader is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
+The FaderBuddy is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
 one (or many) to a project with just 2 I/O pins for I2C!
 
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/motor_fader_main-3D_perspective.png">
@@ -12,13 +12,13 @@ one (or many) to a project with just 2 I/O pins for I2C!
 The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project), all easily controlled over an I2C bus from a host controller like an ESP32.
 
 An [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
-motorFader assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
+FaderBuddy assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
 
 The 0.1" pitch headers make them easily chainable with 18-19mm spacing between modules,
-and STEMMA QT/QWIIC-compatible connectors make it easy to hook motorFaders to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
+and STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
 
 
-<img width="400" alt="motorFader wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
+<img width="400" alt="FaderBuddy wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
 
 
 The onboard ATtiny1616 microcontroller handles all the real-time logic (closed-loop motor control and capacitive
@@ -91,7 +91,7 @@ See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instr
 ## Getting Started
 
 - **Motorized fader**: Designed for Soundwell 60mm travel faders, available as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC)
-- **motorFader PCB**: Available pre-assembled from Bezek Labs, or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
+- **FaderBuddy PCB**: Available pre-assembled from Bezek Labs, or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
 - **ESP32**: Any ESPHome-compatible ESP32 board with 2 free GPIO pins for I2C.
 
 If fabricating your own boards via JLCPCB, you'll also need to flash the firmware before use. See [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) for instructions.
@@ -99,38 +99,38 @@ If fabricating your own boards via JLCPCB, you'll also need to flash the firmwar
 
 ## Wiring Overview
 ### 3.3v MCU direct wired, direct chaining
-Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to motorFader. 5v powers the motor and 3.3v powers the logic.
-| HOST | motorFader |
+Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to FaderBuddy. 5v powers the motor and 3.3v powers the logic.
+| HOST | FaderBuddy |
 | --- | ---------- |
 | 5v  | Vmot |
 | 3.3v | Vio |
 | GND | GND |
 | SDA | SDA |
 | SCL | SCL |
-<img width="1028" height="548" alt="motorFader wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
+<img width="1028" height="548" alt="FaderBuddy wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
 
 ### 3.3v MCU STEMMA QT
-For a microcontroller with a STEMMA QT connector, the motorFader requires an additional 5v wire to power the motor. Additional faders can be chained directly using the pin headers with no extra wires.
-| HOST | motorFader |
+For a microcontroller with a STEMMA QT connector, the FaderBuddy requires an additional 5v wire to power the motor. Additional faders can be chained directly using the pin headers with no extra wires.
+| HOST | FaderBuddy |
 | --- | ---------- |
 | STEMMA QT | STEMMA QT |
 | 5v  | Vmot |
-<img width="1366" height="946" alt="motorFader wiring(2)" src="https://github.com/user-attachments/assets/760fd565-01b0-48c2-9add-047ffbaf16b8" />
+<img width="1366" height="946" alt="FaderBuddy wiring(2)" src="https://github.com/user-attachments/assets/760fd565-01b0-48c2-9add-047ffbaf16b8" />
 
-Alternatively, motorFaders can be chained using STEMMA QT cables, but an additional 5v wire is also required between each board in that case.
-<img width="1554" height="724" alt="motorFader wiring(1)" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
+Alternatively, FaderBuddy boards can be chained using STEMMA QT cables, but an additional 5v wire is also required between each board in that case.
+<img width="1554" height="724" alt="FaderBuddy wiring(1)" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
 
 ### 5v STEAMMA QT
 If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 with the solder jumper bridged to set 5v IO)
-| HOST | motorFader |
+| HOST | FaderBuddy |
 | --- | ---------- |
 | STEMMA QT | STEMMA QT |
-<img width="1508" height="726" alt="motorFader wiring(4)" src="https://github.com/user-attachments/assets/ef7156ee-8c56-41c3-901f-95f443d2d1f1" />
+<img width="1508" height="726" alt="FaderBuddy wiring(4)" src="https://github.com/user-attachments/assets/ef7156ee-8c56-41c3-901f-95f443d2d1f1" />
 
 (Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
 ## About the Board Design
-The most plug-and-play option (if you're in the US) is to buy the motorFader PCBs pre-assembled from my Bezek Labs store, which come with firmware already flashed and the hardware tested and helps support this project and future development!
+The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs pre-assembled from my Bezek Labs store, which come with firmware already flashed and the hardware tested and helps support this project and future development!
 
 To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for more info on ordering.
 
@@ -161,12 +161,12 @@ This README covers the basics, but there are a number of additional pages with m
 - **[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md)** - ESPHome setup and API reference
 - **[ABOUT_LAYERS.md](ABOUT_LAYERS.md)** - Layer architecture and implementation details
 - **[ABOUT_MF60T_LOW_PROFILE_MOD.md](ABOUT_MF60T_LOW_PROFILE_MOD.md)** - Optional instructions for modifying the MF60T faders so they can fit in smaller areas
-- **[ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md)** - How to order and assemble your own motorFader boards directly
-- **[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)** - How to upload firmware to the motorFader microcontroller using UPDI
+- **[ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md)** - How to order and assemble your own FaderBuddy boards directly
+- **[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)** - How to upload firmware to the FaderBuddy microcontroller using UPDI
 
 ### Project Structure
 ```
-motorFader/
+FaderBuddy/
 ├── electronics/          # KiCad PCB design files
 ├── firmware/            # ATtiny1616 firmware source (PlatformIO)
 ├── esphome/             # ESPHome custom component
@@ -185,6 +185,6 @@ The `production_tools/programAndTest` directory contains unsupported (source-pro
 
 ## License
 
-motorFader is released under the [Apache 2.0 License](LICENSE.txt).
+FaderBuddy is released under the [Apache 2.0 License](LICENSE.txt).
 
 In plain terms: you're free to use, modify, and distribute this project — including in commercial products — as long as you include the license and indicate any changes you made. You don't have to share your modifications, but you can't claim the original work is yours or use the project name/branding to endorse your product.
