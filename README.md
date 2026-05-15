@@ -1,7 +1,7 @@
 # FaderBuddy
 
 The FaderBuddy is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
-one (or many) to a project with just 2 I/O pins for I2C!
+one (or many) to a project with just 2 pins for I2C!
 
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_perspective.png">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_perspective.png" width="300" />
@@ -14,8 +14,9 @@ The control board allows you to **read** the fader position, **move** the fader 
 An [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
 FaderBuddy assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
 
-The 0.1" pitch headers make them easily chainable with 18-19mm spacing between modules,
-and STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
+Multiple FaderBuddy boards can be wired together and share just 2 I2C pins. With right-angle pin headers, you can plug adjacent FaderBuddy boards into
+each other without any wires for an easy plug-and-play expandable system (supports 18mm or 19mm spacing between faders).
+STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
 
 
 <img width="400" alt="FaderBuddy wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
@@ -67,27 +68,6 @@ That's pretty much all there is to it!
 
 See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instructions and many more examples.
 
-## Features
-
-**Hardware:**
-- ATtiny1616 microcontroller with UPDI programming interface
-- Supports 3.3v or 5v logic (with 3.3v logic, 5v is still required for powering the motor; with 5v logic Vio and Vmot can be combined for only 4 wires)
-- Capacitive touch sensing for fader touch detection
-- Motor driver with position feedback (potentiometer)
-- I2C communication interface for host integration
-- Power and debug status LEDs
-- Compact PCB design optimized for JLCPCB assembly
-
-**Firmware:**
-- Programmable haptic-feedback modes:
-  - Smooth operation (no detents)
-  - Magnetic endpoints (snap to 0% and 100%)
-  - Configurable detents (1-15 positions)
-- **8 independent layers** per fader - each with its own position and haptic configuration
-- Touch-aware motor control avoids fighting against user input and supports touch and double-tap detection
-- High level interface ("move to position X") with arbitration allows for stable bidirectional control even with tens of milliseconds of latency between remote and local systems
-
-
 ## Getting Started
 
 - **Motorized fader**: Designed for Soundwell 60mm travel faders, available as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC)
@@ -129,19 +109,58 @@ If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 w
 
 (Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
+## Touch-compatible Fader Knobs/Caps
+You don't _need_ touch capable fader caps - the FaderBuddy will work fine without touch detection - touch detection allows the FaderBuddy to cancel a motor movement if it detects a touch along the way, preventing the fader from "fighting" against the user. It also allows the FaderBuddy to detect if a user is touching the fader even if they aren't actively moving, and allows you to support a double-tap action on the fader if you'd like.
+
+It's unfortunately nearly impossible to find off-the-shelf mass produced touch-capable fader knobs. Although the Soundwell/Behringer faders use a relatively standard 8mm x 1.2mm fader stem, pretty much all commercially available fader caps are non-conductive plastic and thus do not support touch detection, or are only availabe as expensive individual replacement parts (oftentimes in used condition).
+
+However, I've found that you can 3D print touch-capable fader caps using conductive PLA filament. Although conductive PLA is generally very high resistance, this is actually a great property for making a touch detection surface.
+
+If you don't want to print your own, I sell these 2-color conductive fader caps in the [Bezek Labs store](https://bezeklabs.etsy.com/listing/4501804398)
+
+TODO: photos
+
+## Firmware, I2C interface, and Layers
+The FaderBuddy firmware internally handles the closed loop motor control, presenting a [simple I2C interface](firmware/src/shared/i2c_data.h) that can be used to read the position and status of the board, command a movement to a position, and configure haptic feedback. This I2C interface is wrapped up in the ESPHome component, making it a great reference for how to interact with the protocol.
+
+- Programmable haptic-feedback modes:
+  - Smooth operation (no detents)
+  - Magnetic endpoints (snap to 0% and 100%)
+  - Configurable detents (1-15 positions)
+
+Configuration of a FaderBuddy supports up to 8 virtual "layers", which allow a single fader to be used for multiple purposes (e.g. controlling lamp brightness and fan speed), with the host controller able
+to send a single command to switch to a different layer. Switching layers restores the previous
+fader position for that layer, and will apply that layer's haptic configuration.
+
+The FaderBuddy internally handles layer-change mediation, which means that a host controller command to switch layers while the user is touching/moving the fader will avoid fighting with the user and will prevent applying the wrong position to the wrong layer - the user can finish their interaction (with the original layer) and once that interaction is finished the FaderBuddy will automatically apply the pending layer change.
+
+For example, consider a fader that can control both lamp brightness and fan speed. The host can apply this layer configuration:
+- Layer 0 (lamp brightness)
+  - Haptic mode: smooth
+- Layer 1 (fan speed)
+  - Haptic mode: 4 detents (off, low, medium, high)
+
+When the active layer is 0 (lamp brightness), the user will feel smooth fader motion and the host will see updates in layer 0's position data. If the host tells FaderBuddy to switch to layer 1 (while the user is still moving the fader), the user will continue to feel smooth motion and the position data will still be written to layer 0. Only once the user completes their interaction will the fader move to the last-known layer 1 (fan speed) position, e.g. "low", and enable the configured 4 fan speed detents. Now if the user interacts with the fader they will feel the haptic "snaps" between the 4 available positions, and the position will be written to layer 1.
+
+The firmware also supports host-written position updates to the non-active layer. For example, if the fan speed is changed remotely from "off" to "high" while the fader is in lamp brightness mode, the FaderBuddy will remember this and move the fader to the "high" position the next time the active layer is changed to the fam layer.
+
+If you want the fader to have more than the 8 supported firmware layers, you can instead use a ping-pong approach with just 2 firmware layers, and let the host manage the virtual layers itself. In order to change virtual layers, the host would first write to the non-active firmware layer with the last-known position of the target virtual layer, write the virtual layer's desired haptic config, and then send the command to switch active layers.
+
+See [ABOUT_LAYERS.md](ABOUT_LAYERS.md) for more about layers and the I2C protocol.
+
 ## About the Board Design
 The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs pre-assembled from my Bezek Labs store, which come with firmware already flashed and the hardware tested and helps support this project and future development!
 
 To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for more info on ordering.
 
-
-The board is relatively straightforward:
-* ATtiny1616 MCU (supports 3.3v or 5v operation)
-* DRV8837 motor driver
-* JST connectors for I2C (QWIIC/STEMMA QT-compatible)
-* 0.1" pin headers for directly chaining I2C bus
-* LEDs
-* supporting components
+**Hardware details:**
+- ATtiny1616 microcontroller with UPDI programming interface
+- Supports 3.3v or 5v logic (with 3.3v logic, 5v is still required for powering the motor; with 5v logic Vio and Vmot can be combined for only 4 wires)
+- DRV8837 motor driver, with potentiometer position feedback for closed-loop control
+- JST connectors for I2C (QWIIC/STEMMA QT-compatible), or 0.1" pin headers for directly chaining adjacent boards
+- Capacitive touch sensing for fader touch detection
+- Power and debug status LEDs
+- Compact PCB design optimized for JLCPCB assembly
 
 
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-schematic.pdf">
