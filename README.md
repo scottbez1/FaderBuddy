@@ -118,7 +118,12 @@ However, I've found that you can 3D print touch-capable fader caps using conduct
 
 If you don't want to print your own, I sell these 2-color conductive fader caps in the [Bezek Labs store](https://bezeklabs.etsy.com/listing/4501804398)
 
-TODO: photos
+<a href="https://bezeklabs.etsy.com/listing/4501804398">
+<img height="200" alt="Screenshot 2026-05-15 at 9 19 08 AM" src="https://github.com/user-attachments/assets/feeca456-f5e8-4f7a-a779-44e628a7a51e" />
+<img height="200" alt="Screenshot 2026-05-15 at 9 19 33 AM" src="https://github.com/user-attachments/assets/19de534d-54b8-4c83-8ec5-8c80f4fb8482" />
+<br />
+<img width="600" alt="Screenshot 2026-05-15 at 9 19 56 AM" src="https://github.com/user-attachments/assets/45a53446-0460-47cb-8587-24c34623300c" />
+</a>
 
 ## Firmware, I2C interface, and Layers
 The FaderBuddy firmware internally handles the closed loop motor control, presenting a [simple I2C interface](firmware/src/shared/i2c_data.h) that can be used to read the position and status of the board, command a movement to a position, and configure haptic feedback. This I2C interface is wrapped up in the ESPHome component, making it a great reference for how to interact with the protocol.
