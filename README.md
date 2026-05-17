@@ -126,7 +126,7 @@ If you don't want to print your own, I sell these 2-color conductive fader caps 
 </a>
 
 ## Firmware, I2C interface, and Layers
-The FaderBuddy firmware internally handles the closed loop motor control, presenting a [simple I2C interface](firmware/src/shared/i2c_data.h) that can be used to read the position and status of the board, command a movement to a position, and configure haptic feedback. This I2C interface is wrapped up in the ESPHome component, making it a great reference for how to interact with the protocol.
+The FaderBuddy firmware internally handles the closed loop motor control, presenting a [simple I2C interface](firmware/src/shared/i2c_data.h) that can be used to read the position and status of the board, command a movement to a position, and configure haptic feedback. This I2C interface is wrapped up in the ESPHome component, making it a great reference for how to interact with the protocol if you'd like too connect your FaderBuddy to something besides an ESP32 with ESPHome.
 
 - Programmable haptic-feedback modes:
   - Smooth operation (no detents)
@@ -136,20 +136,6 @@ The FaderBuddy firmware internally handles the closed loop motor control, presen
 Configuration of a FaderBuddy supports up to 8 virtual "layers", which allow a single fader to be used for multiple purposes (e.g. controlling lamp brightness and fan speed), with the host controller able
 to send a single command to switch to a different layer. Switching layers restores the previous
 fader position for that layer, and will apply that layer's haptic configuration.
-
-The FaderBuddy internally handles layer-change mediation, which means that a host controller command to switch layers while the user is touching/moving the fader will avoid fighting with the user and will prevent applying the wrong position to the wrong layer - the user can finish their interaction (with the original layer) and once that interaction is finished the FaderBuddy will automatically apply the pending layer change.
-
-For example, consider a fader that can control both lamp brightness and fan speed. The host can apply this layer configuration:
-- Layer 0 (lamp brightness)
-  - Haptic mode: smooth
-- Layer 1 (fan speed)
-  - Haptic mode: 4 detents (off, low, medium, high)
-
-When the active layer is 0 (lamp brightness), the user will feel smooth fader motion and the host will see updates in layer 0's position data. If the host tells FaderBuddy to switch to layer 1 (while the user is still moving the fader), the user will continue to feel smooth motion and the position data will still be written to layer 0. Only once the user completes their interaction will the fader move to the last-known layer 1 (fan speed) position, e.g. "low", and enable the configured 4 fan speed detents. Now if the user interacts with the fader they will feel the haptic "snaps" between the 4 available positions, and the position will be written to layer 1.
-
-The firmware also supports host-written position updates to the non-active layer. For example, if the fan speed is changed remotely from "off" to "high" while the fader is in lamp brightness mode, the FaderBuddy will remember this and move the fader to the "high" position the next time the active layer is changed to the fam layer.
-
-If you want the fader to have more than the 8 supported firmware layers, you can instead use a ping-pong approach with just 2 firmware layers, and let the host manage the virtual layers itself. In order to change virtual layers, the host would first write to the non-active firmware layer with the last-known position of the target virtual layer, write the virtual layer's desired haptic config, and then send the command to switch active layers.
 
 See [ABOUT_LAYERS.md](ABOUT_LAYERS.md) for more about layers and the I2C protocol.
 
@@ -171,7 +157,7 @@ To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-schematic.pdf">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-schematic.png" width="600" />
 </a>
-
+<br />
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png" width="300" />
 </a>
@@ -191,7 +177,7 @@ This README covers the basics, but there are a number of additional pages with m
 ### Project Structure
 ```
 FaderBuddy/
-├── electronics/          # KiCad PCB design files
+├── electronics/         # KiCad PCB design files
 ├── firmware/            # ATtiny1616 firmware source (PlatformIO)
 ├── esphome/             # ESPHome custom component
 │   ├── components/      # Component source code
@@ -211,4 +197,4 @@ The `production_tools/programAndTest` directory contains unsupported (source-pro
 
 FaderBuddy is released under the [Apache 2.0 License](LICENSE.txt).
 
-In plain terms: you're free to use, modify, and distribute this project — including in commercial products — as long as you include the license and indicate any changes you made. You don't have to share your modifications, but you can't claim the original work is yours or use the project name/branding to endorse your product.
+In plain terms: you're free to use, modify, and distribute this project — including in commercial products — as long as you include the license with attribution to this project and indicate any changes you made. You don't have to share your modifications, but you can't claim the original work is yours or use the project name/branding to endorse your product.

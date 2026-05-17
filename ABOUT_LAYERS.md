@@ -2,7 +2,24 @@
 
 ## Overview
 
-The FaderBuddy system implements **8 independent layers** per physical fader, allowing a single fader to represent multiple logical controls. Each layer maintains its own position and haptic configuration, enabling use cases like multi-scene mixing, parameter banks, or controlling multiple Home Assistant entities from one fader.
+The FaderBuddy system implements **8 independent layers** per physical fader, allowing a single fader to represent multiple logical controls. Each layer maintains its own position and haptic configuration, enabling use cases like controlling multiple Home Assistant entities from one fader.
+
+For example, consider a fader that can control both lamp brightness and fan speed. The host might apply this layer configuration:
+- Layer 0 (lamp brightness)
+  - Haptic mode: smooth
+- Layer 1 (fan speed)
+  - Haptic mode: 4 detents (off, low, medium, high)
+
+When the active layer is 0 (lamp brightness), the user will feel smooth fader motion and the host will see updates in layer 0's position data. If the host tells FaderBuddy to switch to layer 1 the fader will move to the last-known layer 1 (fan speed) position. Now if the user interacts with the fader they will feel the haptic "snaps" between the 4 available positions, and the position will be reflected in layer 1 data.
+
+The FaderBuddy internally handles layer-change mediation with user interactions, which means that a host controller command to switch layers while the user is touching/moving the fader will avoid fighting with the user and will prevent applying an incorrect position to the wrong layer.
+
+In the example above, if the user is still moving the fader when the host requests a change from layer 0 to layer 1, the FaderBuddy will stay in layer 0 and the user will continue to feel smooth motion and the position will still be written to layer 0. Once the user finishes their interaction the FaderBuddy will automatically apply the pending layer change to layer 1, with the fader moving to the layer 1 fan speed position and the detents will be turned on.
+
+The firmware also supports host-written position updates to the non-active layer. For example, if the fan speed is changed remotely from "off" to "high" while the fader is in lamp brightness mode, the FaderBuddy will remember this and move the fader to the "high" position the next time the fan speed layer is re-activated.
+
+If you want to control more than 8 things with a single fader, you can have the host manage "virtual" layers with a ping-pong approach on 2 firmware layers instead of giving each thing its own dedicated firmware layer. In order to change virtual layers, the host would first write to the non-active firmware layer with the last-known position of the target virtual layer, write the virtual layer's desired haptic config, and then send the command to switch active layers. Each layer change would alternate which of the 2 firmware layers is active.
+
 
 ## Key Concepts
 
