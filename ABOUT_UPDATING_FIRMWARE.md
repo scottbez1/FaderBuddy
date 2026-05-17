@@ -1,8 +1,8 @@
 ## Firmware Flashing
 
-If you purchase a FaderBuddy PCB assembly from Bezek Labs, it will come with firmware already uploaded and tested, so you won't need to flash any firmware to get started. You can use these instructions if you'd like to update the firmware later.
+If you purchase a [FaderBuddy PCB assembly from Bezek Labs](bezeklabs.etsy.com/listing/4506790932), it will come with firmware already uploaded and tested, so you won't need to flash any firmware to get started. You can use these instructions if you'd like to update the firmware later.
 
-If you assemble your own FaderBuddy PCBs or purchase an assembled PCB from JLCPCB, you'll have a blank ATtiny1616 microcontroller, so you'll need to flash the firmware yourself using a UPDI programmer before you can use it. This only needs to be done once per board (unless you want to update the firmware later).
+If you [assemble your own](ABOUT_PCB_FABRICATION.md) FaderBuddy PCBs or purchase an assembled PCB from JLCPCB, you'll have a blank ATtiny1616 microcontroller, so you MUST flash the firmware yourself using a UPDI programmer before you can use it. This only needs to be done once per board (unless you want to update the firmware later).
 
 The [Adafruit UPDI Friend](https://www.adafruit.com/product/5879) is a recommended UPDI programmer, but you can also build an UPDI programmer with a USB->Serial adapter and a few other components (see a comprehensive overview from SpenceKonde [here](https://github.com/SpenceKonde/AVR-Guidance/blob/master/UPDI/jtag2updi.md#a-note-on-breakout-boards)).
 

@@ -71,7 +71,7 @@ See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instr
 ## Getting Started
 
 - **Motorized fader**: Designed for Soundwell 60mm travel faders, available as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC)
-- **FaderBuddy PCB**: Available pre-assembled from Bezek Labs, or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
+- **FaderBuddy PCB**: Available [pre-assembled from Bezek Labs](bezeklabs.etsy.com/listing/4506790932) (which supports this project), or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
 - **ESP32**: Any ESPHome-compatible ESP32 board with 2 free GPIO pins for I2C.
 
 If fabricating your own boards via JLCPCB, you'll also need to flash the firmware before use. See [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) for instructions.
@@ -140,7 +140,7 @@ fader position for that layer, and will apply that layer's haptic configuration.
 See [ABOUT_LAYERS.md](ABOUT_LAYERS.md) for more about layers and the I2C protocol.
 
 ## About the Board Design
-The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs pre-assembled from my Bezek Labs store, which come with firmware already flashed and the hardware tested and helps support this project and future development!
+The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs [pre-assembled from the Bezek Labs store](bezeklabs.etsy.com/listing/4506790932), which come with firmware already flashed and the hardware tested and helps support this project and future development!
 
 To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for more info on ordering.
 

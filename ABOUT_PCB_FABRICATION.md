@@ -1,5 +1,7 @@
 ## PCB Fabrication
-The FaderBuddy PCB is designed for JLCPCB SMT assembly -- all surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to order and solder the pin headers separately (or add them to your JLCPCB assembly order):
+If you're in the US, the easiest way to get started is to purchase the FaderBuddy PCBA [pre-assembled and pre-flashed from the Bezek Labs store](bezeklabs.etsy.com/listing/4506790932), which also helps support development of this and other open-source projects. FaderBuddy boards from Bezek Labs have firmware installed and tested, and include the through-hold right-angle pin headers for chaining, so they're ready to go out of the box!
+
+If you'd like to build your own, the FaderBuddy PCB is designed for easy JLCPCB SMT assembly. Note that an order from JLCPCB will NOT include firmware and will [require firmware flashing](ABOUT_UPDATING_FIRMWARE.md) before it can be used! All surface-mount components are placed by the factory, but the through-hole daisy-chain pin headers are omitted by default. You'll need to **order** and solder the pin headers separately (or add them to your JLCPCB assembly order):
 
 | Item | Qty | Notes |
 |------|-----|-------|
