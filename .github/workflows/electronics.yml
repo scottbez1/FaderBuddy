@@ -34,7 +34,7 @@ jobs:
           PYTHONUNBUFFERED: 1
 
       - name: fader_buddy_main -- Gen schematic, iBOM, 3d (KiBot)
-        uses: INTI-CMNB/KiBot@dd0a8b73273df642978889244ca60b8b612c36d4
+        uses: INTI-CMNB/KiBot@5c78b746f9076d54242aeeeae7f364f360e21f30
         with:
           config: electronics/fader_buddy_main.kibot.yml
           dir: electronics/build/outputs

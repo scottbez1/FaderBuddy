@@ -17,6 +17,7 @@
 import argparse
 import logging
 import os
+import pcbnew
 import subprocess
 import sys
 
@@ -41,6 +42,10 @@ def export_jlcpcb(pcb, schematic, alt_fields, release_prefix, no_drc):
     file_util.mkdir_p(output_dir)
 
     with versioned_file(pcb_file, release_prefix):
+        board = pcbnew.LoadBoard(pcb_file)
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+        board.Save(pcb_file)
+
         command = [
             'kikit',
             'fab',

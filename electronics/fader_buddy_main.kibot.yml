@@ -1,5 +1,5 @@
 kibot:
-  version: 1
+  version: 2
 
 preflight:
   check_zone_fills: true
