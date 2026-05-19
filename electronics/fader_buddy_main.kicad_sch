@@ -4,6 +4,11 @@
 	(generator_version "10.0")
 	(uuid "74d9b4a7-03d6-4669-9e54-5755a832b350")
 	(paper "A4")
+	(title_block
+		(title "FaderBuddy")
+		(company "https://github.com/scottbez1/FaderBuddy")
+		(comment 1 "Apache 2.0 License")
+	)
 	(lib_symbols
 		(symbol "Connector:TestPoint_Small"
 			(pin_numbers
