@@ -15,6 +15,10 @@ preflight:
       command: 'python3 ci/util/rev_info.py git_short_rev'
     - name: RELEASE_VERSION
       command: 'python3 ci/util/rev_info.py git_release_version releases/electronics/'
+  filters:
+    - filter: 'Version text silkscreen overlap with knockout zone'
+      error: 'silk_overlap'
+      regex: 'PCB text.*on B\.Silkscreen'
   # filters:
   #   - filter: 'Lines crossing edge cuts'
   #     error: 'silk_over_copper'
