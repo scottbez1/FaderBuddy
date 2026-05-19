@@ -71,13 +71,22 @@ See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instr
 ## Getting Started
 
 - **Motorized fader**: Designed for Soundwell 60mm travel faders, available as the Behringer MF60T (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC)
-- **FaderBuddy PCB**: Available [pre-assembled from Bezek Labs](bezeklabs.etsy.com/listing/4506790932) (which supports this project), or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
+- **FaderBuddy PCB**: Available [pre-assembled from Bezek Labs](https://bezeklabs.etsy.com/listing/4506790932) (which supports this project), or fabricate and assemble directly via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
 - **ESP32**: Any ESPHome-compatible ESP32 board with 2 free GPIO pins for I2C.
 
-If fabricating your own boards via JLCPCB, you'll also need to flash the firmware before use. See [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) for instructions.
+> [!NOTE]
+> If fabricating your own boards via JLCPCB, you'll also need to flash the firmware before use. See [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) for instructions.
 
 
 ## Wiring Overview
+| Pin | Details |
+| --- | --- |
+| Vmot | Motor power - 5v recommended |
+| Vio | Microcontroller IO power - 3.3v or 5v. This must match the voltage for the SDA/SCL I2C bus! |
+| GND | Ground reference |
+| SDA | I2C data. FaderBuddy includes a pull-up resistor |
+| SCL | I2C clock. FaderBuddy includes a pull-up resistor |
+
 ### 3.3v MCU direct wired, direct chaining
 Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to FaderBuddy. 5v powers the motor and 3.3v powers the logic.
 | HOST | FaderBuddy |
@@ -100,7 +109,7 @@ For a microcontroller with a STEMMA QT connector, the FaderBuddy requires an add
 Alternatively, FaderBuddy boards can be chained using STEMMA QT cables, but an additional 5v wire is also required between each board in that case.
 <img width="1554" height="724" alt="FaderBuddy wiring(1)" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
 
-### 5v STEAMMA QT
+### 5v STEMMA QT
 If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 with the solder jumper bridged to set 5v IO)
 | HOST | FaderBuddy |
 | --- | ---------- |
@@ -109,10 +118,26 @@ If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 w
 
 (Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
-## Touch-compatible Fader Knobs/Caps
-You don't _need_ touch capable fader caps - the FaderBuddy will work fine without touch detection - touch detection allows the FaderBuddy to cancel a motor movement if it detects a touch along the way, preventing the fader from "fighting" against the user. It also allows the FaderBuddy to detect if a user is touching the fader even if they aren't actively moving, and allows you to support a double-tap action on the fader if you'd like.
+### Setting I2C Address
+By default the FaderBuddy will use I2C address `0x20`.
 
-It's unfortunately nearly impossible to find off-the-shelf mass produced touch-capable fader knobs. Although the Soundwell/Behringer faders use a relatively standard 8mm x 1.2mm fader stem, pretty much all commercially available fader caps are non-conductive plastic and thus do not support touch detection, or are only availabe as expensive individual replacement parts (oftentimes in used condition).
+When connecting more than one FaderBuddy to the same I2C bus, or if there's already another device on your bus with that address, the FaderBuddy PCB has 3 solder jumper pads allowing you to change the I2C address by bridging those pads.
+
+| Address | A2    | A1    | A0    |
+| ------- | ----- | ----- | ----- |
+| `0x20`  | `[ ]` | `[ ]` | `[ ]` |
+| `0x21`  | `[ ]` | `[ ]` | `[█]` |
+| `0x22`  | `[ ]` | `[█]` | `[ ]` |
+| `0x23`  | `[ ]` | `[█]` | `[█]` |
+| `0x24`  | `[█]` | `[ ]` | `[ ]` |
+| `0x25`  | `[█]` | `[ ]` | `[█]` |
+| `0x26`  | `[█]` | `[█]` | `[ ]` |
+| `0x27`  | `[█]` | `[█]` | `[█]` |
+
+## Touch-compatible Fader Knobs/Caps
+You don't _need_ touch capable fader caps - the FaderBuddy will work fine without them - but touch detection allows the FaderBuddy to cancel a motor movement if it detects a touch along the way, preventing the fader from "fighting" against the user. It also allows the FaderBuddy to detect if a user is touching the fader even if they aren't actively moving, and allows you to support a double-tap action on the fader if you'd like.
+
+It's unfortunately nearly impossible to find off-the-shelf mass produced touch-capable fader knobs. Although the Soundwell/Behringer faders use a relatively standard 8mm x 1.2mm fader stem, pretty much all commercially available fader caps are non-conductive plastic and thus do not support touch detection, or are only available as expensive individual replacement parts (oftentimes in used condition).
 
 However, I've found that you can 3D print touch-capable fader caps using conductive PLA filament. Although conductive PLA is generally very high resistance, this is actually a great property for making a touch detection surface.
 
@@ -126,7 +151,7 @@ If you don't want to print your own, I sell these 2-color conductive fader caps 
 </a>
 
 ## Firmware, I2C interface, and Layers
-The FaderBuddy firmware internally handles the closed loop motor control, presenting a [simple I2C interface](firmware/src/shared/i2c_data.h) that can be used to read the position and status of the board, command a movement to a position, and configure haptic feedback. This I2C interface is wrapped up in the ESPHome component, making it a great reference for how to interact with the protocol if you'd like too connect your FaderBuddy to something besides an ESP32 with ESPHome.
+The FaderBuddy firmware internally handles the closed loop motor control, presenting a [simple I2C interface](firmware/src/shared/i2c_data.h) that can be used to read the position and status of the board, command a movement to a position, and configure haptic feedback. This I2C interface is wrapped up in the ESPHome component, making it a great reference for how to interact with the protocol if you'd like to connect your FaderBuddy to something besides an ESP32 with ESPHome.
 
 - Programmable haptic-feedback modes:
   - Smooth operation (no detents)
@@ -140,7 +165,7 @@ fader position for that layer, and will apply that layer's haptic configuration.
 See [ABOUT_LAYERS.md](ABOUT_LAYERS.md) for more about layers and the I2C protocol.
 
 ## About the Board Design
-The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs [pre-assembled from the Bezek Labs store](bezeklabs.etsy.com/listing/4506790932), which come with firmware already flashed and the hardware tested and helps support this project and future development!
+The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs [pre-assembled from the Bezek Labs store](https://bezeklabs.etsy.com/listing/4506790932), which come with firmware already flashed and the hardware tested and helps support this project and future development!
 
 To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for more info on ordering.
 

@@ -8,8 +8,8 @@ This guide shows you how to use the FaderBuddy with ESPHome to create smart moto
 
 Connect your FaderBuddy board(s) to your ESP32 via I2C:
 
-- **SDA** → ESP32 GPIO pin (e.g., GPIO12)
-- **SCL** → ESP32 GPIO pin (e.g., GPIO13)
+- **SDA** → ESP32 GPIO pin (e.g., GPIO8)
+- **SCL** → ESP32 GPIO pin (e.g., GPIO9)
 - **GND** → ESP32 GND
 - **Vio** → 3.3V power supply
 - **Vmot** → 5V power supply
@@ -22,8 +22,8 @@ In your ESPHome YAML, configure the I2C bus:
 
 ```yaml
 i2c:
-  sda: GPIO12
-  scl: GPIO13
+  sda: GPIO8
+  scl: GPIO9
   scan: true  # Optional: helps verify faders are detected
 ```
 
@@ -38,7 +38,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/scottbez1/FaderBuddy.git
-      ref: main  # or specify a specific tag/branch
+      ref: master  # or specify a specific tag/branch
     components: [fader_buddy]
 ```
 
@@ -98,7 +98,7 @@ The component provides three triggers that fire when the user interacts with the
 
 #### on_manual_move
 
-Fires when the user moves the fader or when the fader position changes. Provides the current position (0-255) and active layer index.
+Fires when the user moves the fader. Provides the current position (0-255) and active layer index.
 
 ```yaml
 fader_buddy:
@@ -123,7 +123,7 @@ fader_buddy:
         - lambda: |-
             // x = touch state (true/false)
             // layer = active layer (0-7)
-            ESP_LOGD("fader", "Touch: %s (on layer %d", x ? "pressed" : "released", layer);
+            ESP_LOGD("fader", "Touch: %s (on layer %d)", x ? "pressed" : "released", layer);
 ```
 
 #### on_double_tap
@@ -243,7 +243,7 @@ fader_buddy:
             data:
               entity_id: light.living_room
               brightness: !lambda 'return x;'
-              transition: "0"
+              transition: 0
 
 # Light brightness changes in Home Assistant → move fader
 sensor:

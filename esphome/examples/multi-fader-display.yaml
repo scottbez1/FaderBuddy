@@ -16,11 +16,11 @@ logger:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "7zsbHuNwjBQX5BZzQCkpd0li8qZ648uvVAQDSkdIHO8="
+    key: !secret api_key
 
 ota:
   - platform: esphome
-    password: "oaiwefoiaseoifnaoiejf"
+    password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
@@ -39,8 +39,7 @@ external_components:
   # - source:
   #     type: git
   #     url: https://github.com/scottbez1/FaderBuddy.git
-  #     ref: main  # or specify a tag/branch
-  #   refresh: 0s
+  #     ref: master  # or specify a tag/branch
   #   components: [fader_buddy]
     
 
