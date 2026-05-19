@@ -64,7 +64,19 @@
       "drc_exclusions": [
         [
           "courtyards_overlap|99045000|52455000|203137fc-b8e4-46bd-9c1e-dd0d2c21291e|5889cd1e-6975-4c1f-a703-21f042d780cf",
-          ""
+          "Courtyard on right angle headers - ok"
+        ],
+        [
+          "silk_over_copper|64422000|44910000|ab2a0b54-f1ea-4e72-a521-131132a2ff82|7c283daf-3577-48b7-a900-657d25e9e47d",
+          "UPDI silkscreen overlap with pad - ok"
+        ],
+        [
+          "silk_over_copper|64422000|55070000|8e5019e4-84c5-40b5-bec8-e6900d60e0e2|1bd4c3ce-99ea-4d50-bb5d-a021a3405b9f",
+          "UPDI silkscreen overlap with pad - ok"
+        ],
+        [
+          "silk_overlap|87474338|43734090|38361513-4a2c-4214-b43e-9435de35180e|c4862680-23e0-4ff4-b5a2-995480a9e45b",
+          "Zone silkscreen for knockout text padding"
         ]
       ],
       "meta": {
