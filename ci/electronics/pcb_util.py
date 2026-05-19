@@ -38,6 +38,7 @@ def versioned_board(filename, release_search_prefix):
 
         logger.debug('Load board')
         board = pcbnew.LoadBoard(temp_pcb.name)
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
         yield board
 
 @contextmanager

@@ -10,18 +10,15 @@ set -v
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-sudo add-apt-repository --yes ppa:kicad/kicad-8.0-releases
+sudo add-apt-repository --yes ppa:kicad/kicad-10.0-releases
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt install -y kicad kicad-packages3d poppler-utils python3-dev python3-pip imagemagick
 
-sudo python3 -m pip install kikit==1.6.0
+sudo python3 -m pip install kikit==1.8.0
 
-mkdir -p ~/.config/kicad
-cp /usr/share/kicad/template/fp-lib-table ~/.config/kicad/
-cp /usr/share/kicad/template/sym-lib-table ~/.config/kicad/
-
-cp "$DIR/config/eeschema" ~/.config/kicad/
-cp "$DIR/config/pcbnew" ~/.config/kicad/
+mkdir -p ~/.config/kicad/10.0
+cp /usr/share/kicad/template/fp-lib-table ~/.config/kicad/10.0/
+cp /usr/share/kicad/template/sym-lib-table ~/.config/kicad/10.0/
 
 # Install ImageMagick policy that allows PDF conversion (safe in CI because we control all inputs/outputs)
 sudo cp "$DIR/config/policy.xml" /etc/ImageMagick-6/policy.xml

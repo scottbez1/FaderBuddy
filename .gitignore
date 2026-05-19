@@ -3,6 +3,7 @@
 *.bak
 *.bck
 *.kicad_pcb-bak
+*.kicad_sch-bak
 *.sch-bak
 *.net
 *.dsn
@@ -10,6 +11,9 @@ fp-info-cache
 _autosave*.kicad_pcb
 *.kicad_prl
 electronics/**/*backups
+# KiCad 10
+.history/
+~*.lck
 
 # Proprietary 3d model (for KiCAD)
 **/proprietary/*.stp
