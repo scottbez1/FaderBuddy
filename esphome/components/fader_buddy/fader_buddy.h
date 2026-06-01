@@ -58,6 +58,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     void store_initial_layer_haptic_config(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
 
     Trigger<uint8_t, uint8_t> *get_on_manual_move_trigger() const { return on_manual_move_; }
+    Trigger<uint8_t, uint8_t> *get_on_raw_position_update_trigger() const { return on_raw_position_update_; }
     Trigger<bool, uint8_t> *get_on_touch_change_trigger() const { return on_touch_change_; }
     Trigger<uint8_t> *get_on_double_tap_trigger() const { return on_double_tap_; }
 
@@ -67,6 +68,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         bool write_with_retry_(const uint8_t *data, size_t len, uint8_t retries = 3);
 
         Trigger<uint8_t, uint8_t> *on_manual_move_{new Trigger<uint8_t, uint8_t>()};
+        Trigger<uint8_t, uint8_t> *on_raw_position_update_{new Trigger<uint8_t, uint8_t>()};
         Trigger<bool, uint8_t> *on_touch_change_{new Trigger<bool, uint8_t>()};
         Trigger<uint8_t> *on_double_tap_{new Trigger<uint8_t>()};
 
@@ -107,7 +109,7 @@ template<typename... Ts> class SetActiveLayerAction : public Action<Ts...> {
 
   TEMPLATABLE_VALUE(uint8_t, layer)
 
-  void play(Ts... x) override { this->parent_->set_active_layer(this->layer_.value(x...)); }
+  void play(const Ts &...x) override { this->parent_->set_active_layer(this->layer_.value(x...)); }
 
  protected:
   FaderBuddy *parent_;
@@ -120,7 +122,7 @@ template<typename... Ts> class RemoteMoveToAction : public Action<Ts...> {
   TEMPLATABLE_VALUE(uint8_t, position)
   TEMPLATABLE_VALUE(uint8_t, layer)
 
-  void play(Ts... x) override {
+  void play(const Ts &...x) override {
     this->parent_->remote_move_to(this->position_.value(x...), this->layer_.value(x...));
   }
 
@@ -137,7 +139,7 @@ template<typename... Ts> class SetLayerHapticConfigAction : public Action<Ts...>
   TEMPLATABLE_VALUE(uint8_t, detent_count)
   TEMPLATABLE_VALUE(uint8_t, detent_strength)
 
-  void play(Ts... x) override {
+  void play(const Ts &...x) override {
     this->parent_->set_layer_haptic_config(
         this->layer_.value(x...),
         this->mode_.value(x...),
@@ -154,7 +156,7 @@ template<typename... Ts> class RunSelfCalibrationAction : public Action<Ts...> {
  public:
   RunSelfCalibrationAction(FaderBuddy *parent) : parent_(parent) {}
 
-  void play(Ts... x) override { this->parent_->run_self_calibration(); }
+  void play(const Ts &...x) override { this->parent_->run_self_calibration(); }
 
  protected:
   FaderBuddy *parent_;

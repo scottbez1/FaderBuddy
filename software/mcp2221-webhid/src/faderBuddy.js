@@ -15,8 +15,15 @@
 
 /**
  * FaderBuddy I2C Protocol Implementation
- * Protocol version: 3
+ * Protocol version: 5
  * All multi-byte values are big-endian (MSB first)
+ *
+ * v5 Changes from v3:
+ * - REG_TARGET (0x02) removed - use layer-addressed REG_LAYER_TARGET (0x0E)
+ * - REG_HAPTIC_CONFIG (0x0C) deprecated - use layer-addressed REG_LAYER_HAPTIC_CONFIG (0x0F)
+ * - STATE register bitfields changed (active_layer replaces haptic_config_nonce, positions shifted)
+ * - Haptic config is now 16-bit (removed nonce and target position)
+ * - New layer-addressed protocol for per-layer configuration
  */
 
 export class FaderBuddy {
@@ -24,10 +31,10 @@ export class FaderBuddy {
         this.bus = i2cBus;
         this.address = address;
 
-        // Register addresses
+        // Register addresses (Protocol v5)
         this.REG_VERSION = 0x00;
         this.REG_STATE = 0x01;
-        this.REG_TARGET = 0x02;
+        // 0x02 removed in v5
         this.REG_UPTIME = 0x03;
         this.REG_CAL_TOUCH = 0x04;
         this.REG_CLEAR_ERROR = 0x05;
@@ -37,7 +44,10 @@ export class FaderBuddy {
         this.REG_TOUCH_DELTA = 0x09;
         this.REG_TOUCH_REF = 0x0A;
         this.REG_TOUCH_RECAL = 0x0B;
-        this.REG_HAPTIC_CONFIG = 0x0C;
+        // 0x0C deprecated in v5
+        this.REG_ACTIVE_LAYER = 0x0D;
+        this.REG_LAYER_TARGET = 0x0E;         // Layer-addressed
+        this.REG_LAYER_HAPTIC_CONFIG = 0x0F;  // Layer-addressed
 
         // Mode states
         this.MODE_REMOTE_MOVEMENT = 0;
@@ -50,6 +60,9 @@ export class FaderBuddy {
         this.HAPTIC_NO_HAPTICS = 0;
         this.HAPTIC_SMOOTH_WITH_MAGNET_ENDS = 1;
         this.HAPTIC_DETENTS = 2;
+
+        // Number of layers
+        this.NUM_LAYERS = 8;
     }
 
     /**
@@ -70,6 +83,34 @@ export class FaderBuddy {
      */
     async writeRegister(reg, data = new Uint8Array(0)) {
         await this.bus.writeI2cBlock(this.address, reg, data.length, data);
+    }
+
+    /**
+     * Read a layer-addressed register
+     * Protocol: Write [register, layer], then read N bytes
+     * @param {number} reg - Register address
+     * @param {number} layer - Layer index (0-7)
+     * @param {number} length - Number of bytes to read
+     * @returns {Uint8Array} - Register data
+     */
+    async readLayerRegister(reg, layer, length) {
+        // Write register address and layer index
+        await this.bus.writeI2cBlock(this.address, reg, 1, new Uint8Array([layer]));
+        // Read the data (use raw read without register address)
+        const result = await this.bus.i2cRead(this.address, length);
+        return new Uint8Array(result.buffer);
+    }
+
+    /**
+     * Write to a layer-addressed register
+     * Protocol: Write [register, layer, ...data]
+     * @param {number} reg - Register address
+     * @param {number} layer - Layer index (0-7)
+     * @param {Uint8Array} data - Data to write
+     */
+    async writeLayerRegister(reg, layer, data) {
+        const payload = new Uint8Array([layer, ...data]);
+        await this.bus.writeI2cBlock(this.address, reg, payload.length, payload);
     }
 
     /**
@@ -99,6 +140,13 @@ export class FaderBuddy {
     }
 
     /**
+     * Convert uint16 to big-endian bytes
+     */
+    uint16ToBytesBE(val) {
+        return new Uint8Array([(val >> 8) & 0xFF, val & 0xFF]);
+    }
+
+    /**
      * Read protocol version
      * @returns {number} - Protocol version
      */
@@ -108,67 +156,149 @@ export class FaderBuddy {
     }
 
     /**
-     * Read and parse state register (REG_STATE)
+     * Read and parse state register (REG_STATE) - Protocol v5 format
      * Returns an object with all state fields extracted from the packed uint32
-     * @returns {Object} - State object with fields: touchDetected, mode, settingsNonce, position, positionNonce, rawAdc, singleTapNonce, doubleTapNonce
+     *
+     * v5 STATE register bitfields:
+     * - Bit 0: Touch detected (1 bit)
+     * - Bits 1-3: Mode (3 bits)
+     * - Bits 4-6: Active layer (3 bits) - NEW in v5
+     * - Bits 7-14: Position (8 bits)
+     * - Bits 15-16: Position nonce (2 bits)
+     * - Bits 17-27: Raw ADC (11 bits)
+     * - Bits 28-29: Double tap nonce (2 bits)
+     *
+     * @returns {Object} - State object
      */
     async readState() {
         const data = await this.readRegister(this.REG_STATE, 4);
         const state = this.bytesToUint32BE(data);
 
-        // Extract bitfields
+        // Extract bitfields (Protocol v5 layout)
         // Bit 0: Touch detected
         const touchDetected = (state & 0x01) !== 0;
 
         // Bits 1-3: Mode (3 bits)
         const mode = (state >> 1) & 0x07;
 
-        // Bits 4-5: Settings nonce (2 bits)
-        const settingsNonce = (state >> 4) & 0x03;
+        // Bits 4-6: Active layer (3 bits) - NEW in v5
+        const activeLayer = (state >> 4) & 0x07;
 
-        // Bits 6-13: Position (8 bits)
-        const position = (state >> 6) & 0xFF;
+        // Bits 7-14: Position (8 bits)
+        const position = (state >> 7) & 0xFF;
 
-        // Bits 14-15: Position nonce (2 bits)
-        const positionNonce = (state >> 14) & 0x03;
+        // Bits 15-16: Position nonce (2 bits)
+        const positionNonce = (state >> 15) & 0x03;
 
-        // Bits 16-26: Raw ADC (11 bits)
-        const rawAdc = (state >> 16) & 0x7FF;
+        // Bits 17-27: Raw ADC (11 bits)
+        const rawAdc = (state >> 17) & 0x7FF;
 
-        // Bits 27-28: Single tap nonce (2 bits)
-        const singleTapNonce = (state >> 27) & 0x03;
-
-        // Bits 29-30: Double tap nonce (2 bits)
-        const doubleTapNonce = (state >> 29) & 0x03;
+        // Bits 28-29: Double tap nonce (2 bits)
+        const doubleTapNonce = (state >> 28) & 0x03;
 
         return {
             touchDetected,
             mode,
-            settingsNonce,
+            activeLayer,
             position,
             positionNonce,
             rawAdc,
-            singleTapNonce,
             doubleTapNonce
         };
     }
 
     /**
-     * Read target position
-     * @returns {number} - Target position (0-255)
+     * Read active layer index
+     * @returns {number} - Active layer (0-7)
      */
-    async readTarget() {
-        const data = await this.readRegister(this.REG_TARGET, 1);
+    async readActiveLayer() {
+        const data = await this.readRegister(this.REG_ACTIVE_LAYER, 1);
         return data[0];
     }
 
     /**
-     * Set target position
+     * Set active layer index
+     * @param {number} layer - Layer index (0-7)
+     */
+    async setActiveLayer(layer) {
+        const data = new Uint8Array([layer & 0x07]);
+        await this.writeRegister(this.REG_ACTIVE_LAYER, data);
+    }
+
+    /**
+     * Read target position for a specific layer
+     * @param {number} layer - Layer index (0-7)
+     * @returns {number} - Target position (0-255)
+     */
+    async readLayerTarget(layer) {
+        const data = await this.readLayerRegister(this.REG_LAYER_TARGET, layer, 1);
+        return data[0];
+    }
+
+    /**
+     * Set target position for a specific layer
+     * @param {number} layer - Layer index (0-7)
+     * @param {number} target - Target position (0-255)
+     */
+    async setLayerTarget(layer, target) {
+        const data = new Uint8Array([target & 0xFF]);
+        await this.writeLayerRegister(this.REG_LAYER_TARGET, layer, data);
+    }
+
+    /**
+     * Read haptic configuration for a specific layer (16-bit, Protocol v5)
+     *
+     * Haptic config bitfields (16-bit):
+     * - Bits 0-2: Mode (3 bits)
+     * - Bits 3-6: Detent count (4 bits)
+     * - Bits 7-9: Detent strength (3 bits)
+     * - Bits 10-15: Reserved
+     *
+     * @param {number} layer - Layer index (0-7)
+     * @returns {Object} - Haptic config object
+     */
+    async readLayerHapticConfig(layer) {
+        const data = await this.readLayerRegister(this.REG_LAYER_HAPTIC_CONFIG, layer, 2);
+        const config = this.bytesToUint16BE(data);
+
+        // Extract bitfields
+        const mode = config & 0x07;
+        const detentCount = (config >> 3) & 0x0F;
+        const detentStrength = (config >> 7) & 0x07;
+
+        return {
+            mode,
+            detentCount,
+            detentStrength
+        };
+    }
+
+    /**
+     * Set haptic configuration for a specific layer (16-bit, Protocol v5)
+     * @param {number} layer - Layer index (0-7)
+     * @param {number} mode - Haptic mode (0=NO_HAPTICS, 1=SMOOTH_WITH_MAGNET_ENDS, 2=DETENTS)
+     * @param {number} detentCount - 4-bit detent count (0-15)
+     * @param {number} detentStrength - 3-bit detent strength (0-7)
+     */
+    async setLayerHapticConfig(layer, mode, detentCount, detentStrength) {
+        // Pack the 16-bit value
+        const config =
+            ((mode & 0x07) << 0) |
+            ((detentCount & 0x0F) << 3) |
+            ((detentStrength & 0x07) << 7);
+
+        const data = this.uint16ToBytesBE(config);
+        await this.writeLayerRegister(this.REG_LAYER_HAPTIC_CONFIG, layer, data);
+    }
+
+    /**
+     * Set target position for the active layer (convenience method)
+     * This sets the target on the currently active layer
      * @param {number} target - Target position (0-255)
      */
     async setTarget(target) {
-        const data = new Uint8Array([target & 0xFF]);
-        await this.writeRegister(this.REG_TARGET, data);
+        const activeLayer = await this.readActiveLayer();
+        await this.setLayerTarget(activeLayer, target);
     }
 
     /**
@@ -246,35 +376,16 @@ export class FaderBuddy {
     }
 
     /**
-     * Set haptic configuration
-     * @param {number} nonce - 2-bit nonce (0-3)
-     * @param {number} mode - Haptic mode (0=NO_HAPTICS, 1=SMOOTH_WITH_MAGNET_ENDS, 2=DETENTS)
-     * @param {number} detentCount - 4-bit detent count (0-15)
-     * @param {number} detentStrength - 3-bit detent strength (0-7)
-     * @param {number} targetPosition - 8-bit target position (0-255)
+     * Get haptic mode name
+     * @param {number} mode - Haptic mode value
+     * @returns {string} - Mode name
      */
-    async setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition) {
-        // Pack the 32-bit value according to the bit layout:
-        // Bits 0-1: Nonce (2 bits)
-        // Bits 2-4: Mode (3 bits)
-        // Bits 5-8: Detent count (4 bits)
-        // Bits 9-11: Detent strength (3 bits)
-        // Bits 12-19: Target position (8 bits)
-        const config =
-            ((nonce & 0x03) << 0) |
-            ((mode & 0x07) << 2) |
-            ((detentCount & 0x0F) << 5) |
-            ((detentStrength & 0x07) << 9) |
-            ((targetPosition & 0xFF) << 12);
-
-        // Convert to big-endian bytes
-        const data = new Uint8Array([
-            (config >> 24) & 0xFF,
-            (config >> 16) & 0xFF,
-            (config >> 8) & 0xFF,
-            config & 0xFF
-        ]);
-
-        await this.writeRegister(this.REG_HAPTIC_CONFIG, data);
+    getHapticModeName(mode) {
+        switch (mode) {
+            case this.HAPTIC_NO_HAPTICS: return 'None';
+            case this.HAPTIC_SMOOTH_WITH_MAGNET_ENDS: return 'Smooth+Ends';
+            case this.HAPTIC_DETENTS: return 'Detents';
+            default: return 'Unknown';
+        }
     }
 }

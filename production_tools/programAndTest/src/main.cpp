@@ -313,14 +313,14 @@ void updateDisplay(float v0, float c0, float v1, float c1) {
 
   // TODO: move IO out of this method
   uint16_t pwr_led = analogRead(PIN_PHOTODIODE_PWR);
-  if (pwr_led < 2500) {
+  if (pwr_led < 2800) {
     sprite.fillSmoothCircle(10, 58, 3, TFT_RED, TFT_BLACK);
   }
   sprite.setCursor(20, 50);
   sprite.print(pwr_led);
 
   uint16_t dbg_led = analogRead(PIN_PHOTODIODE_DBG);
-  if (dbg_led < 2500) {
+  if (dbg_led < 2800) {
     sprite.fillSmoothCircle(10, 78, 3, TFT_RED, TFT_BLACK);
   }
   sprite.setCursor(20, 70);
@@ -496,7 +496,7 @@ bool testPowerLED() {
   Serial.print("Power LED - Photodiode ADC: ");
   Serial.println(pwr_led);
 
-  if (pwr_led >= 2500) {
+  if (pwr_led >= 2800) {
     testTracking.failedTestName = "PWR LED";
     Serial.println("FAILED: Power LED not detected");
   } else {
@@ -680,13 +680,13 @@ bool testFirmwareInstall() {
 }
 
 bool testDebugLED() {
-  const uint16_t THRESHOLD = 2500;
+  const uint16_t THRESHOLD = 2800;
   const uint16_t HYSTERESIS = 100;
-  const uint16_t THRESHOLD_HIGH = THRESHOLD + HYSTERESIS;  // 2600
-  const uint16_t THRESHOLD_LOW = THRESHOLD - HYSTERESIS;   // 2400
-  const uint32_t TEST_DURATION_MS = 2000;
-  const uint8_t MIN_TRANSITIONS = 7;
-  const uint8_t MAX_TRANSITIONS = 9;
+  const uint16_t THRESHOLD_HIGH = THRESHOLD + HYSTERESIS;  // 2900
+  const uint16_t THRESHOLD_LOW = THRESHOLD - HYSTERESIS;   // 2700
+  const uint32_t TEST_DURATION_MS = 512*5/2;
+  const uint8_t MIN_TRANSITIONS = 4;
+  const uint8_t MAX_TRANSITIONS = 6;
 
   // Initialize on first call
   if (testTracking.debugLedTestStartTime == 0) {

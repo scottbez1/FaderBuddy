@@ -32,6 +32,7 @@ HAPTIC_MODES = {
 }
 
 CONF_ON_MANUAL_MOVE = "on_manual_move"
+CONF_ON_RAW_POSITION_UPDATE = "on_raw_position_update"
 CONF_ON_TOUCH_CHANGE = "on_touch_change"
 CONF_ON_DOUBLE_TAP = "on_double_tap"
 CONF_INVERT = "invert"
@@ -55,6 +56,7 @@ CONFIG_SCHEMA = (
     cv.Schema({
         cv.GenerateID(): cv.declare_id(FaderBuddy),
         cv.Optional(CONF_ON_MANUAL_MOVE): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_RAW_POSITION_UPDATE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_DOUBLE_TAP): automation.validate_automation(single=True),
         cv.Optional(CONF_INVERT, default=False): cv.boolean,
@@ -89,6 +91,11 @@ async def to_code(config):
     if CONF_ON_MANUAL_MOVE in config:
         await automation.build_automation(
             var.get_on_manual_move_trigger(), [(cg.uint8, "x"), (cg.uint8, "layer")], config[CONF_ON_MANUAL_MOVE]
+        )
+
+    if CONF_ON_RAW_POSITION_UPDATE in config:
+        await automation.build_automation(
+            var.get_on_raw_position_update_trigger(), [(cg.uint8, "x"), (cg.uint8, "layer")], config[CONF_ON_RAW_POSITION_UPDATE]
         )
 
     if CONF_ON_TOUCH_CHANGE in config:

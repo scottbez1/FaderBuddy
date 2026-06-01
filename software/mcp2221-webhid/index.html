@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FaderBuddy WebHID Demo</title>
     <style>
-        body { font-family: monospace; margin: 20px; max-width: 800px; }
+        body { font-family: monospace; margin: 20px; max-width: 900px; }
         .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
         .status { padding: 5px; margin: 5px 0; }
         .connected { background: #d4edda; }
@@ -17,6 +17,17 @@
         .info-row { display: flex; justify-content: space-between; margin: 5px 0; align-items: center; }
         .info-label { font-weight: bold; }
         .info-row span:last-child { display: inline-block; min-width: 30px; text-align: right; }
+
+        /* Layer table styles */
+        .layer-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .layer-table th, .layer-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        .layer-table th { background: #f0f0f0; }
+        .layer-table tr.active-layer { background: #d4edda; }
+        .layer-table select, .layer-table input { width: 70px; }
+        .layer-table button { margin: 0; padding: 4px 8px; }
+        .layer-table .activate-btn { background: #007bff; color: white; border: none; }
+        .layer-table .activate-btn:hover { background: #0056b3; }
+        .layer-table .activate-btn:disabled { background: #6c757d; cursor: default; }
     </style>
 </head>
 <body>
@@ -44,10 +55,10 @@
         </div>
         <div class="info-row">
             <span class="info-label">Target Position:</span>
-            <input type="range" id="targetSlider" min="0" max="255" value="128" disabled>
+            <input type="range" id="targetSlider" class="requires-connection" min="0" max="255" value="128" disabled>
             <span id="targetValue">128</span>
         </div>
-        <button id="setTargetBtn" disabled>Set Target</button>
+        <button id="setTargetBtn" class="requires-connection" disabled>Set Target (Active Layer)</button>
     </div>
 
     <!-- Status Section -->
@@ -62,12 +73,12 @@
             <span id="touchStatus">--</span>
         </div>
         <div class="info-row">
-            <span class="info-label">Position Nonce:</span>
-            <span id="posNonce">--</span>
+            <span class="info-label">Active Layer:</span>
+            <span id="activeLayer">--</span>
         </div>
         <div class="info-row">
-            <span class="info-label">Single Tap Nonce:</span>
-            <span id="singleTapNonce">--</span>
+            <span class="info-label">Position Nonce:</span>
+            <span id="posNonce">--</span>
         </div>
         <div class="info-row">
             <span class="info-label">Double Tap Nonce:</span>
@@ -85,6 +96,27 @@
             <span class="info-label">Protocol Version:</span>
             <span id="version">--</span>
         </div>
+    </div>
+
+    <!-- Layer Management Section -->
+    <div class="section">
+        <h2>Layer Management</h2>
+        <p>Configure haptic feedback for each layer. Changes are applied automatically.</p>
+        <button id="refreshLayersBtn" class="requires-connection" disabled>Refresh All Layers</button>
+        <table class="layer-table">
+            <thead>
+                <tr>
+                    <th>Layer</th>
+                    <th>Haptic Mode</th>
+                    <th>Detents</th>
+                    <th>Strength</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="layerTableBody">
+                <!-- Populated by JavaScript -->
+            </tbody>
+        </table>
     </div>
 
     <!-- Touch Diagnostics Section -->
@@ -106,32 +138,14 @@
             <span class="info-label">Touch Recal Count:</span>
             <span id="touchRecal">--</span>
         </div>
-        <button id="calTouchBtn" disabled>Calibrate Touch</button>
+        <button id="calTouchBtn" class="requires-connection" disabled>Calibrate Touch</button>
     </div>
 
     <!-- Control Section -->
     <div class="section">
         <h2>Control</h2>
-        <button id="clearErrorBtn" disabled>Clear Error</button>
-        <button id="selfCalBtn" disabled>Self Calibration</button>
-    </div>
-
-    <!-- Haptic Control Section -->
-    <div class="section">
-        <h2>Haptic Control</h2>
-        <div class="info-row">
-            <span class="info-label">Haptic Strength:</span>
-            <input type="range" id="hapticStrengthSlider" min="0" max="7" value="7" disabled>
-            <span id="hapticStrengthValue">7</span>
-        </div>
-        <button id="hapticNoHapticsBtn" disabled>No Haptics (pos=127)</button>
-        <button id="hapticSmoothBtn" disabled>Smooth + Magnet Ends (pos=20)</button>
-        <div class="info-row">
-            <span class="info-label">Detent Count:</span>
-            <input type="range" id="detentCountSlider" min="1" max="10" value="1" disabled>
-            <span id="detentCountValue">1</span>
-        </div>
-        <button id="hapticDetentsBtn" disabled>Set Detents (pos=127)</button>
+        <button id="clearErrorBtn" class="requires-connection" disabled>Clear Error</button>
+        <button id="selfCalBtn" class="requires-connection" disabled>Self Calibration</button>
     </div>
 
     <!-- Log Section -->

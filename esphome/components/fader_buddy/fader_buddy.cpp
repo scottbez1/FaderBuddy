@@ -146,9 +146,13 @@ bool FaderBuddy::read_sensor_data_() {
       position_nonce != layer_states_[active_layer].last_position_nonce) {
     layer_states_[active_layer].last_hw_position = hw_position;
     layer_states_[active_layer].last_position_nonce = position_nonce;
+
+    // Fire raw position update immediately, regardless of mode or rate limiting
+    uint8_t user_position = invert_ ? (255 - hw_position) : hw_position;
+    on_raw_position_update_->trigger(user_position, active_layer);
+
     if (mode == MODE_INPUT_ACTIVE || mode == MODE_INPUT_IDLE) {
       // Convert HARDWARE position to USER-FACING position
-      uint8_t user_position = invert_ ? (255 - hw_position) : hw_position;
       layer_states_[active_layer].deferred_value = user_position;
       layer_states_[active_layer].has_deferred_value = true;
     }

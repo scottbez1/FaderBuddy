@@ -18,9 +18,8 @@ import { I2CBusMCP2221 } from '@johntalton/i2c-bus-mcp2221';
 import { FaderBuddy } from './faderBuddy.js';
 
 // UI State
-let chip = null;
 let fader = null;
-let hapticNonce = 1;  // Start at 1, increment each time a config is sent
+let currentActiveLayer = 0;
 
 // I2C bus mutex for serializing operations
 let i2cBusy = false;
@@ -80,6 +79,18 @@ function log(message) {
     logDiv.scrollTop = logDiv.scrollHeight;
 }
 
+/**
+ * Enable or disable all elements that require a connection
+ */
+function setConnectionControlsEnabled(enabled) {
+    document.querySelectorAll('.requires-connection').forEach(el => {
+        el.disabled = !enabled;
+    });
+    if (enabled) {
+        updateLayerTableHighlight();
+    }
+}
+
 // Update UI with state
 function updateUI(state) {
     if (!state) return;
@@ -88,11 +99,119 @@ function updateUI(state) {
     document.getElementById('currentPositionSlider').value = state.position;
     document.getElementById('mode').textContent = MODE_NAMES[state.mode] || 'UNKNOWN';
     document.getElementById('touchStatus').textContent = state.touchDetected ? 'YES' : 'NO';
+    document.getElementById('activeLayer').textContent = state.activeLayer;
     document.getElementById('posNonce').textContent = state.positionNonce;
-    document.getElementById('singleTapNonce').textContent = state.singleTapNonce;
     document.getElementById('doubleTapNonce').textContent = state.doubleTapNonce;
     document.getElementById('rawAdc').textContent = state.rawAdc;
+
+    // Update active layer highlighting in table
+    if (state.activeLayer !== currentActiveLayer) {
+        currentActiveLayer = state.activeLayer;
+        updateLayerTableHighlight();
+    }
 }
+
+/**
+ * Update the active layer highlighting in the table
+ */
+function updateLayerTableHighlight() {
+    const rows = document.querySelectorAll('#layerTableBody tr');
+    rows.forEach((row, index) => {
+        if (index === currentActiveLayer) {
+            row.classList.add('active-layer');
+            row.querySelector('.activate-btn').disabled = true;
+        } else {
+            row.classList.remove('active-layer');
+            row.querySelector('.activate-btn').disabled = false;
+        }
+    });
+}
+
+/**
+ * Create the layer table rows
+ */
+function createLayerTable() {
+    const tbody = document.getElementById('layerTableBody');
+    tbody.innerHTML = '';
+
+    for (let i = 0; i < 8; i++) {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${i}</td>
+            <td>
+                <select id="layerMode${i}" class="requires-connection" disabled>
+                    <option value="0">None</option>
+                    <option value="1">Smooth+Ends</option>
+                    <option value="2">Detents</option>
+                </select>
+            </td>
+            <td>
+                <input type="number" id="layerDetents${i}" class="requires-connection" min="0" max="15" value="0" disabled>
+            </td>
+            <td>
+                <input type="number" id="layerStrength${i}" class="requires-connection" min="0" max="7" value="7" disabled>
+            </td>
+            <td>
+                <button class="activate-btn requires-connection" id="activateLayer${i}" disabled>Activate</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+
+        // Add event listeners for auto-apply on change
+        const modeSelect = row.querySelector(`#layerMode${i}`);
+        const detentsInput = row.querySelector(`#layerDetents${i}`);
+        const strengthInput = row.querySelector(`#layerStrength${i}`);
+        const activateBtn = row.querySelector(`#activateLayer${i}`);
+
+        const layerIndex = i;
+
+        modeSelect.addEventListener('change', () => applyLayerConfig(layerIndex));
+        detentsInput.addEventListener('change', () => applyLayerConfig(layerIndex));
+        strengthInput.addEventListener('change', () => applyLayerConfig(layerIndex));
+
+        activateBtn.addEventListener('click', async () => {
+            await runWithI2cBus(async () => {
+                await fader.setActiveLayer(layerIndex);
+                log(`Activated layer ${layerIndex}`);
+            });
+        });
+    }
+}
+
+/**
+ * Apply haptic config for a specific layer
+ */
+async function applyLayerConfig(layer) {
+    if (!fader) return;
+
+    const mode = parseInt(document.getElementById(`layerMode${layer}`).value);
+    const detentCount = parseInt(document.getElementById(`layerDetents${layer}`).value);
+    const detentStrength = parseInt(document.getElementById(`layerStrength${layer}`).value);
+
+    await runWithI2cBus(async () => {
+        await fader.setLayerHapticConfig(layer, mode, detentCount, detentStrength);
+        log(`Layer ${layer}: mode=${fader.getHapticModeName(mode)}, detents=${detentCount}, strength=${detentStrength}`);
+    });
+}
+
+/**
+ * Read and populate all layer configurations
+ */
+async function refreshAllLayers() {
+    if (!fader) return;
+
+    await runWithI2cBus(async () => {
+        for (let i = 0; i < 8; i++) {
+            const config = await fader.readLayerHapticConfig(i);
+
+            document.getElementById(`layerMode${i}`).value = config.mode;
+            document.getElementById(`layerDetents${i}`).value = config.detentCount;
+            document.getElementById(`layerStrength${i}`).value = config.detentStrength;
+        }
+        log('Refreshed all layer configurations');
+    });
+}
+
 
 // Polling function with serialized I2C operations
 let pollCounter = 0;
@@ -137,6 +256,9 @@ async function poll() {
 
 // Store device reference for cleanup
 let hidDevice = null;
+
+// Initialize layer table on page load
+createLayerTable();
 
 // Connect button
 document.getElementById('connectBtn').addEventListener('click', async () => {
@@ -217,18 +339,12 @@ document.getElementById('connectBtn').addEventListener('click', async () => {
         // Enable UI
         document.getElementById('connectBtn').disabled = true;
         document.getElementById('disconnectBtn').disabled = false;
-        document.getElementById('targetSlider').disabled = false;
-        document.getElementById('setTargetBtn').disabled = false;
-        document.getElementById('calTouchBtn').disabled = false;
-        document.getElementById('clearErrorBtn').disabled = false;
-        document.getElementById('selfCalBtn').disabled = false;
-        document.getElementById('hapticStrengthSlider').disabled = false;
-        document.getElementById('hapticNoHapticsBtn').disabled = false;
-        document.getElementById('hapticSmoothBtn').disabled = false;
-        document.getElementById('detentCountSlider').disabled = false;
-        document.getElementById('hapticDetentsBtn').disabled = false;
         document.getElementById('connectionStatus').textContent = 'Connected';
         document.getElementById('connectionStatus').className = 'status connected';
+        setConnectionControlsEnabled(true);
+
+        // Refresh layer data
+        await refreshAllLayers();
 
         // Start polling (will reschedule itself after each completion)
         poll();
@@ -252,22 +368,12 @@ document.getElementById('disconnectBtn').addEventListener('click', async () => {
         await hidDevice.close();
     }
     hidDevice = null;
-    chip = null;
 
     document.getElementById('connectBtn').disabled = false;
     document.getElementById('disconnectBtn').disabled = true;
-    document.getElementById('targetSlider').disabled = true;
-    document.getElementById('setTargetBtn').disabled = true;
-    document.getElementById('calTouchBtn').disabled = true;
-    document.getElementById('clearErrorBtn').disabled = true;
-    document.getElementById('selfCalBtn').disabled = true;
-    document.getElementById('hapticStrengthSlider').disabled = true;
-    document.getElementById('hapticNoHapticsBtn').disabled = true;
-    document.getElementById('hapticSmoothBtn').disabled = true;
-    document.getElementById('detentCountSlider').disabled = true;
-    document.getElementById('hapticDetentsBtn').disabled = true;
     document.getElementById('connectionStatus').textContent = 'Not connected';
     document.getElementById('connectionStatus').className = 'status disconnected';
+    setConnectionControlsEnabled(false);
 
     log('Disconnected');
 });
@@ -277,22 +383,12 @@ document.getElementById('targetSlider').addEventListener('input', (e) => {
     document.getElementById('targetValue').textContent = e.target.value;
 });
 
-// Detent count slider
-document.getElementById('detentCountSlider').addEventListener('input', (e) => {
-    document.getElementById('detentCountValue').textContent = e.target.value;
-});
-
-// Haptic strength slider
-document.getElementById('hapticStrengthSlider').addEventListener('input', (e) => {
-    document.getElementById('hapticStrengthValue').textContent = e.target.value;
-});
-
 // Set target button
 document.getElementById('setTargetBtn').addEventListener('click', async () => {
     const target = parseInt(document.getElementById('targetSlider').value);
     await runWithI2cBus(async () => {
-        await fader.setTarget(target);
-        log(`Set target position to ${target}`);
+        await fader.setLayerTarget(currentActiveLayer, target);
+        log(`Set target position to ${target} on layer ${currentActiveLayer}`);
     });
 });
 
@@ -320,60 +416,14 @@ document.getElementById('selfCalBtn').addEventListener('click', async () => {
     });
 });
 
+// Refresh layers button
+document.getElementById('refreshLayersBtn').addEventListener('click', async () => {
+    await refreshAllLayers();
+});
+
 // Clear log button
 document.getElementById('clearLogBtn').addEventListener('click', () => {
     document.getElementById('log').innerHTML = '';
-});
-
-// Haptic button 1: NO_HAPTICS with target=127
-document.getElementById('hapticNoHapticsBtn').addEventListener('click', async () => {
-    const nonce = hapticNonce;
-    const mode = fader.HAPTIC_NO_HAPTICS;
-    const detentCount = 0;
-    const detentStrength = parseInt(document.getElementById('hapticStrengthSlider').value);
-    const targetPosition = 127;
-
-    await runWithI2cBus(async () => {
-        await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
-        log(`Set haptic config: NO_HAPTICS, target=${targetPosition}, nonce=${nonce}`);
-    });
-
-    // Increment nonce for next config (wrap at 4 since it's 2 bits)
-    hapticNonce = (hapticNonce + 1) & 0x03;
-});
-
-// Haptic button 2: SMOOTH_WITH_MAGNET_ENDS with target=20
-document.getElementById('hapticSmoothBtn').addEventListener('click', async () => {
-    const nonce = hapticNonce;
-    const mode = fader.HAPTIC_SMOOTH_WITH_MAGNET_ENDS;
-    const detentCount = 0;
-    const detentStrength = parseInt(document.getElementById('hapticStrengthSlider').value);
-    const targetPosition = 20;
-
-    await runWithI2cBus(async () => {
-        await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
-        log(`Set haptic config: SMOOTH_WITH_MAGNET_ENDS, strength=${detentStrength}, target=${targetPosition}, nonce=${nonce}`);
-    });
-
-    // Increment nonce for next config (wrap at 4 since it's 2 bits)
-    hapticNonce = (hapticNonce + 1) & 0x03;
-});
-
-// Haptic button 3: DETENTS with configurable detent count, target=127
-document.getElementById('hapticDetentsBtn').addEventListener('click', async () => {
-    const nonce = hapticNonce;
-    const mode = fader.HAPTIC_DETENTS;
-    const detentCount = parseInt(document.getElementById('detentCountSlider').value);
-    const detentStrength = parseInt(document.getElementById('hapticStrengthSlider').value);
-    const targetPosition = 127;
-
-    await runWithI2cBus(async () => {
-        await fader.setHapticConfig(nonce, mode, detentCount, detentStrength, targetPosition);
-        log(`Set haptic config: DETENTS, count=${detentCount}, strength=${detentStrength}, target=${targetPosition}, nonce=${nonce}`);
-    });
-
-    // Increment nonce for next config (wrap at 4 since it's 2 bits)
-    hapticNonce = (hapticNonce + 1) & 0x03;
 });
 
 log('FaderBuddy WebHID Demo loaded. Click "Connect MCP2221" to begin.');

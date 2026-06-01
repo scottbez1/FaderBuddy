@@ -95,8 +95,8 @@ class TestHost:
         # Dummy mode: simulate upload without actually running it
         if self.dummy:
             import time
-            logging.info("DUMMY MODE: Simulating firmware upload (1 second delay)")
-            time.sleep(1)
+            logging.info("DUMMY MODE: Simulating firmware upload (4 second delay)")
+            time.sleep(4)
             logging.info("DUMMY MODE: Simulated upload complete - SUCCESS")
             return True
 
