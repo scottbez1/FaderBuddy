@@ -1,36 +1,26 @@
 # FaderBuddy
 
-The FaderBuddy is a modular control board for 60mm motorized linear potentiometers, making it dead simple to add
-one (or many) to a project with just 2 pins for I2C!
+The FaderBuddy is a modular control board for 60mm motorized linear potentiometers, making it simple to add
+one (or many) to a project with just 2 pins for I2C, plus power!
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_perspective.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_perspective.png" width="300" />
-</a>
+<img width="1280" height="853" alt="DSC_8984 Large" src="https://github.com/user-attachments/assets/39dabaeb-cac1-4e82-bb37-1bf00556f87f" />
 
-![motor_fader_demo_tiny](https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a)
 
 The control board allows you to **read** the fader position, **move** the fader to a specified position, and it can even provide **haptic feedback** and virtual detents (kind of like a linear version of my [SmartKnob](https://github.com/scottbez1/smartknob) project), all easily controlled over an I2C bus from a host controller like an ESP32.
 
 An [ESPHome component](ABOUT_ESPHOME_INTEGRATION.md) allows
 FaderBuddy assemblies to be seamlessly integrated into Home Assistant with just a few lines of yaml! 
 
-Multiple FaderBuddy boards can be wired together and share just 2 I2C pins. With right-angle pin headers, you can plug adjacent FaderBuddy boards into
-each other without any wires for an easy plug-and-play expandable system (supports 18mm or 19mm spacing between faders).
-STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
-
-
-<img width="400" alt="FaderBuddy wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
-
-
 The onboard ATtiny1616 microcontroller handles all the real-time logic (closed-loop motor control and capacitive
 touch handling) and provides a simple I2C bus interface - no need to wire a motor driver/H-bridge or implement a PID control loop for each motor fader yourself.
 
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_top.png" width="300" />
-</a>
-<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png">
-    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png" width="300" />
-</a>
+Multiple FaderBuddy boards can be wired together and share just two I2C pins. With right-angle pin headers, you can plug adjacent FaderBuddy boards into
+each other without any wires for an easy plug-and-play expandable system (supports 18mm or 19mm spacing between faders).
+STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
+
+<img alt="motor fader demo tiny" height="427" src="https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a" />
+
+Learn more about the project and how to build your own below, or purchase a FaderBuddy from the [Bezek Labs Etsy store](https://bezeklabs.etsy.com/listing/4506790932/) (US-only)!
 
 ---
 
@@ -40,6 +30,8 @@ Want to help support development or just say "thanks"? Consider a one-time or mo
 |---|
 
 **Using this project in a commercial setting or for paid client work?** Go right ahead - it's open source (just make sure to follow the terms of the Apache License including attribution)! I would, however, ask that you consider [sponsoring the project](https://github.com/sponsors/scottbez1). Sponsorships allow me to pay for prototypes and development tools that make this project possible. Unlike pure software projects, every iteration has real hardware costs; sponsorships allow me to keep iterating and improving this and other projects faster. Thank you!
+
+---
 
 ## ESPHome Integration
 
@@ -89,6 +81,9 @@ See [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) for setup instr
 
 ### 3.3v MCU direct wired, direct chaining
 Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to FaderBuddy. 5v powers the motor and 3.3v powers the logic.
+
+<img width="600" alt="FaderBuddy wiring" align="right" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
+
 | HOST | FaderBuddy |
 | --- | ---------- |
 | 5v  | Vmot |
@@ -96,27 +91,40 @@ Most common wiring for 3.3v microcontrollers like ESP32: 5 wires from host to Fa
 | GND | GND |
 | SDA | SDA |
 | SCL | SCL |
-<img width="1028" height="548" alt="FaderBuddy wiring" src="https://github.com/user-attachments/assets/765cf2e1-b493-44a8-8eeb-e8a84db60d3c" />
+
+<br clear="right" />
 
 ### 3.3v MCU STEMMA QT
 For a microcontroller with a STEMMA QT connector, the FaderBuddy requires an additional 5v wire to power the motor. Additional faders can be chained directly using the pin headers with no extra wires.
+
+<img width="600" alt="FaderBuddy wiring(2)" align="right" src="https://github.com/user-attachments/assets/760fd565-01b0-48c2-9add-047ffbaf16b8" />
+
 | HOST | FaderBuddy |
 | --- | ---------- |
 | STEMMA QT | STEMMA QT |
 | 5v  | Vmot |
-<img width="1366" height="946" alt="FaderBuddy wiring(2)" src="https://github.com/user-attachments/assets/760fd565-01b0-48c2-9add-047ffbaf16b8" />
 
+<br clear="right" />
+<br />
+<img width="600" alt="FaderBuddy wiring(1)" align="right" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
 Alternatively, FaderBuddy boards can be chained using STEMMA QT cables, but an additional 5v wire is also required between each board in that case.
-<img width="1554" height="724" alt="FaderBuddy wiring(1)" src="https://github.com/user-attachments/assets/f2c44eea-cfc9-4fe5-9796-83bf9db8263c" />
+<br clear="right" />
 
 ### 5v STEMMA QT
 If you have a device that has 5v IO and a 5v STEMMA QT connector (e.g. MCP2221 with the solder jumper bridged to set 5v IO)
+
+<img width="600" alt="FaderBuddy wiring(4)" align="right" src="https://github.com/user-attachments/assets/ef7156ee-8c56-41c3-901f-95f443d2d1f1" />
+
 | HOST | FaderBuddy |
 | --- | ---------- |
 | STEMMA QT | STEMMA QT |
-<img width="1508" height="726" alt="FaderBuddy wiring(4)" src="https://github.com/user-attachments/assets/ef7156ee-8c56-41c3-901f-95f443d2d1f1" />
 
-(Attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
+You must also bridge the V<sub>MOT</sub> ↔ V<sub>IO</sub> solder bridge on _each_ FaderBuddy so that the 5v IO can be shared with the motor driver.
+
+_Be careful when using these solder bridges - if you leave this connection bridged and then later use the FaderBuddy in a 3.3v IO setting, the bridge will connect the 5v V<sub>MOT</sub> supply to your host 3.3v IO supply which may damage other connected devices!_
+
+<br clear="right" />
+(Board images attribution: ESP32-C3 supermini image from StudioPieters, MIT Licensed; Adafruit Qt Py and Adafruit MCP2221 images from Adafruit, Creative Commons Attribution/Share-Alike)
 
 ### Setting I2C Address
 By default the FaderBuddy will use I2C address `0x20`.
