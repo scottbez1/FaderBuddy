@@ -20,7 +20,7 @@ STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to 
 
 <img alt="motor fader demo tiny" height="427" src="https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a" />
 
-Learn more about the project and how to build your own below, or purchase a FaderBuddy from the [Bezek Labs Etsy store](https://bezeklabs.etsy.com/listing/4506790932/) (US-only)!
+Learn more about the project and how to build your own below, or purchase a FaderBuddy from the [Bezek Labs Etsy store](https://bezeklabs.etsy.com/listing/4506790932/) (US-only).
 
 ---
 
@@ -43,6 +43,9 @@ The FaderBuddy integrates seamlessly with [ESPHome](https://esphome.io/) for Hom
 
 A simple example looks like:
 ```yaml
+external_components:
+  - source: github://scottbez1/FaderBuddy
+
 fader_buddy:
   - id: my_fader
     on_manual_move:

@@ -111,23 +111,6 @@ fader_buddy:
             ESP_LOGD("fader", "Fader moved to %d on layer %d", x, layer);
 ```
 
-#### on_raw_position_update
-
-Fires on every position change detected by the hardware, regardless of the current mode and without any rate limiting. This includes position changes during remote motor movements (`MODE_REMOTE_MOVEMENT_IN_PROGRESS`), not just user-initiated moves. Provides the current position (0-255, after applying `invert`) and active layer index.
-
-For most use cases, prefer `on_manual_move`. Use `on_raw_position_update` only when you specifically need to track the fader's physical position at all times — for example, to update a display that should reflect position even while the motor is actively moving.
-
-```yaml
-fader_buddy:
-  - id: my_fader
-    on_raw_position_update:
-      then:
-        - lambda: |-
-            // x = position (0-255)
-            // layer = active layer (0-7)
-            ESP_LOGD("fader", "Raw position: %d on layer %d", x, layer);
-```
-
 #### on_touch_change
 
 Fires when the user touches or releases the fader. Provides touch state (true/false) and active layer index.
@@ -157,6 +140,22 @@ fader_buddy:
             ESP_LOGD("fader", "Double tap on layer %d", layer);
 ```
 
+#### on_raw_position_update
+
+_Not recommended for general use!_ Fires on every position change detected by the hardware, regardless of the current mode and without any rate limiting. This includes position changes during remote motor movements (`MODE_REMOTE_MOVEMENT_IN_PROGRESS`), not just user-initiated moves. Provides the current position (0-255, after applying `invert`) and active layer index.
+
+For most use cases, prefer `on_manual_move`. Use `on_raw_position_update` only when you specifically need to track the fader's physical position at all times — for example, to update a display that should reflect position even while the motor is actively moving.
+
+```yaml
+fader_buddy:
+  - id: my_fader
+    on_raw_position_update:
+      then:
+        - lambda: |-
+            // x = position (0-255)
+            // layer = active layer (0-7)
+            ESP_LOGD("fader", "Raw position: %d on layer %d", x, layer);
+```
 ## Actions
 
 ### fader_buddy.remote_move_to
