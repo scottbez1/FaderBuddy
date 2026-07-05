@@ -214,6 +214,7 @@ This README covers the basics, but there are a number of additional pages with m
 - **[ABOUT_MF60T_LOW_PROFILE_MOD.md](ABOUT_MF60T_LOW_PROFILE_MOD.md)** - Optional instructions for modifying the MF60T faders so they can fit in smaller areas
 - **[ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md)** - How to order and assemble your own FaderBuddy boards directly
 - **[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)** - How to upload firmware to the FaderBuddy microcontroller using UPDI
+- **[ABOUT_I2C_BOOTLOADER.md](ABOUT_I2C_BOOTLOADER.md)** - Design proposal for firmware updates over I2C (no UPDI programmer) via a custom bootloader
 
 ### Project Structure
 ```
