@@ -7,7 +7,7 @@
 > datasheet section numbers below should be re-confirmed against the
 > *ATtiny1614/16/17 Data Sheet (DS40002204A)* before writing code — the specific
 > spots to check are called out inline and collected in
-> [§11 Open questions](#11-risks--open-questions).
+> [§13 Open questions](#13-risks--open-questions).
 
 ## 1. Goal & constraints
 
@@ -48,9 +48,11 @@ slave** instead of a UART.
 
 Every board needs a **single UPDI flash** to install (a) the bootloader, (b) the
 boot-section fuses, and (c) an application built to run at the post-boot offset
-and aware of the "enter bootloader" command. After that one bootstrap, all future
-updates are I2C-only. UPDI remains the bring-up path for blank chips and the
-recovery path of last resort.
+and aware of the "enter bootloader" command. A dedicated **combined PlatformIO
+environment** (see [§8](#8-toolchain--build-integration-staying-in-platformio))
+bundles all three into one upload so this bootstrap is a single action. After that,
+all future updates are I2C-only. UPDI remains the bring-up path for blank chips and
+the recovery path of last resort.
 
 ## 2. Two reference inputs (what ported, what didn't)
 
@@ -228,37 +230,58 @@ before `RUN_APP` catches anything missed and prevents jumping into a bad image.
 
 **Known limitation:** PlatformIO's megaTinyCore integration does **not** natively
 support "build for a bootloader" or "upload via a bootloader." So we structure it
-ourselves — still entirely within PlatformIO:
+ourselves — still entirely within PlatformIO, as **three environments**:
 
-- **Bootloader build** — a **second PlatformIO env** with its own minimal source
-  (NVMCTRL + polled TWI0 + CRC16, no Arduino framework, or a very thin one). It is
-  linked into the boot section and produced as a hex that is flashed **once via
-  UPDI** together with the fuses. Bootloader size determines the final `BOOTEND`.
-- **Application build** — the existing `[env:fader_buddy]`, but built to run at the
-  boot offset: link `.text` starting at `BOOTEND * 256`, place the vector table at
-  the application start, and set `CPUINT.CTRLA.IVSEL` in startup. The cleanest
-  route is to **reuse megaTinyCore's existing Optiboot offset machinery** (it
-  already does precisely this for Arduino IDE "Upload Using Programmer" +
-  bootloader builds). If that isn't directly reachable from PlatformIO, achieve
-  the same with `-Wl,--section-start=.text=<offset>` (plus vector placement) and an
-  `extra_scripts` hook — the project already uses `extra_scripts` for
-  `firmware/tools/install_pyupdi.py`, so there is a precedent. **The exact
-  megaTinyCore knobs must be confirmed against the installed core version.**
-- **Fuses** — set `BOOTEND` / `APPEND` at UPDI install time via `pyupdi` (or
-  `pymcuprog`); the fuse-setting step joins the existing UPDI upload flow.
-- **One-time bootstrap** — the first flash (bootloader + fuses + offset app) is
-  over UPDI, i.e. the current [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)
-  procedure with two extra artifacts. Document it as unchanged for board bring-up
-  and as the recovery path if an I2C update is ever interrupted.
+- **`[env:bootloader]`** — the bootloader's own minimal source (NVMCTRL + polled
+  TWI0 + CRC16, no Arduino framework, or a very thin one), linked into the boot
+  section and emitted as a hex. Its measured size sets the final `BOOTEND`.
+- **`[env:fader_buddy]`** (the existing app env, now built at the boot offset) —
+  link `.text` starting at `BOOTEND * 256`, place the vector table at the
+  application start, and set `CPUINT.CTRLA.IVSEL` in startup. The cleanest route is
+  to **reuse megaTinyCore's existing Optiboot offset machinery** (it already does
+  precisely this for Arduino IDE bootloader builds). If that isn't directly
+  reachable from PlatformIO, achieve the same with `-Wl,--section-start=.text=<offset>`
+  (plus vector placement) and an `extra_scripts` hook — the project already uses
+  `extra_scripts` for `firmware/tools/install_pyupdi.py`, so there is precedent.
+  **The exact megaTinyCore knobs must be confirmed against the installed core
+  version.** This env is *also* the **day-to-day dev-iteration path**: once the
+  bootloader is installed it persists, so a developer re-flashes only the app over
+  UPDI without touching the bootloader.
+- **`[env:fader_buddy_factory]`** (new — the combined first-flash) — see below.
+
+### Do you need two uploads the first time? No — provide a combined env.
+
+Logically there are **three artifacts** (fuses, bootloader hex, offset-app hex),
+but you should not have to do multiple manual uploads to bring up a blank chip. The
+`fader_buddy_factory` env packages them into **one action**:
+
+1. An `extra_scripts` **post-build merge** combines the bootloader hex and the
+   offset-app hex into a single Intel-hex. The two regions never overlap (bootloader
+   at `0x0000`, app at `BOOTEND * 256`), so this is a straightforward merge with
+   `srec_cat`, `avr-objcopy`, or the `intelhex` Python package.
+2. A single `upload_command` writes the merged hex **and sets the `BOOTEND` /
+   `APPEND` fuses** in one UPDI invocation. Recommend **`pymcuprog`** here — it has
+   better fuse-writing support than `pyupdi`, and `firmware/tools/install_pymcuprog.py`
+   already exists in the tree (currently unused); wire it into this env's
+   `extra_scripts` exactly as `install_pyupdi.py` is wired into the app env today.
+
+So the first-time flow becomes: *pick the `fader_buddy_factory` env → Upload* — one
+step, over UPDI, exactly the [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)
+physical setup (UPDI Friend on the three pads). That same combined upload is also the
+**recovery path** if a board's application is ever left invalid. After the one-time
+factory flash, everything is I2C.
 
 ## 9. Application-side changes (specified, not implemented)
 
 To let the host *ask* a running fader to drop into the bootloader:
 
-- **Protocol** — add a new register in the free `0x10+` space of
-  [`firmware/src/shared/i2c_data.h`](firmware/src/shared/i2c_data.h), e.g.
-  `REG_ENTER_BOOTLOADER`, that takes a **magic payload** (so a stray write can't
-  trigger it), and **bump `I2C_PROTOCOL_VERSION`**.
+- **Protocol** — add new registers in the free `0x10+` space of
+  [`firmware/src/shared/i2c_data.h`](firmware/src/shared/i2c_data.h):
+  `REG_ENTER_BOOTLOADER` (takes a **magic payload** so a stray write can't trigger
+  it) and `REG_FW_VERSION` (the application build/semantic version — see
+  [§11](#11-version-identity--no-application-detection)). **Bump
+  `I2C_PROTOCOL_VERSION`**, which also serves as the host's "this firmware supports
+  bootloader entry" capability signal.
   > ⚠️ Per [CLAUDE.md](CLAUDE.md), `i2c_data.h` is **hand-synced across four
   > copies**: the firmware source, `esphome/components/fader_buddy/i2c_data.h`,
   > the production-jig header, and the WebHID JS constants. All four must be
@@ -306,7 +329,142 @@ impossible.
   reference's `wdt_enable(WDTO_8S)`), so a stalled/abandoned update auto-recovers
   to the application instead of hanging on the shared bus.
 
-## 11. Risks & open questions
+## 11. Version identity & "no application" detection
+
+The host needs to reliably tell three states apart on the bus: **app running**,
+**bootloader resident (no usable app)**, and **device absent/wedged** — and it needs
+a version to compare against for update decisions. Two complementary pieces:
+
+### `REG_VERSION` (0x00) as a mode/identity read
+
+Reading register `0x00` becomes the universal "who are you" probe:
+
+| Response at `0x00`         | Meaning                                        |
+|----------------------------|------------------------------------------------|
+| A valid protocol version (≥5) | Application is running normally              |
+| A reserved **bootloader marker** (e.g. `0xB0`) | Bootloader is resident — no usable app |
+| NAK / no response          | Device absent, unpowered, or bus wedged        |
+
+The marker is chosen to be outside any valid protocol version and `≠ 0xFF`. This
+reuses the read the ESPHome component already does in `setup()`
+(`esphome/components/fader_buddy/fader_buddy.cpp`) — today it `mark_failed()`s on a
+version mismatch; extend it to recognize the marker and treat the device as
+**"needs firmware"** rather than simply broken.
+
+### `REG_FW_VERSION` — the application version to compare
+
+`REG_VERSION` is the *protocol/compatibility* version; it is not granular enough to
+drive updates. Add a separate app-only **`REG_FW_VERSION`** (build number or
+semantic version, in the free `0x10+` space) that the host compares against the
+version it has packaged (see [§12](#12-host-side-firmware-packaging--update-policy-esphome))
+to decide whether an update is needed.
+
+### How "no app" arises, and how the bootloader guarantees the marker shows
+
+A board can end up bootloader-only in two ways: a bootloader flashed without an app,
+or a **failed/partial application update** (e.g. power lost mid-write — recall
+[§10](#10-bootloader-entry-mechanism-no-power-cycle-available) has no atomic A/B
+image). The bootloader must never jump into a blank or half-written app, so on every
+boot it runs an **application-validity self-check**:
+
+- **Minimum:** the application's reset vector at `BOOTEND * 256` is not blank
+  (`!= 0xFFFF`; erased flash reads `0xFF`).
+- **Robust:** a **CRC footer** embedded in the app image at a fixed
+  linker-placed location (end of APPCODE) storing the image length + CRC16; the
+  bootloader recomputes the CRC over the app region and compares. This catches
+  partial writes, not just a blank chip, and reuses the same CRC16 the
+  `GET_VERSION_CRC16` command uses for post-write verification.
+
+If the check fails, the bootloader **stays resident** and keeps answering `0x00`
+with the marker — which is exactly the state the host detects. No valid app is ever
+executed, and the device advertises that it needs one.
+
+### Pre-bootloader firmware (migration)
+
+Boards still running the current, pre-bootloader firmware answer `0x00` with a
+normal protocol version but have **no bootloader** behind them. The host must not
+send them `REG_ENTER_BOOTLOADER` expecting an I2C update. It distinguishes them by
+the bumped `I2C_PROTOCOL_VERSION` (the capability signal from
+[§9](#9-application-side-changes-specified-not-implemented)): a version below the
+bootloader-aware threshold means "UPDI migration required, one time." This is the
+only remaining case that still needs a physical programmer.
+
+## 12. Host-side firmware packaging & update policy (ESPHome)
+
+Yes — the ESP32 host can carry the fader firmware and drive updates. This describes
+how the ESPHome component (`esphome/components/fader_buddy/`) would gain that, still
+as a design (not implemented here).
+
+### What gets packaged
+
+Only the **application** is written over I2C. The bootloader is deliberately **not
+field-updatable** (it is write-protected from the app per [§4](#4-boot-section-integrity-write-protection),
+and it cannot safely rewrite itself while running) — so bootloader changes always
+require UPDI, and keeping it small and stable is a feature, not a limitation. The
+packaged blob is therefore the **offset application image** (the exact APPCODE
+bytes), plus its `REG_FW_VERSION`.
+
+### Embedding the blob (codegen)
+
+The component's `__init__.py` `to_code()` emits the image as a
+`const uint8_t[] PROGMEM` array plus a version constant. Because the component is
+`MULTI_CONF = True` (many faders, all running the same firmware), emit the blob
+**once** — guard it with a module-level "already emitted" flag in `to_code` and
+share the symbol across instances rather than duplicating a ~16 KB array per fader.
+ESP32 flash has ample room for one copy.
+
+### Config surface
+
+```yaml
+fader_buddy:
+  - id: fader0
+    address: 0x20
+    firmware_image: firmware/faderbuddy-app-v6.bin   # bundled image
+    autoupdate_firmware: false        # default; opt-in only (see below)
+    max_update_attempts: 3            # per-address safety cap
+```
+
+### The update flow
+
+Registered as a **manual action** `fader_buddy.update_firmware` (added alongside the
+existing actions in `__init__.py` / `fader_buddy.h`), driving the state machine from
+[§9](#9-application-side-changes-specified-not-implemented): read version → (if
+different) `REG_ENTER_BOOTLOADER` → wait for bootloader marker at `0x00` →
+`ERASE_APP` → stream pages (`SET_PAGE_ADDR` + 4× `SEND_FRAME` with CRC16) →
+`GET_VERSION_CRC16` whole-image verify → `RUN_APP` → re-read `REG_FW_VERSION` to
+confirm. Reuse the existing `write_with_retry_()` helper for the I2C transfers.
+
+### Auto vs. manual — recommendation
+
+**Default to manual** (an explicit `update_firmware` action / button / HA service),
+because every update briefly takes a fader offline and writes its flash, and a
+human-triggered update is the safest posture. Offer `autoupdate_firmware: true` as
+an **opt-in** for users who want faders to converge to the packaged version on their
+own. This matches the intuition that automatic flashing deserves extra guard rails.
+
+### Guard rails (both modes, essential for autoupdate)
+
+- **Update only on version mismatch** — never reflash a fader already at the packaged
+  `REG_FW_VERSION` (or already showing the bootloader marker / no-app).
+- **Per-address attempt tracking in persistent storage** — use ESPHome
+  `ESPPreferences` (`global_preferences->make_preference<...>()`), keyed by I2C
+  address **and** target version. Increment on failure; once
+  `max_update_attempts` consecutive failures is hit for a given target version,
+  **stop** and surface the condition (e.g. a `binary_sensor` "update_failed" or a
+  `text_sensor` status). Reset the counter on success or when the packaged version
+  changes. This is what stops a bad image from endlessly re-flashing.
+- **Flash-wear reasoning** — the ATtiny1616's flash endurance is on the order of
+  **~10,000 write/erase cycles** (confirm against the datasheet). Updating *only on
+  mismatch* means the normal cost is a handful of cycles over a board's life; the
+  attempt cap is the real safeguard against a pathological retry loop burning through
+  endurance.
+- **Don't interrupt the user** — defer an update while the fader is in use
+  (`MODE_INPUT_ACTIVE`); wait for idle.
+- **One fader at a time** — never run two updates concurrently on the shared bus, so
+  a stuck transfer can't wedge neighbors (pairs with the bus-recovery notes in
+  [§13](#13-risks--open-questions)).
+
+## 13. Risks & open questions
 
 **Confirm against the datasheet (DS40002204A) before coding** — every value flagged
 inline, collected here:
@@ -319,6 +477,8 @@ inline, collected here:
 - Whether **GPR/GPIOR registers survive a software reset** (§10 — affects token
   storage choice).
 - TWI0 slave `SSTATUS` / `SCTRLB` bit names and command encodings (§7).
+- Flash **write/erase endurance** (cited as ~10k cycles) — confirms the flash-wear
+  argument for the host update policy (§12).
 
 **Design/operational risks:**
 
@@ -331,14 +491,14 @@ inline, collected here:
   and always runs first), so the host can simply re-enter the bootloader and
   re-flash without UPDI. Document this failure mode for operators.
 - **Toolchain uncertainty.** The offset/`IVSEL` application build is the least
-  certain integration point; validate it early (see §12) since everything else
-  depends on the app running correctly from the offset.
+  certain integration point; validate it early (see [§14](#14-verification--test-plan-for-the-implementation-pass))
+  since everything else depends on the app running correctly from the offset.
 - **Deployment / migration.** Existing and newly-fabricated boards need the
   one-time UPDI install of bootloader + fuses + offset app before I2C updates
   become available. Boards already in the field would need one more UPDI visit to
   gain the capability.
 
-## 12. Verification & test plan (for the implementation pass)
+## 14. Verification & test plan (for the implementation pass)
 
 There is no way to hardware-test this in CI, so validation happens on real
 hardware in stages:
@@ -349,16 +509,28 @@ hardware in stages:
    bootloader exists.
 2. **Build and UPDI-flash the bootloader**; confirm the app still starts (normal
    reset → bootloader → jump to app).
-3. **Exercise the entry path**: host writes `REG_ENTER_BOOTLOADER`; confirm the
-   device comes back as an I2C slave in bootloader mode (e.g. `GET_VERSION_CRC16`
-   responds).
-4. **Full update cycle**: `ERASE_APP` → stream pages with per-frame CRC16 →
-   `GET_VERSION_CRC16` whole-image verify → `RUN_APP`, and confirm the new app
-   runs.
-5. **Interrupted-update recovery**: abort mid-stream, confirm the WDT timeout /
-   re-entry recovers and a subsequent full update succeeds.
-6. **Multi-fader**: confirm a chain of faders can each be addressed and updated
-   without disturbing the others.
+3. **Combined factory env** (§8): confirm `[env:fader_buddy_factory]` merges
+   bootloader + app and flashes both **plus fuses** in a single UPDI upload onto a
+   blank chip, yielding a running app.
+4. **Identity/version reads** (§11): confirm `REG_VERSION` returns the protocol
+   version when the app runs and the **bootloader marker** when only the bootloader
+   is resident (blank/invalid app), and that `REG_FW_VERSION` reports the expected
+   build; confirm the app-validity self-check keeps a blank/partial app from running.
+5. **Exercise the entry path**: host writes `REG_ENTER_BOOTLOADER`; confirm the
+   device comes back as an I2C slave in bootloader mode (marker at `0x00`,
+   `GET_VERSION_CRC16` responds).
+6. **Full update cycle**: `ERASE_APP` → stream pages with per-frame CRC16 →
+   `GET_VERSION_CRC16` whole-image verify → `RUN_APP`, and confirm the new app runs
+   and reports the new `REG_FW_VERSION`.
+7. **Interrupted-update recovery**: abort mid-stream, confirm the app-validity check
+   + WDT timeout / re-entry recovers and a subsequent full update succeeds.
+8. **Host packaging & policy** (§12): with the ESPHome component, verify the
+   embedded blob updates a mismatched fader via the manual `update_firmware` action;
+   verify it does **not** reflash a fader already at the packaged version; and verify
+   the per-address attempt cap stops retries after `max_update_attempts` and surfaces
+   the failure status.
+9. **Multi-fader**: confirm a chain of faders can each be addressed and updated
+   one-at-a-time without disturbing the others.
 
 Any of the existing I2C controllers can drive these tests: the
 [WebHID / MCP2221 tool](software/mcp2221-webhid/), the ESP32 production jig
