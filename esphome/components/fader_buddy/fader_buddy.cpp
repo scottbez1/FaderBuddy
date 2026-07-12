@@ -34,15 +34,8 @@ void FaderBuddy::setup() {
 
   // Check protocol version
   uint8_t reg = REG_VERSION;
-  auto write_result = this->write(&reg, 1, false);
-  if (write_result != esphome::i2c::ErrorCode::NO_ERROR) {
-    ESP_LOGE(TAG, "Init: failed to write register address for VERSION: %d", write_result);
-    this->mark_failed();
-    return;
-  }
-
   uint8_t buffer = 0;
-  auto read_result = this->read(&buffer, 1);
+  auto read_result = this->write_read(&reg, 1, &buffer, 1);
   if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
     ESP_LOGE(TAG, "Init: failed to read VERSION register: %d", read_result);
     this->mark_failed();
@@ -112,13 +105,7 @@ bool FaderBuddy::read_sensor_data_() {
   uint8_t reg = REG_STATE;
   uint8_t buffer[4];
 
-  auto write_result = this->write(&reg, 1, false);
-  if (write_result != esphome::i2c::ErrorCode::NO_ERROR) {
-    ESP_LOGE(TAG, "Failed to write register address: %d", write_result);
-    return false;
-  }
-
-  auto read_result = this->read(buffer, 4);
+  auto read_result = this->write_read(&reg, 1, buffer, 4);
   if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
     ESP_LOGE(TAG, "Failed to read data: %d", read_result);
     return false;
@@ -209,13 +196,7 @@ uint8_t FaderBuddy::get_active_layer() const {
   uint8_t reg = REG_ACTIVE_LAYER;
   uint8_t buffer = 0;
 
-  auto write_result = this->write(&reg, 1, false);
-  if (write_result != esphome::i2c::ErrorCode::NO_ERROR) {
-    ESP_LOGE(TAG, "Failed to write register address: %d", write_result);
-    return 0;  // Default to layer 0 on error
-  }
-
-  auto read_result = this->read(&buffer, 1);
+  auto read_result = this->write_read(&reg, 1, &buffer, 1);
   if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
     ESP_LOGE(TAG, "Failed to read active layer: %d", read_result);
     return 0;
@@ -255,15 +236,10 @@ uint8_t FaderBuddy::get_position(uint8_t layer) const {
 
   // Write layer index to query
   uint8_t write_buffer[] = {REG_LAYER_TARGET, layer};
-  auto write_result = this->write(write_buffer, 2, false);
-  if (write_result != esphome::i2c::ErrorCode::NO_ERROR) {
-    ESP_LOGE(TAG, "Failed to write layer index: %d", write_result);
-    return 0;
-  }
 
   // Read restore position for that layer
   uint8_t read_buffer = 0;
-  auto read_result = this->read(&read_buffer, 1);
+  auto read_result = this->write_read(write_buffer, 2, &read_buffer, 1);
   if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
     ESP_LOGE(TAG, "Failed to read layer position: %d", read_result);
     return 0;
