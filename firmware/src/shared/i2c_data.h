@@ -26,7 +26,12 @@
 // Application firmware version (build/semantic). Reported at REG_FW_VERSION and
 // compared by the host against the image it has packaged to decide whether an
 // I2C firmware update is needed. Bump this on every released application build.
+// Overridable via build flag (-DFW_VERSION=N) so one-off builds -- e.g. the fixed
+// old-version image baked into the production jig's bootloader-entry test -- can
+// stamp a different version without touching this default.
+#ifndef FW_VERSION
 #define FW_VERSION (1)
+#endif
 
 // Magic payload (big-endian) required by REG_ENTER_BOOTLOADER so that a stray or
 // corrupt write cannot accidentally reboot a fader into the bootloader.
