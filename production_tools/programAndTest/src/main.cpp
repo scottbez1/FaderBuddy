@@ -23,6 +23,11 @@
 #include "Adafruit_INA3221.h"
 #include "fader_buddy_i2c.h"
 
+#ifdef BOOTLOADER_TEST_MODE
+#include "fader_buddy_bootloader.h"
+#include "fader_app_image.h"
+#endif
+
 #define FlashFS LittleFS
 
 #define PIN_LED_RED 21
@@ -1394,7 +1399,154 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 // Main Loop
 // ============================================================================
 
+#ifdef BOOTLOADER_TEST_MODE
+// ============================================================================
+// I2C Bootloader Test Mode
+//
+// Standalone validation flow (enabled with -DBOOTLOADER_TEST_MODE, env
+// bootloader_test). The fader under test must already have the bootloader
+// installed via UPDI (pio run -e fb_bootloader_only -t upload, or fb_app_and_bootloader).
+// On each presence-switch press this streams the embedded offset application
+// image (fader_app_image.h) over I2C through the bootloader and verifies it.
+// ============================================================================
+FaderBuddyBootloader faderBootloader(BL_I2C_BASE_ADDRESS);
+
+static void blShowStatus(const char* line1, const char* line2, uint16_t bg) {
+  sprite.fillSprite(bg);
+  sprite.setTextColor(TFT_WHITE, bg);
+  sprite.setCursor(6, 40);
+  sprite.println(line1);
+  if (line2) {
+    sprite.setCursor(6, 70);
+    sprite.println(line2);
+  }
+  sprite.pushSprite(0, 0);
+}
+
+static void blProgress(const char* stage, uint32_t current, uint32_t total) {
+  if (total) {
+    // Throttle the per-page spam so the log stays readable.
+    if (current == 1 || current == total || (current % 20) == 0) {
+      Serial.printf("  [bl] %s %u/%u\n", stage, current, total);
+    }
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%u/%u", current, total);
+    blShowStatus(stage, buf, TFT_NAVY);
+  } else {
+    Serial.printf("  [bl] %s\n", stage);
+    blShowStatus(stage, nullptr, TFT_NAVY);
+  }
+}
+
+static void runBootloaderUpdateTest() {
+  Serial.println("\n=== I2C Bootloader Update Test ===");
+  Serial.printf("Image: %u bytes @ 0x%04X, CRC16=0x%04X, FW_VERSION=%u\n",
+                (unsigned)FADER_APP_IMAGE_SIZE, FADER_APP_FLASH_START,
+                FADER_APP_IMAGE_CRC16, FADER_APP_FW_VERSION);
+
+  // Probe the current state of the target before starting.
+  uint8_t v0;
+  if (faderBootloader.readVersionByte(v0)) {
+    Serial.printf("Initial reg 0x00 = 0x%02X (%s)\n", v0,
+                  v0 == BL_VERSION_MARKER ? "bootloader resident"
+                  : v0 == 0xFF ? "no response/0xFF" : "application running");
+  } else {
+    Serial.println("Initial reg 0x00: NO I2C RESPONSE");
+  }
+  {
+    uint8_t bv, stt, le;
+    if (faderBootloader.getStatus(bv, stt, le)) {
+      Serial.printf("Initial bl status: ver=%u status=%u last_error=%u\n", bv, stt, le);
+    }
+  }
+
+  uint32_t t0 = millis();
+  char err[48] = {0};
+  bool ok = faderBootloader.updateFirmware(
+      FADER_APP_IMAGE, FADER_APP_IMAGE_SIZE, FADER_APP_FLASH_START,
+      FADER_APP_IMAGE_CRC16, FADER_APP_FW_VERSION, err, sizeof(err), blProgress);
+  uint32_t dt = millis() - t0;
+
+  if (ok) {
+    Serial.printf("=== PASS (%u ms) ===\n", dt);
+    blShowStatus("UPDATE", "PASS", TFT_DARKGREEN);
+    analogWrite(PIN_LED_RED, 0);
+    analogWrite(PIN_LED_GREEN, 700);
+  } else {
+    Serial.printf("=== FAIL: %s (%u ms) ===\n", err, dt);
+    // Extra diagnostics: localize a bad write by probing the first page's CRC,
+    // and report the bootloader's recorded status/error.
+    uint8_t bv, stt, le;
+    if (faderBootloader.getStatus(bv, stt, le)) {
+      Serial.printf("  bl status: ver=%u status=%u last_error=%u\n", bv, stt, le);
+    }
+    uint16_t got0;
+    if (faderBootloader.getImageCrc16(FADER_APP_FLASH_START, 64, got0)) {
+      uint16_t exp0 = BL_CRC16_INIT;
+      for (int i = 0; i < 64; i++) exp0 = bl_crc16_update(exp0, FADER_APP_IMAGE[i]);
+      Serial.printf("  first-page CRC: got=0x%04X exp=0x%04X\n", got0, exp0);
+    }
+    char buf[48];
+    snprintf(buf, sizeof(buf), "FAIL:%s", err);
+    blShowStatus("UPDATE", buf, TFT_MAROON);
+    analogWrite(PIN_LED_RED, 700);
+    analogWrite(PIN_LED_GREEN, 0);
+  }
+}
+
+static void bootloaderTestLoop() {
+  static bool inited = false;
+  static bool lastPressed = false;
+  static bool armed = false;
+  static uint32_t initTime = 0;
+  // In the bench test setup the unit-under-test is left in place, so the
+  // presence switch is held pressed continuously. Wait a few seconds after boot
+  // before arming so there's time to (re)attach the serial monitor after an
+  // upload, then run once for the already-pressed switch (in addition to future
+  // press edges) instead of relying solely on a rising edge.
+  const uint32_t STARTUP_ARMING_DELAY_MS = 4000;
+
+  if (!inited) {
+    faderBootloader.begin(&WireFaderBuddy);
+    WireFaderBuddy.setClock(100000);
+    WireFaderBuddy.setTimeOut(250);  // tolerate CRC-compute clock stretching
+    blShowStatus("BL TEST", "starting...", TFT_DARKGREY);
+    Serial.println("Bootloader test mode: arming in 4s (press switch to run).");
+    initTime = millis();
+    inited = true;
+    lastPressed = !digitalRead(PIN_PRESENCE_SWITCH);  // seed to avoid a stale edge
+  }
+
+  bool pressed = !digitalRead(PIN_PRESENCE_SWITCH);
+
+  if (!armed) {
+    if (millis() - initTime < STARTUP_ARMING_DELAY_MS) {
+      lastPressed = pressed;  // track state while disarmed so we don't miss releases
+      delay(10);
+      return;
+    }
+    armed = true;
+    blShowStatus("BL TEST", "press to run", TFT_DARKGREY);
+    Serial.println("Armed. Running now if presence switch is held.");
+    // Treat a currently-held switch as a trigger by forcing an edge below.
+    lastPressed = false;
+  }
+
+  if (pressed && !lastPressed) {
+    delay(50);  // debounce
+    runBootloaderUpdateTest();
+  }
+  lastPressed = pressed;
+  delay(10);
+}
+#endif  // BOOTLOADER_TEST_MODE
+
 void loop() {
+#ifdef BOOTLOADER_TEST_MODE
+  bootloaderTestLoop();
+  return;
+#endif
+
   bool pressed = !digitalRead(PIN_PRESENCE_SWITCH);
 
   // Read power measurements

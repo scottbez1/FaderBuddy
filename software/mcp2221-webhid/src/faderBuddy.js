@@ -31,7 +31,7 @@ export class FaderBuddy {
         this.bus = i2cBus;
         this.address = address;
 
-        // Register addresses (Protocol v5)
+        // Register addresses (Protocol v6)
         this.REG_VERSION = 0x00;
         this.REG_STATE = 0x01;
         // 0x02 removed in v5
@@ -48,6 +48,11 @@ export class FaderBuddy {
         this.REG_ACTIVE_LAYER = 0x0D;
         this.REG_LAYER_TARGET = 0x0E;         // Layer-addressed
         this.REG_LAYER_HAPTIC_CONFIG = 0x0F;  // Layer-addressed
+        this.REG_ENTER_BOOTLOADER = 0x10;     // Write ENTER_BOOTLOADER_MAGIC (u32 BE) to reboot into the bootloader
+        this.REG_FW_VERSION = 0x11;           // Application firmware version (u16 BE)
+
+        // Magic payload (big-endian) required by REG_ENTER_BOOTLOADER
+        this.ENTER_BOOTLOADER_MAGIC = 0xB0071053;
 
         // Mode states
         this.MODE_REMOTE_MOVEMENT = 0;

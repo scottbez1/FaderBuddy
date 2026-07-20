@@ -17,7 +17,20 @@
 
 #include <stdint.h>
 
-#define I2C_PROTOCOL_VERSION (5)  // v5: Layer management in firmware, 16-bit haptic config
+#define I2C_PROTOCOL_VERSION (6)  // v6: I2C bootloader entry + firmware version registers
+// A protocol version >= this value signals that the running application supports
+// dropping into the I2C bootloader (REG_ENTER_BOOTLOADER). Boards reporting a
+// lower version predate the bootloader and require a one-time UPDI migration.
+#define I2C_BOOTLOADER_AWARE_VERSION (6)
+
+// Application firmware version (build/semantic). Reported at REG_FW_VERSION and
+// compared by the host against the image it has packaged to decide whether an
+// I2C firmware update is needed. Bump this on every released application build.
+#define FW_VERSION (1)
+
+// Magic payload (big-endian) required by REG_ENTER_BOOTLOADER so that a stray or
+// corrupt write cannot accidentally reboot a fader into the bootloader.
+#define ENTER_BOOTLOADER_MAGIC (0xB0071053UL)
 
 
 /*
@@ -58,6 +71,10 @@
  * -----|---------------------|---------|------|------------
  * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
  * -----|---------------------|---------|------|------------
+ * 0x10 | ENTER_BOOTLOADER    | W       | u32  | Write ENTER_BOOTLOADER_MAGIC to reboot into the I2C bootloader
+ * -----|---------------------|---------|------|------------
+ * 0x11 | FW_VERSION          | R       | u16  | Application firmware version (see FW_VERSION)
+ * -----|---------------------|---------|------|------------
  *
  * Protocol:
  * - Simple registers:
@@ -91,6 +108,8 @@
 #define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
+#define REG_ENTER_BOOTLOADER 0x10  // Write ENTER_BOOTLOADER_MAGIC (u32 big-endian) to reboot into the bootloader
+#define REG_FW_VERSION 0x11  // Application firmware version (R, u16 big-endian)
 
 enum Mode : uint8_t {
   MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,

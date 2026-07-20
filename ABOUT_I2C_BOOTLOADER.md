@@ -1,11 +1,35 @@
 # I2C Bootloader Design (ATtiny1616)
 
-> **Status: design / feasibility proposal — not yet implemented.**
-> This document describes *how* firmware-over-I2C could work on FaderBuddy. No
-> bootloader code, `platformio.ini`, or `i2c_data.h` changes exist yet; this is
-> the specification for a future implementation pass. The register values, section
-> semantics, and constants below have been **validated against the
-> *ATtiny1614/16/17 Data Sheet (DS40002204A)***.
+> **Status: implemented and hardware-validated.**
+> The full I2C update cycle (enter → erase → stream → whole-image CRC verify →
+> RUN_APP → app reports `REG_FW_VERSION`) passes end-to-end on real hardware via
+> the production jig, with the written flash UPDI-verified against the image.
+> Bring-up found two TWI-slave bugs in the bootloader, both fixed (see
+> [DEBUGGING_BOOTLOADER.md](DEBUGGING_BOOTLOADER.md)): the slave init was missing
+> `PIEN` (so Stop conditions never raised `APIF` and every master-write command
+> was silently dropped), and the `twi_service()` error branch could leave
+> `CLKHOLD` asserted and wedge the bus. The ESPHome host-side flow (§11) is still
+> unimplemented.
+> The design below is now realized in code: the bootloader
+> (`firmware/src/bootloader/bootloader.c`), the shared protocol
+> (`firmware/src/shared/bootloader_protocol.h`), the `bootloader` /
+> `fb_app_only` / `fb_app_and_bootloader` PlatformIO environments, the
+> application-side entry path and `REG_ENTER_BOOTLOADER`/`REG_FW_VERSION`
+> registers (protocol bumped to **v6**), and an I2C firmware-upload test in the
+> production jig (`production_tools/programAndTest`, `bootloader_test` env). The
+> register values, section semantics, and constants have been **validated
+> against the *ATtiny1614/16/17 Data Sheet (DS40002204A)***.
+>
+> **Two deviations from the spec below, both fixing spec bugs:**
+> - The warm-reset entry token lives at **`0x3F00`**, not `0x3FFE` (§9). `0x3FFE`
+>   is at the top of RAM where the stack starts and would be clobbered by the
+>   bootloader's own startup pushes before it could read the token.
+> - The bootloader writes `NVMCTRL.CTRLA` via `_PROTECTED_WRITE_SPM` (CCP **SPM**
+>   key `0x9D`), not the plain IOREG `_PROTECTED_WRITE` (§5).
+>
+> **Not yet done:** the ESPHome host-side packaging/update flow (§11) and the
+> optional robustness extras (WDT command timeout, CRC-footer app validity, and
+> shrinking `BOOTEND` from the initial 0x08 toward the measured ~1.3 KB — §2/§9).
 
 ## 1. Goal & constraints
 
@@ -220,10 +244,10 @@ before `RUN_APP` catches anything missed and prevents jumping into a bad image.
 support "build for a bootloader" or "upload via a bootloader." So we structure it
 ourselves — still entirely within PlatformIO, as **three environments**:
 
-- **`[env:bootloader]`** — the bootloader's own minimal source (NVMCTRL + polled
+- **`[env:fb_bootloader_only]`** — the bootloader's own minimal source (NVMCTRL + polled
   TWI0 + CRC16, no Arduino framework, or a very thin one), linked into the boot
   section and emitted as a hex. Its measured size sets the final `BOOTEND`.
-- **`[env:fader_buddy]`** (the existing app env, now built at the boot offset) —
+- **`[env:fb_app_only]`** (the existing app env, now built at the boot offset) —
   link `.text` starting at `BOOTEND * 256`, with the vector table at the
   application start. **No `IVSEL` startup write is needed** — the reset default
   (`IVSEL = 0`) already routes interrupts to the application section (see §4); the
@@ -237,13 +261,13 @@ ourselves — still entirely within PlatformIO, as **three environments**:
   version.** This env is *also* the **day-to-day dev-iteration path**: once the
   bootloader is installed it persists, so a developer re-flashes only the app over
   UPDI without touching the bootloader.
-- **`[env:fader_buddy_factory]`** (new — the combined first-flash) — see below.
+- **`[env:fb_app_and_bootloader]`** (new — the combined first-flash) — see below.
 
 ### Do you need two uploads the first time? No — provide a combined env.
 
 Logically there are **three artifacts** (fuses, bootloader hex, offset-app hex),
 but you should not have to do multiple manual uploads to bring up a blank chip. The
-`fader_buddy_factory` env packages them into **one action**:
+`fb_app_and_bootloader` env packages them into **one action**:
 
 1. An `extra_scripts` **post-build merge** combines the bootloader hex and the
    offset-app hex into a single Intel-hex. The two regions never overlap (bootloader
@@ -255,7 +279,7 @@ but you should not have to do multiple manual uploads to bring up a blank chip. 
    already exists in the tree (currently unused); wire it into this env's
    `extra_scripts` exactly as `install_pyupdi.py` is wired into the app env today.
 
-So the first-time flow becomes: *pick the `fader_buddy_factory` env → Upload* — one
+So the first-time flow becomes: *pick the `fb_app_and_bootloader` env → Upload* — one
 step, over UPDI, exactly the [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)
 physical setup (UPDI Friend on the three pads). That same combined upload is also the
 **recovery path** if a board's application is ever left invalid. After the one-time
@@ -525,7 +549,7 @@ hardware in stages:
    bootloader exists.
 2. **Build and UPDI-flash the bootloader**; confirm the app still starts (normal
    reset → bootloader → jump to app).
-3. **Combined factory env** (§7): confirm `[env:fader_buddy_factory]` merges
+3. **Combined factory env** (§7): confirm `[env:fb_app_and_bootloader]` merges
    bootloader + app and flashes both **plus fuses** in a single UPDI upload onto a
    blank chip, yielding a running app.
 4. **Identity/version reads** (§10): confirm `REG_VERSION` returns the protocol
