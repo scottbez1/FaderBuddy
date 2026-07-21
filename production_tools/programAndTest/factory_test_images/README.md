@@ -4,7 +4,9 @@ A **fixed, checked-in** snapshot of a full ATtiny1616 flash image (I2C
 bootloader at `0x0000` + offset application at `0x0800`) built with
 `FW_VERSION` forced to `0` -- i.e. a stand-in for "a board already in the
 field, running an old application, that already has the bootloader
-installed."
+installed." It's also built with its heartbeat LED blink period doubled
+(half the normal blink rate), so it's visually obvious at a glance that a
+board is running this old image rather than current firmware.
 
 This is what the production jig's `TEST_FW_BOOTSTRAP` step UPDI-flashes onto
 the DUT as its *starting* state, so the following `TEST_FW_I2C_UPDATE` step can
@@ -29,8 +31,11 @@ cd /home/scott/src/motorFader   # repo root, where the root platformio.ini lives
 
 # Build the bootloader and an app forced to FW_VERSION=0 in one pass (building
 # them together in a single `pio run` avoids each env's build directory being
-# reaped between separate invocations).
-PLATFORMIO_BUILD_FLAGS="-DFW_VERSION=0" pio run -e fb_bootloader_only -e fb_app_only
+# reaped between separate invocations). DEBUG_LED_BLINK_PERIOD_MS is also
+# doubled so the heartbeat LED blinks at half the normal rate -- an easy visual
+# cue that a board is still running this old image rather than current
+# firmware.
+PLATFORMIO_BUILD_FLAGS="-DFW_VERSION=0 -DDEBUG_LED_BLINK_PERIOD_MS=1024" pio run -e fb_bootloader_only -e fb_app_only
 
 python3 - <<'EOF'
 from intelhex import IntelHex

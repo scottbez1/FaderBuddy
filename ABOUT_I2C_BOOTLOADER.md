@@ -16,7 +16,8 @@
 > `fb_app_only` / `fb_app_and_bootloader` PlatformIO environments, the
 > application-side entry path and `REG_ENTER_BOOTLOADER`/`REG_FW_VERSION`
 > registers (protocol bumped to **v6**), and an I2C firmware-upload test in the
-> production jig (`production_tools/programAndTest`, `bootloader_test` env). The
+> production jig (`production_tools/programAndTest`, now part of the normal
+> `env:lilygo-t-display` test sequence — see BOOTLOADER_NEXT.md). The
 > register values, section semantics, and constants have been **validated
 > against the *ATtiny1614/16/17 Data Sheet (DS40002204A)***.
 >

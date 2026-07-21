@@ -63,7 +63,6 @@ def main():
         "--hex",
         action="append",
         default=[],
-        required=True,
         dest="hexes",
         help="Intel-hex image to write (repeatable; first one erases the chip)",
     )
@@ -73,7 +72,17 @@ def main():
                    help="APPEND fuse value (256-byte units), e.g. 0x00")
     p.add_argument("--erase", action="store_true",
                    help="chip-erase before writing the first hex (bootloader install / factory)")
+    p.add_argument("--erase-only", action="store_true",
+                   help="just chip-erase and exit (no --hex required, fuses untouched)")
     args = p.parse_args()
+
+    if args.erase_only:
+        pymcuprog(["erase"], args.port)
+        print("Erase complete.", flush=True)
+        return
+
+    if not args.hexes:
+        p.error("--hex is required unless --erase-only is given")
 
     for i, hexfile in enumerate(args.hexes):
         write_args = ["write", "-f", hexfile, "--verify"]

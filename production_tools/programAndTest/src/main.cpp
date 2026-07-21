@@ -32,6 +32,10 @@
 
 #define PIN_PRESENCE_SWITCH 36
 
+// LilyGO T-Display left button (active low). Press-and-hold toggles dummy mode.
+#define PIN_BUTTON_LEFT 0
+#define BUTTON_HOLD_MS 1000
+
 #define PIN_PHOTODIODE_PWR 37
 #define PIN_PHOTODIODE_DBG 38
 
@@ -95,6 +99,14 @@ enum TestState {
 
 TestState currentTestState = TEST_IDLE;
 bool lastPresenceState = false;
+
+// Dummy mode: skips the firmware bootstrap/I2C-update steps (which need real
+// UPDI hardware and a real fader) so the rest of the jig flow can be
+// exercised without them. Toggled by holding the left button on the T-Display.
+bool dummyMode = false;
+bool lastButtonPressed = false;
+uint32_t buttonPressStartTime = 0;
+bool buttonHoldHandled = false;
 
 // Motor fader version info (read once per test run)
 struct FaderBuddyVersion {
@@ -201,6 +213,7 @@ void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_PRESENCE_SWITCH, INPUT);
+  pinMode(PIN_BUTTON_LEFT, INPUT_PULLUP);
 
   pinMode(PIN_PHOTODIODE_PWR, INPUT);
   pinMode(PIN_PHOTODIODE_DBG, INPUT);
@@ -326,6 +339,43 @@ uint16_t getTestStateColor(TestState state) {
     case TEST_PASSED: return TFT_GREEN;
     case TEST_FAILED: return TFT_RED;
     default: return TFT_BLUE;  // Testing states
+  }
+}
+
+// Tiny 3x5 pixel bitmap font, only the glyphs needed to spell "DUMMY" -- used
+// for the dummy-mode indicator, which needs to be much smaller than the
+// smallest size the loaded smooth font (roboto_14) can render.
+const uint8_t TINY_FONT_D[5] = {0b110, 0b101, 0b101, 0b101, 0b110};
+const uint8_t TINY_FONT_U[5] = {0b101, 0b101, 0b101, 0b101, 0b010};
+const uint8_t TINY_FONT_M[5] = {0b101, 0b111, 0b101, 0b101, 0b101};
+const uint8_t TINY_FONT_Y[5] = {0b101, 0b101, 0b010, 0b010, 0b010};
+
+const uint8_t* tinyFontGlyph(char c) {
+  switch (c) {
+    case 'D': return TINY_FONT_D;
+    case 'U': return TINY_FONT_U;
+    case 'M': return TINY_FONT_M;
+    case 'Y': return TINY_FONT_Y;
+    default: return nullptr;
+  }
+}
+
+// Draws text using the tiny 3x5 font directly onto the sprite (bypasses the
+// loaded smooth font entirely, so it doesn't need swapping in/out per frame).
+void drawTinyText(const char* text, int x, int y, uint16_t color) {
+  int cx = x;
+  for (const char* p = text; *p; p++) {
+    const uint8_t* glyph = tinyFontGlyph(*p);
+    if (glyph) {
+      for (int row = 0; row < 5; row++) {
+        for (int col = 0; col < 3; col++) {
+          if (glyph[row] & (0b100 >> col)) {
+            sprite.drawPixel(cx + col, y + row, color);
+          }
+        }
+      }
+    }
+    cx += 4;  // 3px glyph + 1px space
   }
 }
 
@@ -468,6 +518,11 @@ void updateDisplay(float v0, float c0, float v1, float c1) {
   render_count++;
   if (render_count & 0x01) {
     sprite.fillSmoothCircle(125, 235, 2, TFT_WHITE, TFT_BLACK);
+  }
+
+  // Dummy mode indicator: tiny label along the very bottom edge of the screen.
+  if (dummyMode) {
+    drawTinyText("DUMMY", 2, 240 - 5, TFT_YELLOW);
   }
 
   sprite.pushSprite(0, 0);
@@ -1395,7 +1450,7 @@ bool testTouchSensor() {
         // Give a small delay before commanding to ensure we're ready
         return false;
       }
-      if (!faderBuddy.writeTargetPosition(0)) {
+      if (!faderBuddy.writeTargetPosition(42)) {
         testTracking.failedTestName = "TCH CMD POS";
         Serial.println("FAILED: Could not command position 0");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;
@@ -1638,6 +1693,19 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
       break;
 
     case TEST_FW_BOOTSTRAP:
+      // Dummy mode: skip both the bootstrap (needs test_host.py + UPDI) and
+      // the I2C bootloader update (needs a real fader) after a simple delay,
+      // so the rest of the jig flow can be exercised on the bench alone.
+      if (dummyMode) {
+        if (testTracking.firmwarePhaseStartTime == 0) {
+          testTracking.firmwarePhaseStartTime = millis();
+          Serial.println("DUMMY MODE: Skipping firmware bootstrap + I2C update (2s delay)");
+        } else if (millis() - testTracking.firmwarePhaseStartTime >= 2000) {
+          Serial.println("DUMMY MODE: Firmware bootstrap + I2C update skipped");
+          currentTestState = TEST_DEBUG_LED;
+        }
+        break;
+      }
       if (testFwBootstrap()) {
         if (!testTracking.failedTestName.isEmpty()) {
           currentTestState = TEST_FAILED;
@@ -1731,152 +1799,19 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
 // Main Loop
 // ============================================================================
 
-#ifdef BOOTLOADER_TEST_MODE
-// ============================================================================
-// I2C Bootloader Test Mode
-//
-// Standalone validation flow (enabled with -DBOOTLOADER_TEST_MODE, env
-// bootloader_test). The fader under test must already have the bootloader
-// installed via UPDI (pio run -e fb_bootloader_only -t upload, or fb_app_and_bootloader).
-// On each presence-switch press this streams the embedded offset application
-// image (fader_app_image.h) over I2C through the bootloader and verifies it.
-// Uses the same `faderBootloader` client (declared above, initialized in
-// setup()) as the production flow's FIRMWARE_PHASE_BOOTLOAD_UPDATE.
-// ============================================================================
-
-static void blShowStatus(const char* line1, const char* line2, uint16_t bg) {
-  sprite.fillSprite(bg);
-  sprite.setTextColor(TFT_WHITE, bg);
-  sprite.setCursor(6, 40);
-  sprite.println(line1);
-  if (line2) {
-    sprite.setCursor(6, 70);
-    sprite.println(line2);
-  }
-  sprite.pushSprite(0, 0);
-}
-
-static void blProgress(const char* stage, uint32_t current, uint32_t total) {
-  if (total) {
-    // Throttle the per-page spam so the log stays readable.
-    if (current == 1 || current == total || (current % 20) == 0) {
-      Serial.printf("  [bl] %s %u/%u\n", stage, current, total);
-    }
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%u/%u", current, total);
-    blShowStatus(stage, buf, TFT_NAVY);
-  } else {
-    Serial.printf("  [bl] %s\n", stage);
-    blShowStatus(stage, nullptr, TFT_NAVY);
-  }
-}
-
-static void runBootloaderUpdateTest() {
-  Serial.println("\n=== I2C Bootloader Update Test ===");
-  Serial.printf("Image: %u bytes @ 0x%04X, CRC16=0x%04X, FW_VERSION=%u\n",
-                (unsigned)FADER_APP_IMAGE_SIZE, FADER_APP_FLASH_START,
-                FADER_APP_IMAGE_CRC16, FADER_APP_FW_VERSION);
-
-  // Probe the current state of the target before starting.
-  uint8_t v0;
-  if (faderBootloader.readVersionByte(v0)) {
-    Serial.printf("Initial reg 0x00 = 0x%02X (%s)\n", v0,
-                  v0 == BL_VERSION_MARKER ? "bootloader resident"
-                  : v0 == 0xFF ? "no response/0xFF" : "application running");
-  } else {
-    Serial.println("Initial reg 0x00: NO I2C RESPONSE");
-  }
-  {
-    uint8_t bv, stt, le;
-    if (faderBootloader.getStatus(bv, stt, le)) {
-      Serial.printf("Initial bl status: ver=%u status=%u last_error=%u\n", bv, stt, le);
-    }
-  }
-
-  uint32_t t0 = millis();
-  char err[48] = {0};
-  bool ok = faderBootloader.updateFirmware(
-      FADER_APP_IMAGE, FADER_APP_IMAGE_SIZE, FADER_APP_FLASH_START,
-      FADER_APP_IMAGE_CRC16, FADER_APP_FW_VERSION, err, sizeof(err), blProgress);
-  uint32_t dt = millis() - t0;
-
-  if (ok) {
-    Serial.printf("=== PASS (%u ms) ===\n", dt);
-    blShowStatus("UPDATE", "PASS", TFT_DARKGREEN);
-    analogWrite(PIN_LED_RED, 0);
-    analogWrite(PIN_LED_GREEN, 700);
-  } else {
-    Serial.printf("=== FAIL: %s (%u ms) ===\n", err, dt);
-    // Extra diagnostics: localize a bad write by probing the first page's CRC,
-    // and report the bootloader's recorded status/error.
-    uint8_t bv, stt, le;
-    if (faderBootloader.getStatus(bv, stt, le)) {
-      Serial.printf("  bl status: ver=%u status=%u last_error=%u\n", bv, stt, le);
-    }
-    uint16_t got0;
-    if (faderBootloader.getImageCrc16(FADER_APP_FLASH_START, 64, got0)) {
-      uint16_t exp0 = BL_CRC16_INIT;
-      for (int i = 0; i < 64; i++) exp0 = bl_crc16_update(exp0, FADER_APP_IMAGE[i]);
-      Serial.printf("  first-page CRC: got=0x%04X exp=0x%04X\n", got0, exp0);
-    }
-    char buf[48];
-    snprintf(buf, sizeof(buf), "FAIL:%s", err);
-    blShowStatus("UPDATE", buf, TFT_MAROON);
-    analogWrite(PIN_LED_RED, 700);
-    analogWrite(PIN_LED_GREEN, 0);
-  }
-}
-
-static void bootloaderTestLoop() {
-  static bool inited = false;
-  static bool lastPressed = false;
-  static bool armed = false;
-  static uint32_t initTime = 0;
-  // In the bench test setup the unit-under-test is left in place, so the
-  // presence switch is held pressed continuously. Wait a few seconds after boot
-  // before arming so there's time to (re)attach the serial monitor after an
-  // upload, then run once for the already-pressed switch (in addition to future
-  // press edges) instead of relying solely on a rising edge.
-  const uint32_t STARTUP_ARMING_DELAY_MS = 4000;
-
-  if (!inited) {
-    // faderBootloader/WireFaderBuddy are already initialized in setup().
-    blShowStatus("BL TEST", "starting...", TFT_DARKGREY);
-    Serial.println("Bootloader test mode: arming in 4s (press switch to run).");
-    initTime = millis();
-    inited = true;
-    lastPressed = !digitalRead(PIN_PRESENCE_SWITCH);  // seed to avoid a stale edge
-  }
-
-  bool pressed = !digitalRead(PIN_PRESENCE_SWITCH);
-
-  if (!armed) {
-    if (millis() - initTime < STARTUP_ARMING_DELAY_MS) {
-      lastPressed = pressed;  // track state while disarmed so we don't miss releases
-      delay(10);
-      return;
-    }
-    armed = true;
-    blShowStatus("BL TEST", "press to run", TFT_DARKGREY);
-    Serial.println("Armed. Running now if presence switch is held.");
-    // Treat a currently-held switch as a trigger by forcing an edge below.
-    lastPressed = false;
-  }
-
-  if (pressed && !lastPressed) {
-    delay(50);  // debounce
-    runBootloaderUpdateTest();
-  }
-  lastPressed = pressed;
-  delay(10);
-}
-#endif  // BOOTLOADER_TEST_MODE
-
 void loop() {
-#ifdef BOOTLOADER_TEST_MODE
-  bootloaderTestLoop();
-  return;
-#endif
+  // Left button (active low): press-and-hold toggles dummy mode.
+  bool buttonPressed = (digitalRead(PIN_BUTTON_LEFT) == LOW);
+  if (buttonPressed && !lastButtonPressed) {
+    buttonPressStartTime = millis();
+    buttonHoldHandled = false;
+  } else if (buttonPressed && !buttonHoldHandled &&
+             millis() - buttonPressStartTime >= BUTTON_HOLD_MS) {
+    dummyMode = !dummyMode;
+    buttonHoldHandled = true;
+    Serial.printf("Dummy mode %s (button hold)\n", dummyMode ? "ENABLED" : "DISABLED");
+  }
+  lastButtonPressed = buttonPressed;
 
   bool pressed = !digitalRead(PIN_PRESENCE_SWITCH);
 

@@ -15,10 +15,21 @@ hardware-validated. Read these three first for context:
 - Bootloader builds/installs (`env:fb_bootloader_only`, chip-erase + BOOTEND/APPEND fuses).
 - Offset app builds and runs at `0x800` (`env:fb_app_only`).
 - **Full I2C update cycle, end-to-end on hardware** via the jig
-  (`production_tools/programAndTest`, `env:bootloader_test`): enter → `ERASE_APP`
+  (`production_tools/programAndTest`, `env:lilygo-t-display`): enter → `ERASE_APP`
   → stream 180 pages (per-frame CRC16) → whole-image CRC verify → `RUN_APP` → app
   boots with the expected `REG_FW_VERSION`. Written flash UPDI-verified against
   the image.
+- **"Enter bootloader from a running app" validated on hardware** as two steps
+  of the jig's normal test sequence (`TEST_FW_BOOTSTRAP` UPDI-flashes a fixed old
+  image, then `TEST_FW_I2C_UPDATE` drives `REG_ENTER_BOOTLOADER` from that
+  running old app through a full update) — every board that goes through the
+  jig now exercises this path. The standalone `env:bootloader_test` /
+  `-DBOOTLOADER_TEST_MODE` build used for isolated bring-up has been removed
+  now that `env:lilygo-t-display` exercises the same
+  `FaderBuddyBootloader::updateFirmware()` path on every jig run. Details:
+  `production_tools/programAndTest/src/main.cpp` (`testFwBootstrap()`,
+  `testFwI2cUpdate()`), `production_tools/programAndTest/test_host.py`
+  (`upload_firmware()`), `production_tools/programAndTest/factory_test_images/`.
 - App-side entry registers/logic exist in `firmware/src/main.cpp`
   (`REG_ENTER_BOOTLOADER` + magic → set flag → write `.noinit` token + software
   reset; `REG_FW_VERSION` readable).
@@ -31,7 +42,7 @@ source ~/.platformio/penv/bin/activate      # required before any pio command
 
 pio run -e fb_bootloader_only -t upload     # install bootloader (chip-erase + fuses)
 pio run -e fb_app_only -t upload            # (re)flash just the app over UPDI
-cd production_tools/programAndTest && pio run -e bootloader_test -t upload   # jig
+cd production_tools/programAndTest && pio run -e lilygo-t-display -t upload   # jig
 pymcuprog read -d attiny1616 -t uart -u /dev/ttyUSB2 -m flash -o 0x800 -b 64 # ground truth
 ```
 
@@ -41,52 +52,6 @@ The jig auto-runs an update on the held-pressed presence switch ~4 s after boot
 reflect boot state if the tool resets the part).
 
 ---
-
-## P0 — Validate "enter bootloader from a running app" on hardware
-
-**Status: wired into the production test flow; needs a real-hardware run.**
-This is no longer a standalone check — it's now two steps of the jig's normal
-test sequence (`production_tools/programAndTest`, `env:lilygo-t-display`), so
-every board that goes through the jig exercises this path:
-
-1. **`TEST_FW_BOOTSTRAP`** (`testFwBootstrap()`): `test_host.py`'s
-   `upload_firmware()` UPDI-flashes a **fixed, checked-in** old image
-   (bootloader + `FW_VERSION=0` app) —
-   `production_tools/programAndTest/factory_test_images/old_firmware_fw0.hex`
-   (see its README for how it was built/regenerated) — establishing "a board
-   that already has the bootloader and is running an old app" as the test's
-   starting state, instead of the old `fb_legacy_no_bootloader` flash. Then
-   `FIRMWARE_PHASE_VALIDATE_OLD` confirms the old app is running and reports
-   `REG_FW_VERSION == OLD_FW_VERSION_FOR_TEST` (0).
-2. **`TEST_FW_I2C_UPDATE`** (`testFwI2cUpdate()`): `FIRMWARE_PHASE_BOOTLOAD_UPDATE`
-   calls `FaderBuddyBootloader::updateFirmware()` against the **pre-baked
-   current app image** (`include/fader_app_image.h`, regenerated every build
-   by `tools/pre_embed_app_image.py`, now wired into `env:lilygo-t-display` as
-   well as the standalone `env:bootloader_test`) — driving `REG_ENTER_BOOTLOADER`
-   entry from the *running old app*, erase, stream, whole-image CRC verify,
-   `RUN_APP`, and `REG_FW_VERSION` re-check — then the jig continues into the
-   existing `TEST_DEBUG_LED` / diagnostics / touch steps against the
-   freshly-updated app.
-
-The LCD's top-right corner shows the fader's live `Pn Fn` (protocol/firmware
-version) readout throughout, so a bench run can visually confirm the version
-flip from the old to the current build as `TEST_FW_I2C_UPDATE` runs.
-
-- **Acceptance:** run the jig on a bench board and confirm `TEST_FW_BOOTSTRAP`
-  then `TEST_FW_I2C_UPDATE` both pass end-to-end (old-firmware UPDI flash →
-  validated old version → I2C bootloader entry from the running old app →
-  update → new version confirmed) and the rest of the test suite passes
-  against the updated app. **Not yet run on hardware** — this session only
-  built, merged, and compile-checked the pieces; a bench run with a real board
-  + jig is still needed.
-
-Files: `production_tools/programAndTest/src/main.cpp` (`testFwBootstrap()`,
-`testFwI2cUpdate()`, `FIRMWARE_PHASE_VALIDATE_OLD`/`FIRMWARE_PHASE_BOOTLOAD_UPDATE`),
-`production_tools/programAndTest/test_host.py` (`upload_firmware()`),
-`production_tools/programAndTest/factory_test_images/`,
-`firmware/src/main.cpp` (search `i2c_enter_bootloader_request`,
-`BL_ENTRY_TOKEN`), `production_tools/programAndTest/src/fader_buddy_bootloader.cpp`
-(`enterBootloader()` / `waitForMarker()` / `updateFirmware()`).
 
 ## P1 — ESPHome host-side firmware packaging + update flow (design §11)
 

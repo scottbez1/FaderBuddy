@@ -39,10 +39,12 @@ real cause of writes never landing was the same TWI-slave defect (missing
 - **UPDI**: USB-serial adapter on `/dev/ttyUSB2`
   (`usb-1a86_USB_Serial-if00-port0`). Used for flashing + **flash/RAM readback**.
 - **Jig**: ESP32 (LilyGo T-Display) on `/dev/ttyUSB0` (CP2104). Talks I2C to the
-  fader on its second bus (SDA=26, SCL=27), 100 kHz. Runs the `bootloader_test`
-  env (`production_tools/programAndTest`), which streams the embedded offset-app
-  image over the bootloader and verifies it. Presence switch starts a run;
-  progress + results print on serial @115200.
+  fader on its second bus (SDA=26, SCL=27), 100 kHz. During this bring-up work
+  it ran a standalone `bootloader_test` env (`production_tools/programAndTest`)
+  that streamed the embedded offset-app image over the bootloader and verified
+  it. That standalone env has since been removed — the same
+  `FaderBuddyBootloader::updateFirmware()` path now runs as part of every
+  `env:lilygo-t-display` jig test (see BOOTLOADER_NEXT.md).
 
 ### Handy commands
 
@@ -64,8 +66,8 @@ pymcuprog read -d attiny1616 -t uart -u /dev/ttyUSB2 -m internal_sram -o 0x710 -
 # Read fuses (byte 7=APPEND, byte 8=BOOTEND)
 pymcuprog read -d attiny1616 -t uart -u /dev/ttyUSB2 -m fuses
 
-# Jig: build+flash the update test, then press the presence switch
-cd production_tools/programAndTest && pio run -e bootloader_test -t upload
+# Jig: build+flash the full test sequence (includes the I2C bootloader update)
+cd production_tools/programAndTest && pio run -e lilygo-t-display -t upload
 ```
 
 **Reading flash/RAM over UPDI is the single most useful debugging tool here** —
@@ -272,8 +274,11 @@ requirement (main clock ≥ 4× SCL) is satisfied by 20 MHz vs 100 kHz.
   `fb_app_and_bootloader`; `firmware/tools/flash_with_fuses.py` (UPDI flash+fuses).
 - `production_tools/programAndTest/` — jig: `src/fader_buddy_bootloader.cpp`
   (I2C bootloader client + `updateFirmware()`), `src/main.cpp`
-  (`runBootloaderUpdateTest()` under `-DBOOTLOADER_TEST_MODE`), `bootloader_test`
-  env, `tools/generate_app_image.py` (embeds the offset app image).
+  (`testFwBootstrap()`/`testFwI2cUpdate()` drive the same update path as part
+  of `env:lilygo-t-display`'s normal test sequence; the standalone
+  `runBootloaderUpdateTest()`/`-DBOOTLOADER_TEST_MODE`/`bootloader_test` env
+  used during this bring-up have been removed), `tools/generate_app_image.py`
+  (embeds the offset app image).
 
 ## Failure-signature reference (CRC16-CCITT over the 11520-byte image)
 

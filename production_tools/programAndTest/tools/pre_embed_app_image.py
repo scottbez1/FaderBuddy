@@ -11,8 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# PlatformIO pre-build hook for the bootloader_test env: (re)generate the
-# embedded FaderBuddy application image header before compiling the jig.
+# PlatformIO pre-build hook: (re)generate the embedded FaderBuddy application
+# image header before compiling the jig.
 import os
 import subprocess
 import sys
