@@ -344,6 +344,36 @@ static void twi_service(void) {
   TWI0.SCTRLB = action;
 }
 
+/* -------------------------------------------------------------- heartbeat */
+
+/* Software-driven debug LED heartbeat (~4 Hz square wave), timed off the
+ * RTC's free-running counter rather than a hardware PWM/auto-toggle
+ * peripheral -- if the main loop ever locks up, heartbeat_update() stops
+ * being called and the LED visibly stops blinking instead of continuing to
+ * toggle on its own. PIN_PB2, matching the application's PIN_LED
+ * (firmware/src/main.cpp). */
+#define LED_PORT   PORTB
+#define LED_PIN_bm PIN2_bm
+
+static void heartbeat_init(void) {
+  LED_PORT.DIRSET = LED_PIN_bm;
+  /* CLK_RTC = 32.768 kHz internal oscillator (RTC.CLKSEL reset default;
+   * written explicitly for clarity) / DIV32 prescaler = 1024 Hz counter
+   * ticks. Toggling on bit 7 of RTC.CNT (128 ticks = 125 ms) yields a ~4 Hz
+   * square wave. No interrupts, no PER/CMP setup -- just a free-running count
+   * to poll each main-loop iteration. */
+  RTC.CLKSEL = RTC_CLKSEL_INT32K_gc;
+  RTC.CTRLA  = RTC_PRESCALER_DIV32_gc | RTC_RTCEN_bm;
+}
+
+static inline void heartbeat_update(void) {
+  if (RTC.CNT & 0x0080) {
+    LED_PORT.OUTSET = LED_PIN_bm;
+  } else {
+    LED_PORT.OUTCLR = LED_PIN_bm;
+  }
+}
+
 /* ------------------------------------------------------------------ entry */
 
 static void jump_to_app(void) __attribute__((noreturn));
@@ -352,6 +382,7 @@ static void jump_to_app(void) {
   /* Return the peripherals we touched to a clean state for the application. */
   TWI0.SCTRLA = 0;
   TWI0.SADDR  = 0;
+  RTC.CTRLA   = 0;
   /* AVR function pointers are word addresses; the app's reset vector lives at
    * byte address BL_APP_START. Jumping there runs the app's own crt0, which
    * re-initializes the stack, .data and .bss. */
@@ -379,9 +410,11 @@ int main(void) {
   s_page_addr_valid = false;
 
   twi_slave_init();
+  heartbeat_init();
 
   for (;;) {
     twi_service();
+    heartbeat_update();
     if (s_run_app && app_is_valid()) {
       jump_to_app();
     }
