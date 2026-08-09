@@ -414,9 +414,12 @@ only remaining case that still needs a physical programmer.
 
 ## 11. Host-side firmware packaging & update policy (ESPHome)
 
-Yes — the ESP32 host can carry the fader firmware and drive updates. This describes
-how the ESPHome component (`esphome/components/fader_buddy/`) would gain that, still
-as a design (not implemented here).
+> **Status: implemented.** The ESPHome component (`esphome/components/fader_buddy/`)
+> embeds the packaged application image at codegen time and drives the full update
+> sequence via a manual `fader_buddy.update_firmware` action. Config-validated and
+> compiled end-to-end against a real ESPHome build; not yet exercised against
+> hardware (the jig remains the hardware-validated reference implementation of this
+> sequence).
 
 ### What gets packaged
 
@@ -424,17 +427,31 @@ Only the **application** is written over I2C. The bootloader is deliberately **n
 field-updatable** (it is write-protected from the app per [§3](#3-boot-section-integrity-write-protection),
 and it cannot safely rewrite itself while running) — so bootloader changes always
 require UPDI, and keeping it small and stable is a feature, not a limitation. The
-packaged blob is therefore the **offset application image** (the exact APPCODE
-bytes), plus its `REG_FW_VERSION`.
+packaged blob is the **offset application image** (the exact page-aligned APPCODE
+bytes, `.bin` format, produced by `firmware/tools/export_app_image.py`).
+
+Its `FW_VERSION` is **not** a separate config field — it's baked into the image
+itself, at the fixed last-2-bytes-of-flash address (`BL_APP_META_ADDR` in
+`bootloader_protocol.h`, `FW_VERSION_FOOTER` in `firmware/src/main.cpp`). Because the
+app section always runs to `FLASHEND` regardless of app size, that address never
+moves as the app grows. The component reads the version straight from the last 2
+bytes of the packaged `.bin`, which is by construction identical to what the flashed
+app will report via `REG_FW_VERSION` — there's no separate value that could drift out
+of sync. The whole-image CRC16 (compared against `GET_VERSION_CRC16` after streaming)
+isn't baked in either, for a different reason: a CRC over the whole image can't
+sensibly include itself. It's computed by `to_code()` directly from the packaged
+`.bin` bytes at ESPHome-build time, the same way `export_app_image.py` computes it
+for the jig — also automatically correct, since it's a hash of the exact bytes being
+embedded rather than a hand-maintained number.
 
 ### Embedding the blob (codegen)
 
 The component's `__init__.py` `to_code()` emits the image as a
-`const uint8_t[] PROGMEM` array plus a version constant. Because the component is
-`MULTI_CONF = True` (many faders, all running the same firmware), emit the blob
-**once** — guard it with a module-level "already emitted" flag in `to_code` and
-share the symbol across instances rather than duplicating a ~16 KB array per fader.
-ESP32 flash has ample room for one copy.
+`static const uint8_t[] PROGMEM` array via `cg.add_global(cg.RawExpression(...))`.
+Because the component is `MULTI_CONF = True` (many faders, all running the same
+firmware), the blob is emitted **once per distinct image path** — a module-level
+cache (`_firmware_image_cache`, keyed by resolved path) shares the symbol across
+instances pointing at the same file rather than duplicating a ~14 KB array per fader.
 
 ### Config surface
 
@@ -442,50 +459,50 @@ ESP32 flash has ample room for one copy.
 fader_buddy:
   - id: fader0
     address: 0x20
-    firmware_image: firmware/faderbuddy-app-v6.bin   # bundled image
-    autoupdate_firmware: false        # default; opt-in only (see below)
-    max_update_attempts: 3            # per-address safety cap
+    firmware_image: firmware/faderbuddy-app-v6.bin   # bundled image; omit to disable updates
+    max_update_attempts: 3                           # per-address+version safety cap (default 3)
+    on_firmware_update_result:
+      then:
+        - lambda: |-
+            ESP_LOGI("main", "update: success=%d message=%s", success, message.c_str());
 ```
 
 ### The update flow
 
-Registered as a **manual action** `fader_buddy.update_firmware` (added alongside the
-existing actions in `__init__.py` / `fader_buddy.h`), driving the state machine from
-[§8](#8-application-side-changes-specified-not-implemented): read version → (if
-different) `REG_ENTER_BOOTLOADER` → wait for bootloader marker at `0x00` →
-`ERASE_APP` → stream pages (`SET_PAGE_ADDR` + 4× `SEND_FRAME` with CRC16) →
-`GET_VERSION_CRC16` whole-image verify → `RUN_APP` → re-read `REG_FW_VERSION` to
-confirm. Reuse the existing `write_with_retry_()` helper for the I2C transfers.
+Registered as a **manual action** `fader_buddy.update_firmware` (`fader_buddy.h`'s
+`UpdateFirmwareAction`, driving `FaderBuddy::update_firmware()`), the only way an
+update ever runs — **there is no autoupdate mode**; a human always triggers it
+explicitly. The sequence, ported from the jig's reference implementation
+(`production_tools/programAndTest/src/fader_buddy_bootloader.cpp`): probe register
+`0x00` (app version or bootloader marker) → (if not already resident)
+`REG_ENTER_BOOTLOADER` → wait for the bootloader marker → `ERASE_APP` → stream pages
+(`SET_PAGE_ADDR` + 4× `SEND_FRAME` with per-frame CRC16) → `GET_VERSION_CRC16`
+whole-image verify → `RUN_APP` → re-read `REG_FW_VERSION` to confirm. Runs
+synchronously (blocks the ESPHome loop for the whole transfer, feeding the watchdog
+via `App.feed_wdt()` periodically) rather than as a coroutine — this mirrors the
+jig's blocking style and keeps the bus-serialization guarantee below trivial to
+reason about.
 
-### Auto vs. manual — recommendation
+### Guard rails (as implemented)
 
-**Default to manual** (an explicit `update_firmware` action / button / HA service),
-because every update briefly takes a fader offline and writes its flash, and a
-human-triggered update is the safest posture. Offer `autoupdate_firmware: true` as
-an **opt-in** for users who want faders to converge to the packaged version on their
-own. This matches the intuition that automatic flashing deserves extra guard rails.
-
-### Guard rails (both modes, essential for autoupdate)
-
-- **Update only on version mismatch** — never reflash a fader already at the packaged
-  `REG_FW_VERSION` (or already showing the bootloader marker / no-app).
-- **Per-address attempt tracking in persistent storage** — use ESPHome
-  `ESPPreferences` (`global_preferences->make_preference<...>()`), keyed by I2C
-  address **and** target version. Increment on failure; once
-  `max_update_attempts` consecutive failures is hit for a given target version,
-  **stop** and surface the condition (e.g. a `binary_sensor` "update_failed" or a
-  `text_sensor` status). Reset the counter on success or when the packaged version
-  changes. This is what stops a bad image from endlessly re-flashing.
-- **Flash-wear reasoning** — the ATtiny1616's flash endurance is on the order of
-  **10,000 write/erase cycles** (confirmed against the datasheet). Updating *only on
-  mismatch* means the normal cost is a handful of cycles over a board's life; the
-  attempt cap is the real safeguard against a pathological retry loop burning through
-  endurance.
-- **Don't interrupt the user** — defer an update while the fader is in use
-  (`MODE_INPUT_ACTIVE`); wait for idle.
-- **One fader at a time** — never run two updates concurrently on the shared bus, so
-  a stuck transfer can't wedge neighbors (pairs with the bus-recovery notes in
-  [§12](#12-risks--open-questions)).
+- **Update only on version mismatch** — a no-op (reported as success) if the fader
+  already reports the packaged `REG_FW_VERSION`.
+- **Per-address+version attempt tracking in persistent storage** — `ESPPreferences`
+  (`global_preferences->make_preference<uint8_t>(...)`), keyed by a hash of the I2C
+  address **and** target version. Incremented on failure; once `max_update_attempts`
+  is reached for a given target version, further attempts are refused without
+  touching the bus. Because the key includes the target version, switching to a
+  differently-versioned packaged image starts a fresh (zero) counter automatically —
+  no explicit reset logic needed. Result (success/failure + reason) is surfaced via
+  the `on_firmware_update_result` trigger for the user to wire to whatever
+  sensor/notification they want.
+- **Don't interrupt the user** — `update_firmware()` waits (bounded, 5s) for the
+  fader to leave `MODE_INPUT_ACTIVE` before taking the bus; gives up and reports
+  failure if it's still in use.
+- **One fader at a time** — a class-static `s_update_in_progress` flag refuses a
+  second concurrent update across all `FaderBuddy` instances (relevant if two update
+  actions are triggered from different tasks, e.g. concurrent HA service calls; the
+  single-threaded ESPHome main loop already serializes same-task calls).
 
 ## 12. Risks & open questions
 

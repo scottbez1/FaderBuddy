@@ -53,28 +53,41 @@ reflect boot state if the tool resets the part).
 
 ---
 
-## P1 — ESPHome host-side firmware packaging + update flow (design §11)
+## P1 — ESPHome host-side firmware packaging + update flow (design §11) — DONE (untested on hardware)
 
-The biggest remaining feature. Only the protocol constants exist in
-`esphome/components/fader_buddy/`; the update state machine does not. Implement
-per ABOUT_I2C_BOOTLOADER.md §11:
+Implemented per ABOUT_I2C_BOOTLOADER.md §11, config-validated and compiled
+end-to-end against a real ESPHome build (`esphome compile`), but **not yet run
+against real hardware** — the jig remains the only hardware-validated exerciser of
+this sequence. Before relying on it:
 
-- Embed the offset app image + `REG_FW_VERSION` via `__init__.py` `to_code()`
-  (emit the ~11.5 KB blob **once**, shared across `MULTI_CONF` instances).
-- Add a manual `fader_buddy.update_firmware` action driving: read version → (if
-  mismatch) `REG_ENTER_BOOTLOADER` → wait for marker → `ERASE_APP` → stream pages
-  → whole-image `GET_VERSION_CRC16` verify → `RUN_APP` → re-read `REG_FW_VERSION`.
-  Reuse `write_with_retry_()`.
-- Config surface: `firmware_image:`, `autoupdate_firmware:` (default false),
-  `max_update_attempts:`.
-- Guard rails: update only on version mismatch; per-address+version attempt cap
-  in `ESPPreferences`; defer while `MODE_INPUT_ACTIVE`; one fader at a time.
-- Port the bootloader client logic from the jig
-  (`production_tools/programAndTest/src/fader_buddy_bootloader.cpp`) — it's the
-  reference implementation of the sequence.
-- **Acceptance:** ESPHome updates a mismatched fader via the manual action;
-  refuses to reflash a fader already at the packaged version; attempt cap stops
-  retries and surfaces a failure status.
+- Flash a board with a deliberately old `FW_VERSION`, point `firmware_image:` at a
+  newer `env:fb_app_only` build (via `firmware/tools/export_app_image.py`), and run
+  `fader_buddy.update_firmware` for real over I2C.
+- Confirm the attempt cap actually persists across an ESP32 reboot (i.e.
+  `ESPPreferences` survives), and that a failure is visible via
+  `on_firmware_update_result`.
+- Confirm `update_firmware` refuses/defers correctly while a fader is actively being
+  touched, and that it doesn't wedge the ESPHome loop watchdog on a slow/stalled
+  transfer.
+
+Notable decisions made during implementation (beyond what §11 originally sketched):
+
+- **No autoupdate mode.** Only the manual `fader_buddy.update_firmware` action ever
+  triggers an update — simpler and matches the "safest posture" reasoning in §11's
+  original auto-vs-manual discussion, just taken further (no opt-in autoupdate at
+  all, so no `autoupdate_firmware:` config key).
+- **`FW_VERSION` is baked into the image, not a YAML field.** Added a
+  `FW_VERSION_FOOTER` in `firmware/src/main.cpp`, linked to a fixed address
+  (`BL_APP_META_ADDR` = last 2 bytes of flash, `bootloader_protocol.h`) via
+  `-Wl,--section-start=.fw_meta=...` in `platformio.ini`. Since the app section
+  always runs to `FLASHEND`, this address is stable regardless of app size, so the
+  host reads the version straight from the packaged `.bin`'s last 2 bytes with zero
+  chance of drifting from what the flashed app actually reports. The whole-image
+  CRC16 is *not* baked in (self-referential — a CRC can't cover itself) and is
+  instead computed by `__init__.py` `to_code()` directly from the `.bin` bytes.
+- **New tool: `firmware/tools/export_app_image.py`** — produces the raw `.bin` that
+  `firmware_image:` points to (mirrors `generate_app_image.py`'s extraction logic
+  for the jig, but emits a binary instead of a C header).
 
 ## P1 — Shared-bus robustness (design §9 / §12)
 

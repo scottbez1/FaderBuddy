@@ -27,6 +27,17 @@
 
 #define DEMO 0
 
+// App metadata footer for the I2C bootloader host (see BL_APP_META_ADDR):
+// the two bytes at the fixed end-of-flash address, always equal to the same
+// FW_VERSION reported at runtime via REG_FW_VERSION below. Linked to that
+// fixed address by -Wl,--section-start=.fw_meta=... in platformio.ini
+// (env:fb_app_only); the bootloader does not read this.
+extern "C" __attribute__((section(".fw_meta"), used))
+const uint8_t FW_VERSION_FOOTER[2] = {
+    (uint8_t)((FW_VERSION >> 8) & 0xFF),
+    (uint8_t)(FW_VERSION & 0xFF),
+};
+
 #define PIN_LED (PIN_PB2)
 
 // Heartbeat blink period for PIN_LED, in ms (25% duty cycle). Overridable via
