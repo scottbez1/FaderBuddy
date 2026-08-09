@@ -82,12 +82,22 @@ class TestHost:
 
     def upload_firmware(self) -> bool:
         """
-        Upload firmware to ATtiny1616 using PlatformIO.
+        UPDI-flash the fixed "old firmware" image (bootloader + FW_VERSION=0
+        application) onto the DUT, via firmware/tools/flash_with_fuses.py.
+
+        This establishes the jig's starting state as "a board that already has
+        the bootloader installed and is running an old application" -- the
+        precondition the jig firmware then needs in order to exercise
+        entering the I2C bootloader from a *running app* and updating it to
+        the current application in-band (see BOOTLOADER_NEXT.md P0). It
+        deliberately does NOT build/upload the current firmware -- that
+        happens over I2C, driven by the jig itself once this UPDI flash
+        succeeds.
 
         Returns:
             True if upload succeeded, False otherwise
         """
-        logging.info("Starting firmware upload...")
+        logging.info("Starting firmware upload (fixed old-version image via UPDI)...")
 
         # Clear serial number from previous upload
         self.serial_number = None
@@ -105,50 +115,55 @@ class TestHost:
             # See: https://docs.platformio.org/en/latest/core/installation/methods/installer-script.html
             home_dir = os.path.expanduser("~")
             pio_venv = os.path.join(home_dir, ".platformio", "penv")
-            activate_script = os.path.join(pio_venv, "bin", "activate")
+            venv_python = os.path.join(pio_venv, "bin", "python")
 
-            # Check if PlatformIO venv exists
-            if not os.path.exists(activate_script):
+            # Check if PlatformIO venv exists (flash_with_fuses.py needs pymcuprog,
+            # which is installed into this venv by the firmware's PlatformIO envs)
+            if not os.path.exists(venv_python):
                 logging.error(f"PlatformIO virtual environment not found at {pio_venv}")
                 logging.error("Please ensure PlatformIO is installed correctly")
                 return False
 
             logging.info(f"Using PlatformIO venv: {pio_venv}")
 
-            # Build PIO command
-            pio_cmd = "pio run -e fader_buddy --target upload --verbose --upload-port /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
+            flash_script = self.repo_root / "firmware" / "tools" / "flash_with_fuses.py"
+            old_image_hex = (self.script_dir / "factory_test_images" / "old_firmware_fw0.hex")
+            if not old_image_hex.exists():
+                logging.error(f"Fixed old-firmware image not found: {old_image_hex}")
+                return False
 
-            # Override upload port if specified
+            port = self.updi_port or "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
             if self.updi_port:
-                pio_cmd += f" --upload-port {self.updi_port}"
                 logging.info(f"Using UPDI port override: {self.updi_port}")
 
-            # Combine into shell command with activation
-            full_cmd = f"source {activate_script} && {pio_cmd}"
+            cmd = [
+                venv_python, str(flash_script),
+                "--port", port,
+                "--hex", str(old_image_hex),
+                "--erase",
+                "--bootend", "0x08",
+                "--append", "0x00",
+            ]
 
-            logging.info(f"Running: {full_cmd}")
+            logging.info(f"Running: {' '.join(cmd)}")
 
             # Run the command
             result = subprocess.run(
-                full_cmd,
-                shell=True,
+                cmd,
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
                 timeout=60,  # 60 second timeout for upload
-                executable='/bin/bash'
             )
 
             # Log output
             if result.stdout:
                 for line in result.stdout.splitlines():
-                    logging.debug(f"PIO stdout: {line}")
+                    logging.debug(f"flash_with_fuses stdout: {line}")
             if result.stderr:
                 for line in result.stderr.splitlines():
-                    logging.debug(f"PIO stderr: {line}")
+                    logging.debug(f"flash_with_fuses stderr: {line}")
 
-            # Check for success
-            # PlatformIO returns 0 on success
             if result.returncode == 0:
                 logging.info("Firmware upload succeeded!")
                 return True

@@ -20,13 +20,34 @@
 #include <EEPROM.h>
 
 #include "shared/i2c_data.h"
+#include "shared/bootloader_protocol.h"
 #include "util.h"
 
 
 
 #define DEMO 0
 
+// App metadata footer for the I2C bootloader host (see BL_APP_META_ADDR):
+// the two bytes at the fixed end-of-flash address, always equal to the same
+// FW_VERSION reported at runtime via REG_FW_VERSION below. Linked to that
+// fixed address by -Wl,--section-start=.fw_meta=... in platformio.ini
+// (env:fb_app_only); the bootloader does not read this.
+extern "C" __attribute__((section(".fw_meta"), used))
+const uint8_t FW_VERSION_FOOTER[2] = {
+    (uint8_t)((FW_VERSION >> 8) & 0xFF),
+    (uint8_t)(FW_VERSION & 0xFF),
+};
+
 #define PIN_LED (PIN_PB2)
+
+// Heartbeat blink period for PIN_LED, in ms (25% duty cycle). Overridable via
+// build flag (-DDEBUG_LED_BLINK_PERIOD_MS=N) -- e.g. the fixed "old firmware"
+// factory test image (see production_tools/programAndTest/factory_test_images/
+// old_firmware_fw0.hex) is built with this halved so it's visually
+// distinguishable from current firmware by blink rate alone.
+#ifndef DEBUG_LED_BLINK_PERIOD_MS
+#define DEBUG_LED_BLINK_PERIOD_MS (512)
+#endif
 
 #define PIN_MOTOR_nSLEEP (PIN_PB3)
 
@@ -132,6 +153,7 @@ volatile uint32_t i2c_outgoing_state = state;
 // ISR -> Main loop communication (incoming requests from I2C writes)
 volatile bool i2c_clear_error_request = false;
 volatile bool i2c_self_cal_request = false;
+volatile bool i2c_enter_bootloader_request = false;  // set when a valid REG_ENTER_BOOTLOADER arrives
 volatile uint8_t i2c_layer_change_request = 0xFF;  // 0xFF = none, 0-7 = layer
 
 struct LayerTargetWrite {
@@ -273,6 +295,10 @@ void onI2cRequest() {
       uint16_t config = layer_haptic_configs[queried_layer];
       Wire.write((config >> 8) & 0xFF);  // High byte
       Wire.write(config & 0xFF);          // Low byte
+  } else if (r == REG_FW_VERSION) {
+      // Application firmware version (16 bits, big-endian)
+      Wire.write((FW_VERSION >> 8) & 0xFF);  // High byte
+      Wire.write(FW_VERSION & 0xFF);         // Low byte
   }
 }
 
@@ -326,6 +352,23 @@ void onI2cReceive(int howMany) {
         i2c_layer_haptic_write.valid = true;
       }
       break;
+    case REG_ENTER_BOOTLOADER:
+      // Reboot into the I2C bootloader, but only if the exact magic payload is
+      // present (register + 4 big-endian magic bytes). Only set a flag here; the
+      // token write + software reset happen in the main loop (see §8/§9 of
+      // ABOUT_I2C_BOOTLOADER.md) -- never touch NVM/reset from ISR context.
+      if (howMany == 5) {
+        uint32_t magic = ((uint32_t)Wire.read() << 24) |
+                         ((uint32_t)Wire.read() << 16) |
+                         ((uint32_t)Wire.read() << 8) |
+                         ((uint32_t)Wire.read());
+        if (magic == ENTER_BOOTLOADER_MAGIC) {
+          i2c_enter_bootloader_request = true;
+        }
+      } else {
+        while (Wire.available()) Wire.read();
+      }
+      break;
     case REG_VERSION:
     case REG_STATE:
     case REG_UPTIME:
@@ -334,6 +377,7 @@ void onI2cReceive(int howMany) {
     case REG_TOUCH_DELTA:
     case REG_TOUCH_REF:
     case REG_TOUCH_RECAL:
+    case REG_FW_VERSION:
       // Read-only registers, ignore writes
       // Discard any excess data
       while (Wire.available()) Wire.read();
@@ -874,12 +918,29 @@ void setup() {
   pending_calibrate_touch = true;
 }
 
+// Reboot into the I2C bootloader. Stops the motor, writes the entry token to
+// the fixed .noinit RAM location the bootloader reads, and issues a software
+// reset. Must run outside ISR context. Never returns.
+void enter_bootloader_now() {
+  cli();
+  // Stop the motor so it doesn't keep driving across the reset.
+  TCA0.SPLIT.HCMP1 = 0;
+  TCA0.SPLIT.HCMP2 = 0;
+  digitalWrite(PIN_MOTOR_A, LOW);
+  digitalWrite(PIN_MOTOR_B, LOW);
+
+  BL_ENTRY_TOKEN = BL_ENTRY_TOKEN_MAGIC;
+  _PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm);  // software reset (CCP IOREG protected)
+  for (;;) {}  // wait for the reset to take effect
+}
+
 // Process I2C requests that were queued by ISR callbacks
 // This must be called from main loop (non-ISR context) before motor_update()
 void process_i2c_requests() {
   // Local copies of all i2c requests
   bool clear_error = false;
   bool self_cal = false;
+  bool enter_bootloader = false;
   uint8_t layer_change = 0xFF;
   bool has_layer_target = false;
   uint8_t layer_target_layer = 0;
@@ -896,6 +957,9 @@ void process_i2c_requests() {
 
   self_cal = i2c_self_cal_request;
   i2c_self_cal_request = false;
+
+  enter_bootloader = i2c_enter_bootloader_request;
+  i2c_enter_bootloader_request = false;
 
   layer_change = i2c_layer_change_request;
   i2c_layer_change_request = 0xFF;
@@ -917,6 +981,14 @@ void process_i2c_requests() {
   interrupts();
 
   // Process all requests outside critical section
+
+  if (enter_bootloader) {
+    // Stash the entry token in .noinit RAM and trigger a software reset. The
+    // bootloader (which owns the reset vector) sees the software-reset flag plus
+    // the token and stays resident. This call never returns.
+    enter_bootloader_now();
+  }
+
   if (clear_error) {
     if (get_mode() == MODE_ERROR) {
       set_mode(MODE_INPUT_IDLE);
@@ -971,7 +1043,7 @@ void loop() {
   ptc_process(millis());
 
   // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
-  digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) || (millis() % 512 < 128));
+  digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) || (millis() % DEBUG_LED_BLINK_PERIOD_MS < DEBUG_LED_BLINK_PERIOD_MS / 4));
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
