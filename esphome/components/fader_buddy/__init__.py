@@ -19,9 +19,13 @@ from esphome.const import CONF_ID, CONF_MODE
 
 MULTI_CONF = True
 DEPENDENCIES = ["i2c"]
+AUTO_LOAD = ["text_sensor"]
 
 fader_buddy_ns = cg.esphome_ns.namespace("fader_buddy")
 FaderBuddy = fader_buddy_ns.class_("FaderBuddy", cg.PollingComponent, i2c.I2CDevice)
+
+# Used by platform files (e.g. text_sensor) to reference the parent hub
+CONF_FADER_BUDDY_ID = "fader_buddy_id"
 
 # Define haptic mode enum (in global namespace, shared with firmware)
 HapticMode = cg.global_ns.enum("HapticMode")
