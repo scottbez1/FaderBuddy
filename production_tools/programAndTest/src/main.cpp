@@ -85,6 +85,7 @@ enum TestState {
 };
 
 TestState currentTestState = TEST_IDLE;
+TestState lastReportedTestState = TEST_IDLE;  // Last state reported to host script over serial
 bool lastPresenceState = false;
 
 // Motor fader version info (read once per test run)
@@ -1235,7 +1236,17 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
       currentTestState != TEST_PASSED &&
       currentTestState != TEST_FAILED) {
     Serial.println("\n=== Test Aborted (presence released) ===\n");
+
+    // Ensure the servo isn't left resting on the fader (e.g. mid touch-sensor test)
+    servo.write(SERVO_CLEAR_POS);
+
+    // Report cancellation to host script for CSV logging
+    Serial.print(">>TEST_RESULT:CANCELLED:");
+    Serial.print(getTestStateName(currentTestState));
+    Serial.println("<<");
+
     currentTestState = TEST_IDLE;
+    lastReportedTestState = TEST_IDLE;
     clearSerialBuffer();  // Clear serial buffer
     versionInfo.valid = false;
     faderState.valid = false;
@@ -1384,6 +1395,23 @@ void handleTestStateMachine(bool presencePressed, float v0, float i0, float v1, 
         faderState.valid = false;
       }
       break;
+  }
+
+  // Report test lifecycle transitions to the host script so it can log results to CSV.
+  // Only the interesting transitions (test start / pass / fail) are sent; everything
+  // else (e.g. moving between individual sub-tests) updates lastReportedTestState
+  // without emitting anything.
+  if (currentTestState != lastReportedTestState) {
+    if (currentTestState == TEST_LOGIC_POWER) {
+      Serial.println(">>TEST_START<<");
+    } else if (currentTestState == TEST_PASSED) {
+      Serial.println(">>TEST_RESULT:PASS<<");
+    } else if (currentTestState == TEST_FAILED) {
+      Serial.print(">>TEST_RESULT:FAIL:");
+      Serial.print(testTracking.failedTestName);
+      Serial.println("<<");
+    }
+    lastReportedTestState = currentTestState;
   }
 
   lastPresenceState = presencePressed;
