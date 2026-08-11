@@ -217,6 +217,23 @@ button:
           id: my_fader
 ```
 
+## Text Sensors
+
+### serial_number
+
+You can expose the microcontroller's serial number as a text sensor, which is handy for identifying a specific board for diagnostics. The serial is read once at startup and published as an uppercase hex string.
+
+
+```yaml
+text_sensor:
+  - platform: fader_buddy
+    fader_buddy_id: my_fader
+    serial_number:
+      name: "Fader Serial Number"
+```
+
+The `serial_number` block accepts the standard ESPHome text sensor options (e.g. `name`, `id`, `icon`). It defaults to the `diagnostic` entity category.
+
 ## C++ API (for Lambdas)
 
 When writing lambda expressions, you can call these methods directly on the component:
@@ -235,6 +252,9 @@ id(my_fader).set_layer_haptic_config(layer, mode, detent_count, detent_strength)
 
 // Calibration
 id(my_fader).run_self_calibration();
+
+// Serial number (empty until read at startup)
+std::string serial = id(my_fader).get_serial_number();
 ```
 
 ## Complete Example: Light Brightness Control
@@ -259,11 +279,12 @@ fader_buddy:
             data:
               entity_id: light.living_room
               brightness: !lambda 'return x;'
-              transition: 0
+              transition: "0"
 
 # Light brightness changes in Home Assistant → move fader
 sensor:
   - platform: homeassistant
+    id: living_room_brightness
     entity_id: light.living_room
     attribute: brightness
     internal: true
