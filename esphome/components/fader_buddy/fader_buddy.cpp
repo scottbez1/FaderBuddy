@@ -50,6 +50,9 @@ void FaderBuddy::setup() {
 
   ESP_LOGCONFIG(TAG, "FaderBuddy initialized (protocol v%d)", buffer);
 
+  // Read the chip serial number once (static factory ID) and publish it.
+  read_serial_number_();
+
   // Send initial haptic configurations to firmware
   for (uint8_t i = 0; i < 8; i++) {
     if (initial_haptic_configs_[i].valid) {
@@ -74,7 +77,35 @@ void FaderBuddy::dump_config() {
     ESP_LOGE(TAG, "Communication failed");
   }
 
+  if (!this->serial_number_.empty()) {
+    ESP_LOGCONFIG(TAG, "  Serial Number: %s", this->serial_number_.c_str());
+  }
+  LOG_TEXT_SENSOR("  ", "Serial Number", this->serial_text_sensor_);
+
   LOG_UPDATE_INTERVAL(this);
+}
+
+// Read the 10-byte chip serial number and cache it as an uppercase hex string.
+// The serial is a static factory ID, so this only needs to run once at setup.
+void FaderBuddy::read_serial_number_() {
+  uint8_t reg = REG_SERIAL;
+  uint8_t serial[10];
+  auto read_result = this->write_read(&reg, 1, serial, sizeof(serial));
+  if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
+    ESP_LOGW(TAG, "Failed to read serial number: %d", read_result);
+    return;
+  }
+
+  char buf[sizeof(serial) * 2 + 1];
+  for (size_t i = 0; i < sizeof(serial); i++) {
+    sprintf(buf + i * 2, "%02X", serial[i]);
+  }
+  this->serial_number_ = buf;
+  ESP_LOGCONFIG(TAG, "Serial number: %s", this->serial_number_.c_str());
+
+  if (this->serial_text_sensor_ != nullptr) {
+    this->serial_text_sensor_->publish_state(this->serial_number_);
+  }
 }
 
 float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }

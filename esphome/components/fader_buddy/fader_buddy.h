@@ -17,8 +17,11 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/i2c/i2c.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/optional.h"
+
+#include <string>
 
 namespace esphome {
 namespace fader_buddy {
@@ -54,6 +57,11 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     void set_invert(bool invert) { invert_ = invert; }
     void set_layer_value_change_min_interval(uint8_t layer, uint32_t min_interval_ms);
 
+    // Chip serial number (10-byte factory ID, read once at setup). Returns an
+    // uppercase hex string (e.g. "AABBCCDDEEFF00112233"), or "" if not yet read.
+    std::string get_serial_number() const { return serial_number_; }
+    void set_serial_text_sensor(text_sensor::TextSensor *s) { serial_text_sensor_ = s; }
+
     // Called only from codegen to store initial haptic configs
     void store_initial_layer_haptic_config(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
 
@@ -73,8 +81,12 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         Trigger<uint8_t> *on_double_tap_{new Trigger<uint8_t>()};
 
     private:
+        void read_serial_number_();
+
         // State variables
         uint32_t last_state_{0};
+        std::string serial_number_;
+        text_sensor::TextSensor *serial_text_sensor_{nullptr};
         HighFrequencyLoopRequester high_freq_;
         bool invert_{false};
         bool last_touch_{false};
