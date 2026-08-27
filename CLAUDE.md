@@ -80,7 +80,22 @@ Electronics artifacts (JLCPCB files, schematics, PDFs, 3D renders) are generated
 # Generate PCB overview PDF
 ./ci/electronics/generate_pdf.py --release-prefix releases/electronics/ \
   electronics/fader_buddy_main.kicad_pcb
+
+# Generate a panelized board (2x5 grid with breakaway rails and mousebites)
+kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
+  electronics/fader_buddy_main.kicad_pcb \
+  electronics/build/panelized_fader_buddy_main.kicad_pcb
+
+# Generate JLCPCB fabrication files for the panel
+./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ \
+  --assembly-schematic electronics/fader_buddy_main.kicad_sch --no-drc \
+  electronics/build/panelized_fader_buddy_main.kicad_pcb
 ```
+
+Panelization settings (grid size, tab count/width, mousebite drill/spacing, rail
+width, rail silkscreen text) live in `electronics/fader_buddy_main-kikit_panelize.json`.
+The panel is a generated artifact - never commit `electronics/build/`, and never
+hand-edit the source `.kicad_pcb` to add panelization.
 
 CI automatically exports all electronics artifacts on push (see `.github/workflows/electronics.yml`).
 

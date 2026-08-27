@@ -36,3 +36,25 @@ The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering
 - **5 connections** for the male daisy-chaining pin headers
 
 No fine-pitch or SMD soldering is required.
+
+<details>
+<summary><b>Advanced: panelized ordering (10 boards per panel)</b></summary>
+
+Only relevant if you're ordering FaderBuddy PCBs in bulk - for a handful of boards, use the single-board files above.
+
+For larger quantities there's also a panelized version of the board: a 2x5 grid of FaderBuddy PCBs (10 per panel) joined by mousebite tabs, surrounded by breakaway rails for the assembly machine. This is usually cheaper per-board than ordering the single board, since JLCPCB charges per panel, and it means less setup fee overhead for assembly.
+
+The panel is generated automatically by CI using [KiKit](https://github.com/yaqwsx/KiKit); see `electronics/fader_buddy_main-kikit_panelize.json` for the panelization settings (grid size, tab/mousebite parameters, rail width).
+
+- Ordering (Configured for JLCPCB) - when ordering, indicate the boards are panelized by the customer, 10 boards per panel
+  - [Untested panelized gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-jlc/gerbers.zip)
+  - [Untested panelized BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-jlc/bom.csv)
+  - [Untested panelized CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-jlc/pos.csv)
+
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_top.png" width="400" />
+</a>
+
+To depanelize: snap off the top and bottom rails first, then the left and right rails, and finally separate the individual boards at the remaining mousebite tabs. The tabs are only on the short (left/right) edges of each board, away from the LEDs and test pads. Sand or file the leftover mousebite nubs flush if they interfere with mounting.
+
+</details>
