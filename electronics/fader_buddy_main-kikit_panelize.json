@@ -1,0 +1,59 @@
+{
+    // Panelization config for fader_buddy_main, applied with:
+    //   kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
+    //       electronics/fader_buddy_main.kicad_pcb electronics/build/panelized_fader_buddy_main.kicad_pcb
+    //
+    // A single board is 59 x 17mm, so a 2x5 grid plus a 5mm frame yields a
+    // panel of roughly 134 x 110mm containing 10 boards.
+    "layout": {
+        "type": "grid",
+        "rows": 5,
+        "cols": 2,
+        // Board-to-board gap. Each of these joints is cut twice (once at each
+        // board's outline), so the leftover strip between two boards is exactly
+        // this wide -- keep it wide enough to grab and snap off as one piece.
+        "space": "3mm",
+        // Leave ${COMMIT_HASH}/${RELEASE_VERSION} etc. as-is; they get
+        // substituted later by ci/electronics/export_util.py and KiBot.
+        "baketext": false
+    },
+    "tabs": {
+        // Explicit tab positions -- see electronics/kikit_faderbuddy_tabs.py for
+        // why the built-in evenly-spaced tabs don't work for this outline.
+        "type": "plugin",
+        "code": "electronics/kikit_faderbuddy_tabs.py.FaderBuddyTabs",
+        // hwidth: single tab on each short (left/right) edge
+        // vwidth: the two row-to-row tabs on each long (top/bottom) edge
+        "hwidth": "5mm",
+        "vwidth": "3mm"
+    },
+    "cuts": {
+        "type": "mousebites",
+        "drill": "0.6mm",
+        "spacing": "1mm",
+        "offset": "-0.1mm"
+    },
+    "framing": {
+        "type": "frame",
+        "width": "5mm",
+        "space": "1.4mm",
+        // Cut the frame at all four corners so each rail snaps off cleanly
+        "cuts": "both"
+    },
+    "fiducials": {
+        "type": "4fid",
+        "hoffset": "14mm",
+        "voffset": "2.5mm",
+        "coppersize": "1mm",
+        "opening": "2mm"
+    },
+    "post": {
+        "millradius": "0.7mm",
+        // Refill the copper zones after panelization so they keep clearance
+        // from the mousebite holes and the new tab/frame edges
+        "refillzones": true
+    },
+    "source": {
+        "type": "auto"
+    }
+}

@@ -33,6 +33,19 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
 
+      - name: fader_buddy_main -- Panelize PCB
+        run: |
+          kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
+            electronics/fader_buddy_main.kicad_pcb \
+            electronics/build/panelized_fader_buddy_main.kicad_pcb
+
+      - name: fader_buddy_main -- Gen JLCPCB fabrication files (panelized)
+        # DRC is already run for the single board above; the panel's frame/tabs
+        # are generated geometry, so DRC is skipped here.
+        run: |
+          ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ --assembly-schematic electronics/fader_buddy_main.kicad_sch --no-drc electronics/build/panelized_fader_buddy_main.kicad_pcb
+          cp -r electronics/build/panelized_fader_buddy_main-jlc electronics/build/outputs/fader_buddy_main-panelized-jlc
+
       - name: fader_buddy_main -- Gen schematic, iBOM, 3d (KiBot)
         uses: INTI-CMNB/KiBot@b139bf69c75ffffa941c6f5876af42f3f3efd501
         with:
@@ -41,10 +54,19 @@ jobs:
           schema: 'electronics/fader_buddy_main.kicad_sch'
           board: 'electronics/fader_buddy_main.kicad_pcb'
 
+      - name: fader_buddy_main -- Gen 3d (KiBot, panelized)
+        uses: INTI-CMNB/KiBot@b139bf69c75ffffa941c6f5876af42f3f3efd501
+        with:
+          config: electronics/fader_buddy_main-panelized.kibot.yml
+          dir: electronics/build/outputs
+          schema: 'electronics/fader_buddy_main.kicad_sch'
+          board: 'electronics/build/panelized_fader_buddy_main.kicad_pcb'
+
       - name: fader_buddy_main -- KiBot fix permissions
         # Need to chown files back to runner, as ownership gets set to root by the KiBot Actions
         run: |
           sudo chown runner:docker electronics/build/outputs/*
+          sudo chown runner:docker electronics/build/*
 
       - name: fader_buddy_main -- Rasterize schematic PDF
         run: |
@@ -60,10 +82,25 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
 
+      - name: fader_buddy_main -- Annotate images (panelized)
+        run: |
+          mv electronics/build/outputs/panelized_fader_buddy_main-3D_top.png electronics/build/outputs/fader_buddy_main-panelized-3D_top.png
+          ./ci/util/annotate_image.sh electronics/build/outputs/fader_buddy_main-panelized-3D_top.png
+          mv electronics/build/outputs/panelized_fader_buddy_main-3D_bottom.png electronics/build/outputs/fader_buddy_main-panelized-3D_bottom.png
+          ./ci/util/annotate_image.sh electronics/build/outputs/fader_buddy_main-panelized-3D_bottom.png
+        env:
+          PYTHONUNBUFFERED: 1
 
 
 
 
+
+
+      - name: Show artifacts
+        if: always()
+        run: |
+          ls -lah electronics/build
+          ls -lah electronics/build/outputs
 
       - name: Archive artifacts
         uses: actions/upload-artifact@v4.6.0

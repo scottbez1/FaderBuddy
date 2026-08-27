@@ -25,6 +25,31 @@ Latest auto-generated (untested and likely broken!) artifacts⚠️:
   - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/bom.csv)
   - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/pos.csv)
 
+<details>
+<summary><b>Advanced: panelized ordering (10 boards per panel)</b></summary>
+
+Only relevant if you're ordering FaderBuddy PCBs in bulk - for a handful of boards, use the single-board files above.
+
+For larger quantities there's also a panelized version of the board: a 2x5 grid of FaderBuddy PCBs (10 per panel) joined by mousebite tabs, surrounded by breakaway rails for the assembly machine. This is usually cheaper per-board than ordering the single board, since JLCPCB charges per panel, and it means less setup fee overhead for assembly.
+
+The panel is generated automatically by CI using [KiKit](https://github.com/yaqwsx/KiKit); see `electronics/fader_buddy_main-kikit_panelize.json` for the panelization settings (grid size, tab/mousebite parameters, rail width).
+
+- Ordering (Configured for JLCPCB) - when ordering, indicate the boards are panelized by the customer, 10 boards per panel
+  - [Untested panelized gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-jlc/gerbers.zip)
+  - [Untested panelized BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-jlc/bom.csv)
+  - [Untested panelized CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-jlc/pos.csv)
+
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_top.png" width="400" />
+</a>
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_bottom.png" width="400" />
+</a>
+
+To depanelize: snap off the top and bottom rails first, then the left and right rails, and finally separate the individual boards at the remaining mousebite tabs. Each board is held by one tab on each short edge plus two tabs along each long edge, all placed to keep the mousebite drills clear of the LEDs, test pads, tooling holes and nearby vias. Sand or file the leftover mousebite nubs flush if they interfere with mounting.
+
+</details>
+
 ### Assembly
 
 The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering required is attaching the PCB to the fader itself and the optional daisy-chaining headers, which are all through-hole connections:
