@@ -25,18 +25,6 @@ Latest auto-generated (untested and likely broken!) artifacts⚠️:
   - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/bom.csv)
   - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-jlc/pos.csv)
 
-### Assembly
-
-The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering required is attaching the PCB to the fader itself and the optional daisy-chaining headers, which are all through-hole connections:
-
-- **2 connections** for the motor
-- **4 connections** for the fader potentiometer
-- 2 optional mechanical-only connections (I recommend skipping these)
-- **5 connections** for the female daisy-chaining pin headers
-- **5 connections** for the male daisy-chaining pin headers
-
-No fine-pitch or SMD soldering is required.
-
 <details>
 <summary><b>Advanced: panelized ordering (10 boards per panel)</b></summary>
 
@@ -54,7 +42,22 @@ The panel is generated automatically by CI using [KiKit](https://github.com/yaqw
 <a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_top.png">
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_top.png" width="400" />
 </a>
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-panelized-3D_bottom.png" width="400" />
+</a>
 
-To depanelize: snap off the top and bottom rails first, then the left and right rails, and finally separate the individual boards at the remaining mousebite tabs. The tabs are only on the short (left/right) edges of each board, away from the LEDs and test pads. Sand or file the leftover mousebite nubs flush if they interfere with mounting.
+To depanelize: snap off the top and bottom rails first, then the left and right rails, and finally separate the individual boards at the remaining mousebite tabs. Each board is held by one tab on each short edge plus two tabs along each long edge, all placed to keep the mousebite drills clear of the LEDs, test pads, tooling holes and nearby vias. Sand or file the leftover mousebite nubs flush if they interfere with mounting.
 
 </details>
+
+### Assembly
+
+The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering required is attaching the PCB to the fader itself and the optional daisy-chaining headers, which are all through-hole connections:
+
+- **2 connections** for the motor
+- **4 connections** for the fader potentiometer
+- 2 optional mechanical-only connections (I recommend skipping these)
+- **5 connections** for the female daisy-chaining pin headers
+- **5 connections** for the male daisy-chaining pin headers
+
+No fine-pitch or SMD soldering is required.
