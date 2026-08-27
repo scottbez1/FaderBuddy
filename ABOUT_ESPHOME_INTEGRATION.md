@@ -74,6 +74,46 @@ fader_buddy:
     update_interval: 10ms
 ```
 
+## Complete Example: Light Brightness Control
+
+This example shows bidirectional control - a single fader controlling a Home Assistant light's brightness and responding to remote changes to that light's brightness:
+
+```yaml
+fader_buddy:
+  - id: brightness_fader
+    address: 0x20
+    update_interval: 10ms
+    layer_haptics:
+      - layer: 0
+        mode: smooth
+
+    # User moves fader → update light brightness
+    on_manual_move:
+      then:
+        - homeassistant.action:
+            action: light.turn_on
+            data:
+              entity_id: light.living_room
+              brightness: !lambda 'return x;'
+              transition: "0"
+
+# Light brightness changes in Home Assistant → move fader
+sensor:
+  - platform: homeassistant
+    id: living_room_brightness
+    entity_id: light.living_room
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(brightness_fader).remote_move_to(isnan(x) ? 0 : x);
+```
+
+For additional complete working examples, see the `esphome/examples/` directory:
+
+- **multi-fader-display.yaml** - Three faders with an LVGL display, showing haptic configuration, layer setup, and Home Assistant integration
+
 ## Configuration Options
 
 ### Component Configuration
@@ -90,7 +130,7 @@ fader_buddy:
     - `detents`: Creates distinct "notches" along the fader's travel (requires `detent_count`)
   - **detent_count** (optional, default: `0`): Number of detents (1-15, for detents mode only)
   - **detent_strength** (optional, default: `0`): Detent force feedback strength (0-7, for detents mode only)
-  - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices. Set to `0ms` for no rate limiting.
+  - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices like zigbee lights. Set to `0ms` for no rate limiting. Keep as low as possible.
 
 ### Triggers
 
@@ -256,49 +296,6 @@ id(my_fader).run_self_calibration();
 // Serial number (empty until read at startup)
 std::string serial = id(my_fader).get_serial_number();
 ```
-
-## Complete Example: Light Brightness Control
-
-This example shows a single fader controlling a Home Assistant light's brightness:
-
-```yaml
-fader_buddy:
-  - id: brightness_fader
-    address: 0x20
-    update_interval: 10ms
-    layer_haptics:
-      - layer: 0
-        mode: smooth
-        value_change_min_interval: 100ms  # Limit updates to 10/second
-
-    # User moves fader → update light brightness
-    on_manual_move:
-      then:
-        - homeassistant.action:
-            action: light.turn_on
-            data:
-              entity_id: light.living_room
-              brightness: !lambda 'return x;'
-              transition: "0"
-
-# Light brightness changes in Home Assistant → move fader
-sensor:
-  - platform: homeassistant
-    id: living_room_brightness
-    entity_id: light.living_room
-    attribute: brightness
-    internal: true
-    on_value:
-      then:
-        - lambda: |-
-            id(brightness_fader).remote_move_to(isnan(x) ? 0 : x);
-```
-
-## Examples
-
-For complete working examples, see the `esphome/examples/` directory:
-
-- **multi-fader-display.yaml** - Three faders with an LVGL display, showing haptic configuration, layer setup, and Home Assistant integration
 
 ## Troubleshooting
 
