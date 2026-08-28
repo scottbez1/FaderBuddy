@@ -1,6 +1,13 @@
 kibot:
   version: 1
 
+global:
+  # KiBot runs KiCad inside a container that can't see fonts installed on the
+  # runner, so it installs any font found in <resources_dir>/fonts itself.
+  # Without this, KiCad falls back to the stroke font for the Righteous
+  # silkscreen text whenever it can't reuse the text's cached glyph outlines.
+  resources_dir: ci/kibot_resources
+
 preflight:
   check_zone_fills: true
   run_drc: true

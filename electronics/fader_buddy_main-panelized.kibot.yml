@@ -8,6 +8,9 @@ global:
   # Force pcb-based filenames (%bf), since the panel is generated into
   # electronics/build/ rather than living alongside the project
   output: '%bf-%i%I%v.%x'
+  # Custom fonts for KiCad inside the KiBot container -- see the note in
+  # fader_buddy_main.kibot.yml
+  resources_dir: ci/kibot_resources
 
 preflight:
   check_zone_fills: true
