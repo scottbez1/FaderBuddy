@@ -38,6 +38,10 @@ jobs:
           kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
             electronics/fader_buddy_main.kicad_pcb \
             electronics/build/panelized_fader_buddy_main.kicad_pcb
+          # The panel's project lives in electronics/build, so ${KIPRJMOD} resolves
+          # there too -- without this, project-relative resources (e.g. the JST
+          # connectors' 3D models in electronics/lib) silently fail to load.
+          ln -sfn ../lib electronics/build/lib
 
       - name: fader_buddy_main -- Gen JLCPCB fabrication files (panelized)
         # DRC is already run for the single board above; the panel's frame/tabs

@@ -86,6 +86,10 @@ kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
   electronics/fader_buddy_main.kicad_pcb \
   electronics/build/panelized_fader_buddy_main.kicad_pcb
 
+# Required: the panel's project sits in electronics/build, so ${KIPRJMOD} resolves
+# there - this makes project-relative 3D models (electronics/lib) load
+ln -sfn ../lib electronics/build/lib
+
 # Generate JLCPCB fabrication files for the panel
 ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ \
   --assembly-schematic electronics/fader_buddy_main.kicad_sch --no-drc \
