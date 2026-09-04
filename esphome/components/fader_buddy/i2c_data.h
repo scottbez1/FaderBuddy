@@ -58,6 +58,12 @@
  * -----|---------------------|---------|------|------------
  * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
  * -----|---------------------|---------|------|------------
+ * 0x10 | DEBUG_DRIVE         | W       | u8[2]| Open-loop motor drive (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
+ * 0x11 | DEBUG_STATUS        | R       |u8[16]| Control-loop internals (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
+ * 0x12 | DEBUG_GAINS         | W       | u8[3]| Runtime gain override (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
  *
  * Protocol:
  * - Simple registers:
@@ -91,6 +97,61 @@
 #define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
+#define REG_DEBUG_DRIVE 0x10  // Open-loop motor drive (W, [flags, duty]); DEBUG_DRIVE builds only
+
+/*
+ * REG_DEBUG_DRIVE (0x10) - write-only, present only in DEBUG_DRIVE builds.
+ *
+ * Write [0x10, flags, duty] to command the H-bridge directly, bypassing the
+ * control loop, for system identification. Writing flags = 0xFF exits open-loop
+ * mode. The firmware coasts the motor if a command is not refreshed within
+ * 400 ms, or if the fader nears a travel limit.
+ */
+#define DEBUG_DRIVE_FLAGS_EXIT (0xFF)
+
+// Direction: 2 bits at position 0
+#define DEBUG_DRIVE_DIR_bp (0)
+#define DEBUG_DRIVE_DIR_bm (0x03 << DEBUG_DRIVE_DIR_bp)
+#define DEBUG_DRIVE_DIR_COAST (0)
+#define DEBUG_DRIVE_DIR_A     (1)  // Toward the motor end (rising ADC)
+#define DEBUG_DRIVE_DIR_B     (2)  // Toward the low end (falling ADC)
+#define DEBUG_DRIVE_DIR_BRAKE (3)  // Both low sides on (dynamic braking)
+
+// Decay mode: 1 bit at position 2 (0 = fast/coast, 1 = slow/brake)
+#define DEBUG_DRIVE_SLOW_DECAY_bp (2)
+#define DEBUG_DRIVE_SLOW_DECAY_bm (1 << DEBUG_DRIVE_SLOW_DECAY_bp)
+
+// PWM prescaler select: 2 bits at position 4
+// 0 = DIV4 (19.6 kHz), 1 = DIV256 (306 Hz), 2 = DIV2 (39.2 kHz), 3 = DIV8 (9.8 kHz)
+#define DEBUG_DRIVE_CLK_bp (4)
+#define DEBUG_DRIVE_CLK_bm (0x03 << DEBUG_DRIVE_CLK_bp)
+
+/*
+ * REG_DEBUG_STATUS (0x11) - read-only, DEBUG_DRIVE builds only.
+ * 16 bytes, big-endian: calib_min u16, calib_max u16, target_adc i16,
+ * drive i16, velocity i16 (ADC counts/sec), error_x8 i16 (error * 8),
+ * loop_hz u16, tick_hz u16.
+ */
+#define REG_DEBUG_STATUS 0x11
+
+/*
+ * REG_DEBUG_GAINS (0x12) - write-only, DEBUG_DRIVE builds only.
+ * Write [0x12, index, value_hi, value_lo] to override one control-loop gain at
+ * runtime, so tuning doesn't need a reflash per trial. Values are fixed point:
+ * KP and KD are scaled by 1000, the rest are integers.
+ */
+#define REG_DEBUG_GAINS 0x12
+#define DEBUG_GAIN_KP          (0)  // duty per ADC count, x1000
+#define DEBUG_GAIN_KD          (1)  // duty per (ADC count/sec), x1000
+#define DEBUG_GAIN_FF_RISING   (2)  // duty
+#define DEBUG_GAIN_FF_FALLING  (3)  // duty
+#define DEBUG_GAIN_DEADBAND    (4)  // ADC counts, x1000
+#define DEBUG_GAIN_TICK_US     (5)  // control tick period, microseconds
+#define DEBUG_GAIN_RAMP_RATE   (6)  // stiction ramp rate, duty per second
+#define DEBUG_GAIN_TAKEUP      (7)  // backlash take-up duty ceiling (0 = disabled)
+#define DEBUG_GAIN_CALIB_MIN   (8)  // override calib_min (RAM only, not saved)
+#define DEBUG_GAIN_CALIB_MAX   (9)  // override calib_max (RAM only, not saved)
+
 
 enum Mode : uint8_t {
   MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,

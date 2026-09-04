@@ -74,9 +74,111 @@ enum TapState : uint8_t {
   TAP_SECOND_PRESSED,          // Second tap touch detected
 };
 
+// Fixed-rate control tick. The control law needs a known, constant period so
+// the derivative term and the filter time constants mean the same thing
+// regardless of how long touch processing takes on a given loop iteration.
+#define CONTROL_TICK_US (500)           // 2 kHz (leaves loop headroom for touch)
+#define VELOCITY_TAU_S (0.004f)         // velocity estimate smoothing, seconds
+
+// Remote-movement control gains, in ADC counts (see MODEL notes below).
+// The plant is close to a velocity source with a friction deadband: above a
+// breakaway duty, speed is roughly proportional to duty; below it nothing
+// moves at all. Coast-down is first order with tau ~5 ms, so stopping distance
+// is ~v * 6 ms - which is why arriving at full speed overshoots by ~40 ADC
+// counts no matter how hard the bridge brakes afterwards.
+#define MOVE_KP (2.0f)                  // duty per ADC count of error
+#define MOVE_KD (0.04f)                 // duty per (ADC count/sec) of velocity
+// KD also sets the tolerance to added carriage mass (e.g. a heavier knob cap):
+// drive is cut at v = (KP/KD)*error, and overshoot appears once that ratio
+// approaches 1/tau. At KP/KD = 50/s against a measured 1/tau of ~200/s there is
+// roughly a 2-2.5x margin on effective moving mass before ringing returns.
+// Friction feedforward, per direction. These are deliberately set ABOVE the
+// breakaway duty measured on any one fader (68/88 on the reference unit), and
+// are centred in the range that keeps every move settling rather than tuned for
+// best accuracy on one fader. Rationale: the failure that matters is a fader
+// that never settles and times out, and that happens when FF lands BELOW a
+// unit's breakaway - the carriage then stalls just outside the deadband, waits
+// for the stiction ramp, and escapes with a jump it cannot stop inside the
+// window. Overshooting FF upward is cheap because MOVE_TAKEUP_DUTY caps drive
+// while stalled, so an over-high FF is clamped rather than violent.
+// Measured settling window on the reference fader is FF 66..146 rising; 106 is
+// its centre, giving roughly +/-40 duty counts of breakaway tolerance instead
+// of the +/-10 that a "just under breakaway" value gives. Accuracy is better at
+// the centre too. Do not "optimise" these down against a single fader.
+#define MOVE_FF_RISING (106)            // centred in the stable window
+#define MOVE_FF_FALLING (124)           // same, plus the measured direction offset
+// On-target window. This has a hard floor set by the plant, not by taste:
+// nothing moves below breakaway duty, and at breakaway speed jumps straight to
+// ~900 raw/s, so the smallest correction the fader can make is roughly that
+// speed times the reaction+stopping time - about 10-16 raw, i.e. 5-8 ADC
+// counts. A deadband below that floor cannot be satisfied on a fader whose
+// breakaway differs from the feedforward constants: the controller steps past
+// the window in both directions forever and eventually trips the movement
+// timeout. Keep this at or above the floor; it is ~1.5 LSB of the 8-bit
+// position the host sees, so tightening it buys nothing a host can observe.
+#define MOVE_DEADBAND (6.0f)            // ADC counts considered "on target"
+#define MOVE_MAX_DUTY (254)
+
+// On movement timeout, an error this small means the fader is essentially in
+// position and merely hunting - give up quietly rather than latching
+// MODE_ERROR, which needs a host round-trip to clear. Anything larger is a
+// genuine fault and still errors.
+#define MOVE_TIMEOUT_TOLERANCE (20.0f)  // ADC counts
+
+// Stiction ramp. The feedforward alone leaves a dead region: for small errors
+// FF + KP*error can sit below this unit's actual breakaway duty, so the
+// controller commands motion it cannot produce and the move never completes
+// (previously this timed out into MODE_ERROR). Rather than raise the
+// feedforward - which overshoots on a looser fader, since anything above
+// breakaway jumps straight to ~900 raw counts/sec - ramp in extra drive only
+// while we are asking for motion and not getting it, and drop it the moment
+// the carriage breaks free. This finds whatever breakaway a given fader has
+// instead of relying on a per-unit constant.
+#define MOVE_STALL_VELOCITY (60.0f)     // ADC counts/sec below which we're stalled
+#define MOVE_RAMP_RATE (250.0f)         // duty per second of ramp-in
+#define MOVE_RAMP_MAX (70.0f)           // ceiling, so a jam can't wind up to full drive
+
+// Backlash take-up. There is a little slack in the belt, so a move that
+// reverses direction starts with the motor unloaded. Commanding full duty into
+// that slack lets the rotor spin up freely and then snap taut, which is both an
+// audible click and a jerk at the carriage. While we are still stalled the
+// drive is therefore capped just above breakaway: enough to cross the slack
+// promptly, but slow enough that engagement is gentle. Full authority returns
+// as soon as the carriage is actually moving, so this costs only a few ms.
+#define MOVE_TAKEUP_DUTY (95)           // duty ceiling while stalled (0 = disabled)
+
+#if DEBUG_DRIVE
+// Runtime-tunable copies, so gain sweeps don't need a reflash per trial.
+float move_kp = MOVE_KP;
+float move_kd = MOVE_KD;
+int16_t move_ff_rising = MOVE_FF_RISING;
+int16_t move_ff_falling = MOVE_FF_FALLING;
+float move_deadband = MOVE_DEADBAND;
+float move_ramp_rate = MOVE_RAMP_RATE;
+int16_t move_takeup_duty = MOVE_TAKEUP_DUTY;
+#else
+#define move_kp MOVE_KP
+#define move_kd MOVE_KD
+#define move_ff_rising MOVE_FF_RISING
+#define move_ff_falling MOVE_FF_FALLING
+#define move_deadband MOVE_DEADBAND
+#define move_ramp_rate MOVE_RAMP_RATE
+#define move_takeup_duty MOVE_TAKEUP_DUTY
+#endif
+
 const float ALPHA = 0.05;
 float input_ewma = 0;
-float input_slow_ewma = 0;
+float stiction_ramp = 0;                // extra drive ramped in while stalled
+float velocity_ewma = 0;                // ADC counts/sec, + toward the motor end
+float last_control_ewma = 0;
+uint32_t last_control_tick_us = 0;
+uint32_t last_control_exec_us = 0;
+uint32_t control_dt_us = CONTROL_TICK_US;  // measured interval of the current tick
+#if DEBUG_DRIVE
+uint16_t control_tick_period_us = CONTROL_TICK_US;  // runtime-tunable for sweeps
+#else
+#define control_tick_period_us CONTROL_TICK_US
+#endif
 
 // Touch state
 bool touch = false;
@@ -148,6 +250,40 @@ struct LayerHapticWrite {
 };
 volatile LayerHapticWrite i2c_layer_haptic_write = {0, 0, false};
 
+#if DEBUG_DRIVE
+// ---------------------------------------------------------------------------
+// Open-loop drive register (system identification only; not built into the
+// production firmware). Lets a host command a raw duty/decay/PWM-frequency
+// combination so duty->velocity and friction breakaway can be measured
+// directly instead of inferred from closed-loop behaviour.
+// ---------------------------------------------------------------------------
+#define DEBUG_DRIVE_WATCHDOG_MS (400)  // Auto-coast if the host stops refreshing
+#define DEBUG_DRIVE_EDGE_MARGIN (30)   // ADC counts of endstop keep-out
+
+volatile bool i2c_debug_gain_valid = false;
+volatile uint8_t i2c_debug_gain_index = 0;
+volatile int16_t i2c_debug_gain_value = 0;
+
+volatile bool i2c_debug_drive_valid = false;
+volatile uint8_t i2c_debug_drive_flags = 0;
+volatile uint8_t i2c_debug_drive_duty = 0;
+
+bool debug_drive_active = false;
+int16_t debug_drive_value = 0;
+bool debug_drive_slow_decay = false;
+bool debug_drive_brake = false;
+uint32_t debug_drive_last_update = 0;
+
+// Snapshot of control-loop internals for REG_DEBUG_STATUS
+float debug_status_velocity = 0;
+float debug_status_error = 0;
+uint16_t debug_status_loop_hz = 0;
+uint16_t debug_status_tick_hz = 0;
+uint16_t debug_loop_count = 0;
+uint16_t debug_tick_count = 0;
+uint32_t debug_rate_window_start = 0;
+#endif
+
 uint32_t remote_movement_start = 0;
 uint32_t touch_state_change_millis = 0;
 uint32_t remote_movement_steady_start = 0;
@@ -185,10 +321,10 @@ Mode get_mode() {
 
 void set_mode(Mode mode) {
   state = (state & ~STATE_MODE_bm) | (mode << STATE_MODE_bp);
-  if (mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS || mode == MODE_SELF_CALIBRATION) {
-    TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV256_gc;
-  } else {
-    TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;
+
+  // Any fresh movement starts without accumulated stiction ramp
+  if (mode != MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
+    stiction_ramp = 0;
   }
 
   // Reset tap detection when entering modes where taps shouldn't be detected
@@ -197,7 +333,76 @@ void set_mode(Mode mode) {
   }
 }
 
-// Configure TCA0 for high-frequency PWM so it's not audible via the motor
+// ============================================================================
+// Motor drive
+// ============================================================================
+// PA4 = Motor A (WO4/HCMP1), PA5 = Motor B (WO5/HCMP2). Both feed the DRV8837
+// IN1/IN2 inputs: 1/0 = forward, 0/1 = reverse, 0/0 = coast (Hi-Z), 1/1 = brake.
+#define MOTOR_A_bm (1 << 4)
+#define MOTOR_B_bm (1 << 5)
+
+enum MotorIdle : uint8_t {
+  MOTOR_IDLE_COAST = 0,  // Bridge Hi-Z: fader is free to move
+  MOTOR_IDLE_BRAKE = 1,  // Both low sides on: dynamic braking against motion
+};
+
+int16_t motor_drive_value = 0;  // Last applied signed drive, for status/LED
+
+// Apply a signed motor drive.
+//   drive > 0 pushes toward the motor end (rising ADC), < 0 toward the low end.
+//   |drive| is 0..254, matching the TCA0 split-mode period.
+//
+// slow_decay selects how the off-portion of each PWM cycle is handled:
+//   false (fast decay): PWM alternates drive <-> coast. Winding current decays
+//     through the body diodes each cycle, so at high PWM frequency the average
+//     current is far below what the duty implies and low-duty torque collapses.
+//   true (slow decay): PWM alternates drive <-> brake, keeping current
+//     circulating through the bridge. Average current (and torque) tracks duty
+//     much more linearly, which is what lets us run an inaudible carrier
+//     without losing low-speed authority.
+void motor_set(int16_t drive, bool slow_decay, MotorIdle idle_mode) {
+  if (drive > 254) drive = 254;
+  if (drive < -254) drive = -254;
+  motor_drive_value = drive;
+
+  if (drive == 0) {
+    // Set the static pin levels before releasing the pins from the timer, so
+    // handover can't briefly present a drive combination.
+    if (idle_mode == MOTOR_IDLE_BRAKE) {
+      VPORTA.OUT |= (MOTOR_A_bm | MOTOR_B_bm);
+    } else {
+      VPORTA.OUT &= ~(MOTOR_A_bm | MOTOR_B_bm);
+    }
+    TCA0.SPLIT.CTRLB = 0;
+    return;
+  }
+
+  uint8_t mag = (drive > 0) ? (uint8_t)drive : (uint8_t)(-drive);
+
+  if (!slow_decay) {
+    TCA0.SPLIT.HCMP1 = (drive > 0) ? mag : 0;
+    TCA0.SPLIT.HCMP2 = (drive > 0) ? 0 : mag;
+    TCA0.SPLIT.CTRLB = (TCA_SPLIT_HCMP1EN_bm | TCA_SPLIT_HCMP2EN_bm);
+  } else {
+    // Hold the leading pin high from PORT and PWM the trailing pin between
+    // drive (low) and brake (high), so its high fraction is the inverse duty.
+    if (drive > 0) {
+      VPORTA.OUT |= MOTOR_A_bm;
+      TCA0.SPLIT.HCMP2 = 254 - mag;
+      TCA0.SPLIT.CTRLB = TCA_SPLIT_HCMP2EN_bm;
+    } else {
+      VPORTA.OUT |= MOTOR_B_bm;
+      TCA0.SPLIT.HCMP1 = 254 - mag;
+      TCA0.SPLIT.CTRLB = TCA_SPLIT_HCMP1EN_bm;
+    }
+  }
+}
+
+// Configure TCA0 for a single, permanently inaudible PWM carrier.
+// Movement used to drop to DIV256 (306 Hz) because at 19.6 kHz with drive/coast
+// PWM the motor needed ~190 duty to break away at all. Slow-decay drive (see
+// motor_set) restores low-duty torque at the high carrier, so the audible
+// carrier is no longer needed anywhere.
 void setup_tca0() {
   // TakeOver TCA0 for PWM
   takeOverTCA0();
@@ -213,7 +418,7 @@ void setup_tca0() {
   TCA0.SPLIT.HCMP1 = 0;
   TCA0.SPLIT.HCMP2 = 0;
 
-  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV256_gc;
+  TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;  // 19.6 kHz
 }
 
 // I2C request handler - called when master requests data
@@ -223,10 +428,13 @@ void onI2cRequest() {
   if (r == REG_VERSION) {
       Wire.write(I2C_PROTOCOL_VERSION);
   } else if (r == REG_STATE) {
-      Wire.write((i2c_outgoing_state >> 24) & 0xFF);
-      Wire.write((i2c_outgoing_state >> 16) & 0xFF);
-      Wire.write((i2c_outgoing_state >> 8) & 0xFF);
-      Wire.write(i2c_outgoing_state & 0xFF);
+      // Snapshot once: the main loop can update i2c_outgoing_state between
+      // byte writes, which would hand the controller a torn value.
+      uint32_t s = i2c_outgoing_state;
+      Wire.write((s >> 24) & 0xFF);
+      Wire.write((s >> 16) & 0xFF);
+      Wire.write((s >> 8) & 0xFF);
+      Wire.write(s & 0xFF);
   } else if (r == REG_UPTIME) {
       uint32_t uptime = millis();
       Wire.write((uptime >> 24) & 0xFF);
@@ -263,6 +471,20 @@ void onI2cRequest() {
       // Touch recalibration count (unsigned 16-bit)
       Wire.write((touch_recal_count >> 8) & 0xFF);  // High byte
       Wire.write(touch_recal_count & 0xFF);         // Low byte
+#if DEBUG_DRIVE
+  } else if (r == REG_DEBUG_STATUS) {
+      int16_t vel = (int16_t)debug_status_velocity;
+      int16_t err_x8 = (int16_t)(debug_status_error * 8);
+      const uint16_t vals[8] = {
+        input_calib_min, input_calib_max, (uint16_t)target_adc,
+        (uint16_t)motor_drive_value, (uint16_t)vel, (uint16_t)err_x8,
+        debug_status_loop_hz, debug_status_tick_hz,
+      };
+      for (uint8_t i = 0; i < 8; i++) {
+        Wire.write((vals[i] >> 8) & 0xFF);
+        Wire.write(vals[i] & 0xFF);
+      }
+#endif
   } else if (r == REG_ACTIVE_LAYER) {
       Wire.write(active_layer);
   } else if (r == REG_LAYER_TARGET) {
@@ -326,6 +548,22 @@ void onI2cReceive(int howMany) {
         i2c_layer_haptic_write.valid = true;
       }
       break;
+#if DEBUG_DRIVE
+    case REG_DEBUG_GAINS:
+      if (howMany == 4) {
+        i2c_debug_gain_index = Wire.read();
+        i2c_debug_gain_value = (int16_t)(((uint16_t)Wire.read() << 8) | Wire.read());
+        i2c_debug_gain_valid = true;
+      }
+      break;
+    case REG_DEBUG_DRIVE:
+      if (howMany == 3) {
+        i2c_debug_drive_flags = Wire.read();
+        i2c_debug_drive_duty = Wire.read();
+        i2c_debug_drive_valid = true;
+      }
+      break;
+#endif
     case REG_VERSION:
     case REG_STATE:
     case REG_UPTIME:
@@ -557,11 +795,52 @@ void write_layer_haptic_config(uint8_t layer, uint16_t config) {
   }
 }
 
+// Fold every completed free-running ADC1 conversion into the position filter.
+// Draining on the RESRDY flag rather than sampling RES whenever the main loop
+// happens to come around means the filter runs at the ADC's own constant rate
+// and never re-uses or tears a result.
+uint16_t adc_last_raw = 0;
+void adc_drain() {
+  while (ADC1.INTFLAGS & ADC_RESRDY_bm) {
+    uint16_t adc_val = ADC1.RES;  // reading RES clears RESRDY
+    adc_last_raw = adc_val;
+    // 2x accumulation, so halve to get ADC counts
+    input_ewma = adc_val * ALPHA / 2 + input_ewma * (1 - ALPHA);
+  }
+}
+
 void motor_update() {
   uint32_t now = millis();
 
-  uint16_t adc_val = ADC1.RES;
-  input_ewma = adc_val * ALPHA / 2 + input_ewma * (1-ALPHA); // Use free-running ADC1 result; (2x aggregation, so divide by 2)
+  uint16_t adc_val = adc_last_raw;
+
+  // Velocity for the damping term: differentiate the filtered position, then
+  // smooth with a fixed time constant. Dividing by the measured interval
+  // rather than the nominal tick keeps the estimate correct even when a tick
+  // lands late, and input_ewma is a float fed by a dithered ADC, so its
+  // differences stay meaningful well below one ADC count.
+  float dt = control_dt_us * 1e-6f;
+  if (dt > 0.0f) {
+    float dv = (input_ewma - last_control_ewma) / dt;
+    float alpha_v = dt / VELOCITY_TAU_S;
+    if (alpha_v > 1.0f) alpha_v = 1.0f;
+    velocity_ewma += alpha_v * (dv - velocity_ewma);
+  }
+  last_control_ewma = input_ewma;
+
+#if DEBUG_DRIVE
+  debug_status_velocity = velocity_ewma;
+  debug_status_error = target_adc - input_ewma;
+  debug_tick_count++;
+  if (now - debug_rate_window_start >= 500) {
+    debug_status_loop_hz = debug_loop_count * 2;
+    debug_status_tick_hz = debug_tick_count * 2;
+    debug_loop_count = 0;
+    debug_tick_count = 0;
+    debug_rate_window_start = now;
+  }
+#endif
+
   Mode mode = get_mode();
 
   // If we didn't get a second tap start in time, reset tap detection
@@ -587,10 +866,38 @@ void motor_update() {
     position = position_window_lower;
   }
 
+#if DEBUG_DRIVE
+  if (debug_drive_active) {
+    int16_t d = debug_drive_value;
+    if (now - debug_drive_last_update > DEBUG_DRIVE_WATCHDOG_MS) {
+      // Host stopped refreshing - never leave the motor driven unattended
+      debug_drive_active = false;
+      d = 0;
+    } else if ((d > 0 && input_ewma > input_calib_max - DEBUG_DRIVE_EDGE_MARGIN) ||
+               (d < 0 && input_ewma < input_calib_min + DEBUG_DRIVE_EDGE_MARGIN)) {
+      // Don't drive into the endstops
+      d = 0;
+    }
+    motor_set(d, debug_drive_slow_decay,
+              debug_drive_brake ? MOTOR_IDLE_BRAKE : MOTOR_IDLE_COAST);
+  } else
+#endif
   switch (mode) {
     case MODE_REMOTE_MOVEMENT_IN_PROGRESS:
       if (now > remote_movement_start + MOVEMENT_TIMEOUT_MILLIS) {
-        set_mode(Mode::MODE_ERROR);
+        // Distinguish a real fault (jam, dead motor, unreachable target) from a
+        // fader that arrived but kept dithering across the deadband. The latter
+        // is a tuning mismatch, not a failure, and reporting it as an error
+        // leaves the fader dead until the host clears it.
+        float timeout_error = target_adc - input_ewma;
+        if (timeout_error < 0) timeout_error = -timeout_error;
+        if (timeout_error <= MOVE_TIMEOUT_TOLERANCE) {
+          motor_set(0, false, MOTOR_IDLE_COAST);
+          input_last_change_millis = now - IDLE_DURATION_THRESHOLD;
+          set_mode(Mode::MODE_INPUT_IDLE);
+        } else {
+          set_mode(Mode::MODE_ERROR);
+        }
       } else if ((state & STATE_TOUCH_bm) && now > touch_state_change_millis + TOUCH_OVERRIDE_DURATION_THRESHOLD) {
         set_mode(Mode::MODE_INPUT_ACTIVE);
       } else {
@@ -599,20 +906,46 @@ void motor_update() {
           apply_layer_change(pending_layer_change);
           break;  // Exit switch since state may change
         }
-        float delta = (target_adc - input_ewma) * 1.2;
-        if (delta > 4) {
-          uint8_t pwm = delta + 80 > 254 ? 254 : delta + 80;
-          TCA0.SPLIT.HCMP1 = pwm;  // Motor A
-          TCA0.SPLIT.HCMP2 = 0;    // Motor B
-          remote_movement_steady_start = now;
-        } else if (delta < -4) {
-          uint8_t pwm = -delta + 80 > 254 ? 254 : -delta + 80;
-          TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+        float error = target_adc - input_ewma;
+        if (error > move_deadband || error < -move_deadband) {
+          // PD on position plus a friction feedforward sized just under the
+          // measured breakaway duty, so the controller only has to supply the
+          // part of the drive that sets speed rather than fighting stiction.
+          // The D term is what prevents overshoot: it cancels the feedforward
+          // while the carriage is still moving fast, cutting drive roughly one
+          // stopping distance short of the target so it coasts in.
+          float u = move_kp * error - move_kd * velocity_ewma;
+          u += (error > 0) ? move_ff_rising : -move_ff_falling;
+
+          // Ramp in extra drive only while stalled, and shed it as soon as the
+          // carriage moves, so the ramp never contributes to overshoot.
+          float speed = velocity_ewma < 0 ? -velocity_ewma : velocity_ewma;
+          if (speed < MOVE_STALL_VELOCITY) {
+            stiction_ramp += move_ramp_rate * (control_dt_us * 1e-6f);
+            if (stiction_ramp > MOVE_RAMP_MAX) stiction_ramp = MOVE_RAMP_MAX;
+          } else {
+            stiction_ramp = 0;
+          }
+          u += (error > 0) ? stiction_ramp : -stiction_ramp;
+
+          // Cap drive until the carriage is moving, so the motor eases through
+          // belt backlash instead of snapping it taut at full duty.
+          int16_t limit = MOVE_MAX_DUTY;
+          if (move_takeup_duty > 0 && speed < MOVE_STALL_VELOCITY) {
+            limit = move_takeup_duty + (int16_t)stiction_ramp;
+            if (limit > MOVE_MAX_DUTY) limit = MOVE_MAX_DUTY;
+          }
+
+          int16_t drive = (int16_t)u;
+          if (drive > limit) drive = limit;
+          if (drive < -limit) drive = -limit;
+          motor_set(drive, true, MOTOR_IDLE_BRAKE);
           remote_movement_steady_start = now;
         } else {
-          TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          // On target: hold with the bridge braked until we declare the move
+          // finished, so a loose carriage can't drift back out of the window.
+          stiction_ramp = 0;
+          motor_set(0, true, MOTOR_IDLE_BRAKE);
           if (now > remote_movement_steady_start + REMOTE_MOVEMENT_STEADY_THRESHOLD) {
             // shift hysteresis window to prevent spurious immediate "input" detection if remote movement left us near the window bounds and succeptiple to noise
             if (input_ewma < WINDOW_SIZE / 2) {
@@ -639,8 +972,7 @@ void motor_update() {
       }
 
       if (now > input_last_change_millis + IDLE_DURATION_THRESHOLD && (state & STATE_TOUCH_bm) == 0 && now > touch_state_change_millis + IDLE_DURATION_THRESHOLD) {
-        TCA0.SPLIT.HCMP1 = 0;    // Motor A
-        TCA0.SPLIT.HCMP2 = 0;    // Motor B
+        motor_set(0, false, MOTOR_IDLE_COAST);
         if (pending_report_on_idle) {
           pending_report_on_idle = false;
           increment_position_nonce();
@@ -658,16 +990,13 @@ void motor_update() {
           if (input_ewma < input_calib_min + HAPTIC_MAGNET_RANGE && input_ewma > input_calib_min + HAPTIC_DEAD_ZONE) {
             float delta = (input_calib_min - input_ewma) * HAPTIC_BASE_MULTIPLIER;
             uint8_t pwm = (-delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : -delta + HAPTIC_BASE_PWM;
-            TCA0.SPLIT.HCMP1 = 0;    // Motor A
-            TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+            motor_set(-(int16_t)pwm, false, MOTOR_IDLE_COAST);
           } else if (input_ewma > input_calib_max - HAPTIC_MAGNET_RANGE && input_ewma < input_calib_max - HAPTIC_DEAD_ZONE) {
             float delta = (input_calib_max - input_ewma) * HAPTIC_BASE_MULTIPLIER;
             uint8_t pwm = (delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : delta + HAPTIC_BASE_PWM;
-            TCA0.SPLIT.HCMP1 = pwm;  // Motor A
-            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+            motor_set((int16_t)pwm, false, MOTOR_IDLE_COAST);
           } else {
-            TCA0.SPLIT.HCMP1 = 0;    // Motor A
-            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+            motor_set(0, false, MOTOR_IDLE_COAST);
           }
         } else if (haptic_mode == HAPTIC_DETENTS) {
           // Detent haptics - pull toward nearest detent position
@@ -689,29 +1018,24 @@ void motor_update() {
             if (delta > 0) {
               // Pull toward higher position (Motor A)
               uint8_t pwm = (delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : delta + HAPTIC_BASE_PWM;
-              TCA0.SPLIT.HCMP1 = pwm;  // Motor A
-              TCA0.SPLIT.HCMP2 = 0;    // Motor B
+              motor_set((int16_t)pwm, false, MOTOR_IDLE_COAST);
             } else {
               // Pull toward lower position (Motor B)
               uint8_t pwm = (-delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : -delta + HAPTIC_BASE_PWM;
-              TCA0.SPLIT.HCMP1 = 0;    // Motor A
-              TCA0.SPLIT.HCMP2 = pwm;  // Motor B
+              motor_set(-(int16_t)pwm, false, MOTOR_IDLE_COAST);
             }
           } else {
             // Within dead zone, no force
-            TCA0.SPLIT.HCMP1 = 0;    // Motor A
-            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+            motor_set(0, false, MOTOR_IDLE_COAST);
           }
         } else {
           // No haptics for NO_HAPTICS mode
-          TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          motor_set(0, false, MOTOR_IDLE_COAST);
         }
       }
       break;
     case MODE_INPUT_IDLE:
-      TCA0.SPLIT.HCMP1 = 0;    // Motor A
-      TCA0.SPLIT.HCMP2 = 0;    // Motor B
+      motor_set(0, false, MOTOR_IDLE_COAST);
 
       // Apply pending layer change
       if (pending_layer_change != 0xFF) {
@@ -724,8 +1048,7 @@ void motor_update() {
       }
       break;
     case MODE_ERROR:
-      TCA0.SPLIT.HCMP1 = 0;    // Motor A
-      TCA0.SPLIT.HCMP2 = 0;    // Motor B
+      motor_set(0, false, MOTOR_IDLE_COAST);
       break;
     case MODE_SELF_CALIBRATION:
       switch (self_calibration_stage) {
@@ -736,8 +1059,7 @@ void motor_update() {
             self_calibration_start = millis();
           } else {
             // Move toward lower ADC value
-            TCA0.SPLIT.HCMP1 = 0;    // Motor A
-            TCA0.SPLIT.HCMP2 = 254;    // Motor B
+            motor_set(-254, true, MOTOR_IDLE_COAST);
           }
           break;
         case 1:
@@ -747,13 +1069,11 @@ void motor_update() {
             self_calibration_start = millis();
           } else {
             // Move toward higher ADC value
-            TCA0.SPLIT.HCMP1 = 254;    // Motor A
-            TCA0.SPLIT.HCMP2 = 0;    // Motor B
+            motor_set(254, true, MOTOR_IDLE_COAST);
           }
           break;
         case 2:
-          TCA0.SPLIT.HCMP1 = 0;    // Motor A
-          TCA0.SPLIT.HCMP2 = 0;    // Motor B
+          motor_set(0, false, MOTOR_IDLE_COAST);
           if (abs((int16_t)self_calibration_adc_stage_0 - self_calibration_adc_stage_1) < 900) {
             set_mode(Mode::MODE_ERROR);
           } else {
@@ -870,6 +1190,15 @@ void setup() {
   ADC1.CTRLA=ADC_ENABLE_bm|ADC_FREERUN_bm; //start in freerun
   ADC1.COMMAND=ADC_STCONV_bm; //start first conversion!
 
+  // Prime the position filter from a real conversion, so the first control
+  // tick doesn't see a huge phantom velocity as the filter slews up from zero.
+  while (!(ADC1.INTFLAGS & ADC_RESRDY_bm)) { }
+  adc_last_raw = ADC1.RES;
+  input_ewma = adc_last_raw / 2.0f;
+  last_control_ewma = input_ewma;
+  last_control_tick_us = micros();
+  last_control_exec_us = last_control_tick_us;
+
   setup_touch();
   pending_calibrate_touch = true;
 }
@@ -887,6 +1216,14 @@ void process_i2c_requests() {
   bool has_layer_haptic = false;
   uint8_t layer_haptic_layer = 0;
   uint16_t layer_haptic_config = 0;
+#if DEBUG_DRIVE
+  bool has_debug_gain = false;
+  uint8_t debug_gain_index = 0;
+  int16_t debug_gain_value = 0;
+  bool has_debug_drive = false;
+  uint8_t debug_drive_flags = 0;
+  uint8_t debug_drive_duty = 0;
+#endif
 
   // Atomically copy all i2c requests in a single critical section
   noInterrupts();
@@ -906,6 +1243,21 @@ void process_i2c_requests() {
     layer_target_target = i2c_layer_target_write.target;
     i2c_layer_target_write.valid = false;
   }
+
+#if DEBUG_DRIVE
+  if (i2c_debug_gain_valid) {
+    has_debug_gain = true;
+    debug_gain_index = i2c_debug_gain_index;
+    debug_gain_value = i2c_debug_gain_value;
+    i2c_debug_gain_valid = false;
+  }
+  if (i2c_debug_drive_valid) {
+    has_debug_drive = true;
+    debug_drive_flags = i2c_debug_drive_flags;
+    debug_drive_duty = i2c_debug_drive_duty;
+    i2c_debug_drive_valid = false;
+  }
+#endif
 
   if (i2c_layer_haptic_write.valid) {
     has_layer_haptic = true;
@@ -942,6 +1294,58 @@ void process_i2c_requests() {
   if (has_layer_haptic) {
     write_layer_haptic_config(layer_haptic_layer, layer_haptic_config);
   }
+
+#if DEBUG_DRIVE
+  if (has_debug_gain) {
+    switch (debug_gain_index) {
+      case DEBUG_GAIN_KP:         move_kp = debug_gain_value / 1000.0f; break;
+      case DEBUG_GAIN_KD:         move_kd = debug_gain_value / 1000.0f; break;
+      case DEBUG_GAIN_FF_RISING:  move_ff_rising = debug_gain_value; break;
+      case DEBUG_GAIN_FF_FALLING: move_ff_falling = debug_gain_value; break;
+      case DEBUG_GAIN_DEADBAND:   move_deadband = debug_gain_value / 1000.0f; break;
+      case DEBUG_GAIN_RAMP_RATE:  move_ramp_rate = debug_gain_value; break;
+      case DEBUG_GAIN_TAKEUP:     move_takeup_duty = debug_gain_value; break;
+      // Override the calibration bounds (RAM only, not persisted) so a
+      // miscalibrated fader - one whose stored range exceeds its physical
+      // travel - can be reproduced on a good unit.
+      case DEBUG_GAIN_CALIB_MIN:  input_calib_min = debug_gain_value; break;
+      case DEBUG_GAIN_CALIB_MAX:  input_calib_max = debug_gain_value; break;
+      case DEBUG_GAIN_TICK_US:
+        if (debug_gain_value >= 100 && debug_gain_value <= 5000) {
+          control_tick_period_us = debug_gain_value;
+        }
+        break;
+    }
+  }
+
+  if (has_debug_drive) {
+    if (debug_drive_flags == DEBUG_DRIVE_FLAGS_EXIT) {
+      debug_drive_active = false;
+      debug_drive_value = 0;
+      motor_set(0, false, MOTOR_IDLE_COAST);
+      // Hand both pins back to the timer, since the closed-loop paths drive
+      // HCMPn directly and assume both compare outputs stay enabled.
+      TCA0.SPLIT.CTRLB = (TCA_SPLIT_HCMP1EN_bm | TCA_SPLIT_HCMP2EN_bm);
+      set_mode(MODE_INPUT_IDLE);
+    } else {
+      uint8_t dir = debug_drive_flags & DEBUG_DRIVE_DIR_bm;
+      debug_drive_slow_decay = (debug_drive_flags & DEBUG_DRIVE_SLOW_DECAY_bm) != 0;
+      debug_drive_value = (dir == DEBUG_DRIVE_DIR_A) ? (int16_t)debug_drive_duty
+                        : (dir == DEBUG_DRIVE_DIR_B) ? -(int16_t)debug_drive_duty
+                        : 0;
+      debug_drive_brake = (dir == DEBUG_DRIVE_DIR_BRAKE);
+      // PWM prescaler select, so fast/slow decay can be compared at each carrier
+      uint8_t clk = (debug_drive_flags & DEBUG_DRIVE_CLK_bm) >> DEBUG_DRIVE_CLK_bp;
+      uint8_t clksel = (clk == 0) ? TCA_SPLIT_CLKSEL_DIV4_gc
+                     : (clk == 1) ? TCA_SPLIT_CLKSEL_DIV256_gc
+                     : (clk == 2) ? TCA_SPLIT_CLKSEL_DIV2_gc
+                                  : TCA_SPLIT_CLKSEL_DIV8_gc;
+      TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | clksel;
+      debug_drive_active = true;
+      debug_drive_last_update = millis();
+    }
+  }
+#endif
 }
 
 void loop() {
@@ -950,8 +1354,7 @@ void loop() {
 
   if (pending_calibrate_touch) {
     pending_calibrate_touch = false;
-    TCA0.SPLIT.HCMP1 = 0;    // Motor A
-    TCA0.SPLIT.HCMP2 = 0;    // Motor B
+    motor_set(0, false, MOTOR_IDLE_COAST);
     delay(10);
     ptc_node_request_recal(&touch_sensor);
     // for (uint8_t i = 0; i < 4; i++) {
@@ -961,17 +1364,39 @@ void loop() {
     //   delay(100);
     // }
   }
-  motor_update();
+  // Keep the position filter fed from the free-running ADC on every pass, but
+  // run the control law on a fixed tick so gains and filter constants have
+  // real units instead of being per-loop-iteration.
+  adc_drain();
+#if DEBUG_DRIVE
+  debug_loop_count++;
+#endif
 
-  // Copy state to i2c_outgoing_state atomically for ISR reads
-  noInterrupts();
-  i2c_outgoing_state = state;
-  interrupts();
+  uint32_t now_us = micros();
+  if (now_us - last_control_tick_us >= control_tick_period_us) {
+    // dt must be the interval since the previous *execution*, not since the
+    // scheduled tick time: when the loop can't keep up, the schedule falls
+    // behind real time and using it would skew the velocity estimate.
+    control_dt_us = now_us - last_control_exec_us;
+    last_control_exec_us = now_us;
+    last_control_tick_us += control_tick_period_us;
+    // If we fell far behind (e.g. a long blocking call), resynchronise rather
+    // than running a burst of catch-up ticks.
+    if (now_us - last_control_tick_us >= (uint32_t)control_tick_period_us * 4) {
+      last_control_tick_us = now_us;
+    }
+    motor_update();
+
+    // Copy state to i2c_outgoing_state atomically for ISR reads
+    noInterrupts();
+    i2c_outgoing_state = state;
+    interrupts();
+  }
 
   ptc_process(millis());
 
   // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
-  digitalWrite(PIN_LED, (TCA0.SPLIT.HCMP1 != 0 || TCA0.SPLIT.HCMP2 != 0) || (millis() % 512 < 128));
+  digitalWrite(PIN_LED, (motor_drive_value != 0) || (millis() % 512 < 128));
   // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
 
 }
