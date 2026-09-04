@@ -119,6 +119,41 @@ enum TapState : uint8_t {
 #define MOVE_DEADBAND (6.0f)            // ADC counts considered "on target"
 #define MOVE_MAX_DUTY (254)
 
+// Optional speed limiting. Cruise velocity is already proportional to error
+// (the plant is a velocity source, so v ~ kv*KP*e / (1 + kv*KD)), which is why
+// big moves are fast and small ones are slow. Capping the error fed to the P
+// term therefore caps cruise speed, with no extra state and no motion profile.
+// Near the target the error is below the cap, so the clamp is inactive and the
+// tuned decel/coast/settle behaviour is untouched.
+//
+// This is a limit, not a precise speed: the constant below is the measured
+// closed-loop velocity per unit of error on the reference fader, and it varies
+// by ~20% between directions (friction is direction-dependent) plus unit to
+// unit. Callers wanting an exact velocity need a governor closing the loop on
+// measured velocity instead.
+// Implemented as a one-sided governor on measured velocity rather than by
+// clamping the error: the feedforward sits well above breakaway (deliberately,
+// for hardware tolerance), so it alone commands ~2200 raw counts/sec. Clamping
+// the error can only slow the fader to that floor, whereas subtracting from the
+// drive pulls it below the feedforward and reaches the real limit - the
+// Stribeck floor of ~900 raw counts/sec, below which the mechanism stick-slips
+// rather than moving smoothly.
+// Two cooperating parts are needed, and neither works alone:
+//  - the error clamp stops the P term saturating. For a large move KP*error is
+//    ~1300 duty, so the governor below cannot pull it under the 254 ceiling.
+//  - the governor pulls drive below the feedforward. The feedforward alone
+//    commands ~2200 raw counts/sec, so clamping the error can only slow the
+//    fader to that floor, never under it.
+#define MOVE_VELOCITY_PER_ERROR (30.0f)  // ADC counts/sec per ADC count of error
+#define MOVE_VEL_LIMIT_GAIN (0.08f)      // duty per (ADC count/sec) of overspeed
+// Slowest speed the mechanism sustains smoothly. Below roughly this the motor
+// cannot maintain continuous rotation (Stribeck friction) and creeps in
+// stick-slip steps instead, so requests slower than this are clamped rather
+// than honoured. Measured floor is ~150 position counts/sec, i.e. full travel
+// in about 1.7 s.
+#define MOVE_VEL_MIN (560.0f)            // ADC counts/sec
+#define MOVE_VEL_UNLIMITED (0.0f)
+
 // On movement timeout, an error this small means the fader is essentially in
 // position and merely hunting - give up quietly rather than latching
 // MODE_ERROR, which needs a host round-trip to clear. Anything larger is a
@@ -145,7 +180,23 @@ enum TapState : uint8_t {
 // drive is therefore capped just above breakaway: enough to cross the slack
 // promptly, but slow enough that engagement is gentle. Full authority returns
 // as soon as the carriage is actually moving, so this costs only a few ms.
-#define MOVE_TAKEUP_DUTY (95)           // duty ceiling while stalled (0 = disabled)
+// Backlash take-up. A direction-reversed move starts with the motor unloaded,
+// so commanding full duty lets the rotor spin up through the slack and snap it
+// taut - an audible click and a jerk at the carriage. The drive ceiling
+// therefore starts low at the beginning of every move and opens up over time.
+//
+// This is deliberately time-based rather than gated on "are we moving yet":
+// while crossing the slack the rotor IS moving (it just isn't loaded), so a
+// velocity-gated ceiling lifts partway through the slack and full duty still
+// lands on engagement. Time is the only signal available that does not depend
+// on whether the belt has taken up yet.
+// MUST stay above MOVE_FF_RISING/FALLING. The ceiling exists to stop the drive
+// stepping to full duty, not to suppress the feedforward: set below FF it
+// starves the very term that gets the carriage moving, so the fader stalls,
+// waits for the stiction ramp, and breaks free abruptly - which both hunts and
+// makes the click worse rather than better.
+#define MOVE_TAKEUP_DUTY (130)           // duty ceiling at the start of a move
+#define MOVE_TAKEUP_RAMP_RATE (1200.0f)  // duty per second the ceiling opens up
 
 #if DEBUG_DRIVE
 // Runtime-tunable copies, so gain sweeps don't need a reflash per trial.
@@ -156,6 +207,7 @@ int16_t move_ff_falling = MOVE_FF_FALLING;
 float move_deadband = MOVE_DEADBAND;
 float move_ramp_rate = MOVE_RAMP_RATE;
 int16_t move_takeup_duty = MOVE_TAKEUP_DUTY;
+float move_takeup_ramp_rate = MOVE_TAKEUP_RAMP_RATE;
 #else
 #define move_kp MOVE_KP
 #define move_kd MOVE_KD
@@ -164,11 +216,15 @@ int16_t move_takeup_duty = MOVE_TAKEUP_DUTY;
 #define move_deadband MOVE_DEADBAND
 #define move_ramp_rate MOVE_RAMP_RATE
 #define move_takeup_duty MOVE_TAKEUP_DUTY
+#define move_takeup_ramp_rate MOVE_TAKEUP_RAMP_RATE
 #endif
 
 const float ALPHA = 0.05;
 float input_ewma = 0;
 float stiction_ramp = 0;                // extra drive ramped in while stalled
+float move_max_velocity = MOVE_VEL_UNLIMITED;  // 0 = unlimited
+float move_max_error = 1023.0f;         // matching P-term clamp; large = inactive
+float drive_ceiling = MOVE_MAX_DUTY;    // take-up ceiling, reset at each move start
 float velocity_ewma = 0;                // ADC counts/sec, + toward the motor end
 float last_control_ewma = 0;
 uint32_t last_control_tick_us = 0;
@@ -212,6 +268,7 @@ uint8_t last_haptic_nonce = 0;  // Track last seen nonce to detect changes [DEPR
 // Layer state storage (27 bytes total) - Protocol v5+
 uint16_t layer_haptic_configs[8];      // 16 bytes - 16-bit haptic config per layer
 uint8_t layer_restore_positions[8];    // 8 bytes - restore position per layer (0-255)
+uint8_t layer_move_times[8];           // 8 bytes - optional full-travel move time per layer (0 = unlimited)
 uint8_t active_layer = 0;              // 1 byte - currently active layer (0-7)
 uint8_t pending_layer_change = 0xFF;   // 1 byte - deferred layer change (0xFF = none, 0-7 = layer)
 uint8_t queried_layer = 0;             // 1 byte - for layer-addressed read protocol
@@ -239,9 +296,11 @@ volatile uint8_t i2c_layer_change_request = 0xFF;  // 0xFF = none, 0-7 = layer
 struct LayerTargetWrite {
   uint8_t layer;
   uint8_t target;
+  uint8_t move_time; // optional full-travel move time (see LAYER_MOVE_TIME)
+  bool has_move_time;// false = 3-byte legacy write, leave the limit as-is
   bool valid;
 };
-volatile LayerTargetWrite i2c_layer_target_write = {0, 0, false};
+volatile LayerTargetWrite i2c_layer_target_write = {0, 0, 0, false, false};
 
 struct LayerHapticWrite {
   uint8_t layer;
@@ -313,6 +372,7 @@ void reset_tap_detection();
 void request_layer_change(uint8_t new_layer);
 void apply_layer_change(uint8_t new_layer);
 void write_layer_target(uint8_t layer, uint8_t target);
+void apply_move_time(uint8_t move_time_10ms);
 void write_layer_haptic_config(uint8_t layer, uint16_t config);
 
 Mode get_mode() {
@@ -322,9 +382,12 @@ Mode get_mode() {
 void set_mode(Mode mode) {
   state = (state & ~STATE_MODE_bm) | (mode << STATE_MODE_bp);
 
-  // Any fresh movement starts without accumulated stiction ramp
+  // Any fresh movement starts without accumulated stiction ramp, and with the
+  // drive ceiling back down so backlash is taken up gently.
   if (mode != MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
     stiction_ramp = 0;
+  } else {
+    drive_ceiling = move_takeup_duty;
   }
 
   // Reset tap detection when entering modes where taps shouldn't be detected
@@ -475,12 +538,13 @@ void onI2cRequest() {
   } else if (r == REG_DEBUG_STATUS) {
       int16_t vel = (int16_t)debug_status_velocity;
       int16_t err_x8 = (int16_t)(debug_status_error * 8);
-      const uint16_t vals[8] = {
+      const uint16_t vals[9] = {
         input_calib_min, input_calib_max, (uint16_t)target_adc,
         (uint16_t)motor_drive_value, (uint16_t)vel, (uint16_t)err_x8,
         debug_status_loop_hz, debug_status_tick_hz,
+        (uint16_t)move_max_velocity,
       };
-      for (uint8_t i = 0; i < 8; i++) {
+      for (uint8_t i = 0; i < 9; i++) {
         Wire.write((vals[i] >> 8) & 0xFF);
         Wire.write(vals[i] & 0xFF);
       }
@@ -528,11 +592,14 @@ void onI2cReceive(int howMany) {
       if (howMany == 2) {
         // Read setup: register + layer index
         queried_layer = Wire.read() & 0x07;
-      } else if (howMany == 3) {
-        // Write: register + layer + target position
-        // Copy data to volatile struct for main loop to process
+      } else if (howMany == 3 || howMany == 4) {
+        // Write: register + layer + target position [+ optional speed limit].
+        // The 3-byte form is the original protocol and leaves the layer's
+        // existing speed limit alone, so old controllers are unaffected.
         i2c_layer_target_write.layer = Wire.read() & 0x07;
         i2c_layer_target_write.target = Wire.read();
+        i2c_layer_target_write.has_move_time = (howMany == 4);
+        i2c_layer_target_write.move_time = (howMany == 4) ? Wire.read() : 0;
         i2c_layer_target_write.valid = true;
       }
       break;
@@ -731,6 +798,7 @@ void apply_layer_change(uint8_t new_layer) {
     layer_restore_positions[new_layer], 0, 255,
     input_calib_min, input_calib_max
   );
+  apply_move_time(layer_move_times[new_layer]);
   remote_movement_start = millis();
   remote_movement_start_position = input_ewma;
   remote_movement_steady_start = millis();
@@ -753,6 +821,7 @@ void write_layer_target(uint8_t layer, uint8_t target) {
       // Start remote movement
       layer_restore_positions[layer] = target;
       target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
+      apply_move_time(layer_move_times[layer]);
       set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
       remote_movement_start = millis();
       remote_movement_start_position = input_ewma;
@@ -763,6 +832,7 @@ void write_layer_target(uint8_t layer, uint8_t target) {
       // Update target of in-progress movement
       layer_restore_positions[layer] = target;
       target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
+      apply_move_time(layer_move_times[layer]);
       remote_movement_start = millis();
       remote_movement_start_position = input_ewma;
       remote_movement_steady_start = millis();
@@ -807,6 +877,29 @@ void adc_drain() {
     // 2x accumulation, so halve to get ADC counts
     input_ewma = adc_val * ALPHA / 2 + input_ewma * (1 - ALPHA);
   }
+}
+
+// Translate a layer's move-time byte into the velocity limit used by the
+// control law. The byte is the time a full-scale (0-255) move should take, in
+// units of 10 ms; 0 means unlimited. Since the whole calibrated span is crossed
+// in that time, the velocity is simply span/time.
+void apply_move_time(uint8_t move_time_10ms) {
+  if (move_time_10ms == LAYER_MOVE_TIME_UNLIMITED) {
+    move_max_velocity = MOVE_VEL_UNLIMITED;
+    move_max_error = 1023.0f;
+    return;
+  }
+  uint16_t span = input_calib_max - input_calib_min;
+  float ms = (float)move_time_10ms * LAYER_MOVE_TIME_MS_PER_UNIT;
+  float adc_per_sec = (float)span * 1000.0f / ms;
+  // Clamp to what the mechanism can actually sustain smoothly
+  if (adc_per_sec < MOVE_VEL_MIN) adc_per_sec = MOVE_VEL_MIN;
+  move_max_velocity = adc_per_sec;
+  // Matching error clamp, so the proportional term cannot saturate past the
+  // point where the governor has any authority.
+  float clamp = adc_per_sec / MOVE_VELOCITY_PER_ERROR;
+  if (clamp < MOVE_DEADBAND * 2) clamp = MOVE_DEADBAND * 2;
+  move_max_error = clamp;
 }
 
 void motor_update() {
@@ -908,13 +1001,21 @@ void motor_update() {
         }
         float error = target_adc - input_ewma;
         if (error > move_deadband || error < -move_deadband) {
-          // PD on position plus a friction feedforward sized just under the
-          // measured breakaway duty, so the controller only has to supply the
-          // part of the drive that sets speed rather than fighting stiction.
-          // The D term is what prevents overshoot: it cancels the feedforward
-          // while the carriage is still moving fast, cutting drive roughly one
-          // stopping distance short of the target so it coasts in.
-          float u = move_kp * error - move_kd * velocity_ewma;
+          // PD on position plus a friction feedforward, which covers the
+          // breakaway duty so the controller only has to supply the part of
+          // the drive that sets speed rather than fighting stiction. The D term
+          // is what prevents overshoot: it cancels the feedforward while the
+          // carriage is still moving fast, cutting drive roughly one stopping
+          // distance short of the target so it coasts in.
+
+          // Clamp the error driving the P term when a speed limit is active.
+          // Inactive near the target and when unlimited, so the tuned approach
+          // and settle behaviour is unchanged.
+          float e_ctrl = error;
+          if (e_ctrl > move_max_error) e_ctrl = move_max_error;
+          if (e_ctrl < -move_max_error) e_ctrl = -move_max_error;
+
+          float u = move_kp * e_ctrl - move_kd * velocity_ewma;
           u += (error > 0) ? move_ff_rising : -move_ff_falling;
 
           // Ramp in extra drive only while stalled, and shed it as soon as the
@@ -928,13 +1029,23 @@ void motor_update() {
           }
           u += (error > 0) ? stiction_ramp : -stiction_ramp;
 
-          // Cap drive until the carriage is moving, so the motor eases through
-          // belt backlash instead of snapping it taut at full duty.
-          int16_t limit = MOVE_MAX_DUTY;
-          if (move_takeup_duty > 0 && speed < MOVE_STALL_VELOCITY) {
-            limit = move_takeup_duty + (int16_t)stiction_ramp;
-            if (limit > MOVE_MAX_DUTY) limit = MOVE_MAX_DUTY;
+          // Optional velocity limit: bleed off drive only while over the
+          // requested speed, so approach and settle near the target (already
+          // slower than any useful limit) are unaffected.
+          if (move_max_velocity > MOVE_VEL_UNLIMITED) {
+            float speed_now = velocity_ewma < 0 ? -velocity_ewma : velocity_ewma;
+            if (speed_now > move_max_velocity) {
+              float excess = MOVE_VEL_LIMIT_GAIN * (speed_now - move_max_velocity);
+              u += (velocity_ewma > 0) ? -excess : excess;
+            }
           }
+
+          // Drive ceiling opens up over time from the take-up value, easing
+          // the motor through belt backlash instead of stepping to full duty.
+          drive_ceiling += move_takeup_ramp_rate * (control_dt_us * 1e-6f);
+          if (drive_ceiling > MOVE_MAX_DUTY) drive_ceiling = MOVE_MAX_DUTY;
+          int16_t limit = (int16_t)drive_ceiling + (int16_t)stiction_ramp;
+          if (limit > MOVE_MAX_DUTY) limit = MOVE_MAX_DUTY;
 
           int16_t drive = (int16_t)u;
           if (drive > limit) drive = limit;
@@ -1159,6 +1270,7 @@ void setup() {
   for (uint8_t i = 0; i < 8; i++) {
     layer_haptic_configs[i] = 0;  // Default: HAPTIC_NO_HAPTICS (smooth mode), all bits 0
     layer_restore_positions[i] = 128;  // Default: midpoint
+    layer_move_times[i] = LAYER_MOVE_TIME_UNLIMITED;
   }
   active_layer = 0;
   pending_layer_change = 0xFF;  // No pending change
@@ -1213,6 +1325,8 @@ void process_i2c_requests() {
   bool has_layer_target = false;
   uint8_t layer_target_layer = 0;
   uint8_t layer_target_target = 0;
+  uint8_t layer_target_move_time = 0;
+  bool layer_target_has_move_time = false;
   bool has_layer_haptic = false;
   uint8_t layer_haptic_layer = 0;
   uint16_t layer_haptic_config = 0;
@@ -1241,6 +1355,8 @@ void process_i2c_requests() {
     has_layer_target = true;
     layer_target_layer = i2c_layer_target_write.layer;
     layer_target_target = i2c_layer_target_write.target;
+    layer_target_move_time = i2c_layer_target_write.move_time;
+    layer_target_has_move_time = i2c_layer_target_write.has_move_time;
     i2c_layer_target_write.valid = false;
   }
 
@@ -1284,6 +1400,9 @@ void process_i2c_requests() {
   }
 
   if (has_layer_target) {
+    if (layer_target_has_move_time) {
+      layer_move_times[layer_target_layer & 0x07] = layer_target_move_time;
+    }
     write_layer_target(layer_target_layer, layer_target_target);
   }
 
@@ -1305,6 +1424,7 @@ void process_i2c_requests() {
       case DEBUG_GAIN_DEADBAND:   move_deadband = debug_gain_value / 1000.0f; break;
       case DEBUG_GAIN_RAMP_RATE:  move_ramp_rate = debug_gain_value; break;
       case DEBUG_GAIN_TAKEUP:     move_takeup_duty = debug_gain_value; break;
+      case DEBUG_GAIN_TAKEUP_RAMP: move_takeup_ramp_rate = debug_gain_value; break;
       // Override the calibration bounds (RAM only, not persisted) so a
       // miscalibrated fader - one whose stored range exceeds its physical
       // travel - can be reproduced on a good unit.

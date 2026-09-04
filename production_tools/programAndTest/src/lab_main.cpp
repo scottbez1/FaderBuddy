@@ -295,6 +295,34 @@ void handleCommand(char* line) {
     uint8_t t = atoi(a);
     Serial.println(faderBuddy.writeTargetPosition(t) ? "OK" : "ERR write");
 
+  } else if (strcmp(cmd, "sstep") == 0) {
+    // sstep <from> <to> <speed> <log_ms>  - step with the optional speed limit
+    char* a = strtok(nullptr, " ");
+    char* b = strtok(nullptr, " ");
+    char* c = strtok(nullptr, " ");
+    char* d = strtok(nullptr, " ");
+    if (!a || !b || !c || !d) { Serial.println("ERR usage: sstep <from> <to> <speed> <log_ms>"); return; }
+    uint8_t speed = (uint8_t)atoi(c);
+    // move to the start position at full speed
+    WireFaderBuddy.beginTransmission(FADER_BUDDY_I2C_ADDR);
+    WireFaderBuddy.write(REG_LAYER_TARGET);
+    WireFaderBuddy.write((uint8_t)0);
+    WireFaderBuddy.write((uint8_t)atoi(a));
+    WireFaderBuddy.write((uint8_t)LAYER_MOVE_TIME_UNLIMITED);
+    if (WireFaderBuddy.endTransmission() != 0) { Serial.println("ERR write from"); return; }
+    waitIdle(6000);
+    delay(500);
+    // then the measured move, speed limited
+    WireFaderBuddy.beginTransmission(FADER_BUDDY_I2C_ADDR);
+    WireFaderBuddy.write(REG_LAYER_TARGET);
+    WireFaderBuddy.write((uint8_t)0);
+    WireFaderBuddy.write((uint8_t)atoi(b));
+    WireFaderBuddy.write(speed);
+    if (WireFaderBuddy.endTransmission() != 0) { Serial.println("ERR write to"); return; }
+    capture(atol(d), 5);
+    dumpTrace();
+    Serial.println("OK");
+
   } else if (strcmp(cmd, "step") == 0) {
     // step <from> <to> <log_ms> [settle_ms]
     char* a = strtok(nullptr, " ");
@@ -456,16 +484,16 @@ void handleCommand(char* line) {
     Serial.println(WireFaderBuddy.endTransmission() == 0 ? "OK" : "ERR write");
 
   } else if (strcmp(cmd, "dbg") == 0) {
-    uint8_t d[16];
+    uint8_t d[18];
     WireFaderBuddy.beginTransmission(FADER_BUDDY_I2C_ADDR);
     WireFaderBuddy.write(REG_DEBUG_STATUS);
     if (WireFaderBuddy.endTransmission(false) != 0) { Serial.println("ERR write"); return; }
-    if (WireFaderBuddy.requestFrom((uint8_t)FADER_BUDDY_I2C_ADDR, (size_t)16) != 16) {
+    if (WireFaderBuddy.requestFrom((uint8_t)FADER_BUDDY_I2C_ADDR, (size_t)18) != 18) {
       Serial.println("ERR read"); return;
     }
-    for (uint8_t i = 0; i < 16; i++) d[i] = WireFaderBuddy.read();
-    int16_t v[8];
-    for (uint8_t i = 0; i < 8; i++) v[i] = (int16_t)(((uint16_t)d[i*2] << 8) | d[i*2+1]);
+    for (uint8_t i = 0; i < 18; i++) d[i] = WireFaderBuddy.read();
+    int16_t v[9];
+    for (uint8_t i = 0; i < 9; i++) v[i] = (int16_t)(((uint16_t)d[i*2] << 8) | d[i*2+1]);
     Serial.print("OK calib_min="); Serial.print((uint16_t)v[0]);
     Serial.print(" calib_max="); Serial.print((uint16_t)v[1]);
     Serial.print(" target_adc="); Serial.print(v[2]);
@@ -473,7 +501,8 @@ void handleCommand(char* line) {
     Serial.print(" vel="); Serial.print(v[4]);
     Serial.print(" err="); Serial.print(v[5] / 8.0f, 2);
     Serial.print(" loop_hz="); Serial.print((uint16_t)v[6]);
-    Serial.print(" tick_hz="); Serial.println((uint16_t)v[7]);
+    Serial.print(" tick_hz="); Serial.print((uint16_t)v[7]);
+    Serial.print(" vmax="); Serial.println((uint16_t)v[8]);
 
   } else if (strcmp(cmd, "rate") == 0) {
     // Measure achievable I2C poll rate

@@ -54,7 +54,7 @@
  * -----|---------------------|---------|------|------------
  * 0x0D | ACTIVE_LAYER        | R/W     | u8   | Active layer index (0-7)
  * -----|---------------------|---------|------|------------
- * 0x0E | LAYER_TARGET        | R/W     | -    | Layer restore position (layer-addressed, see below)
+ * 0x0E | LAYER_TARGET        | R/W     | -    | Layer restore position + optional move time (see below)
  * -----|---------------------|---------|------|------------
  * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
  * -----|---------------------|---------|------|------------
@@ -72,6 +72,12 @@
  * - Layer-addressed registers (0x0E, 0x0F):
  *   - Read:  Write [register, layer], then read N bytes for that layer
  *   - Write: Write [register, layer, ...data] to write to specific layer
+ *
+ * LAYER_TARGET (0x0E) accepts an OPTIONAL trailing speed-limit byte:
+ *   [0x0E, layer, position]           - move at full speed (unchanged behaviour)
+ *   [0x0E, layer, position, move_time] - move no faster than this
+ * Three-byte writes behave exactly as before, so this is backwards compatible
+ * and does not change the protocol version. See LAYER_MOVE_TIME below.
  * - All multi-byte values are big-endian (MSB first)
  *
  * v5 Breaking Changes from v4:
@@ -97,6 +103,29 @@
 #define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
+/*
+ * Optional move-time limit for LAYER_TARGET writes.
+ *
+ * The byte is the time a FULL-SCALE move (0 -> 255) should take, in units of
+ * 10 ms. 0 means unlimited (the default, and what a 3-byte write leaves in
+ * place). So 100 = "one second for full travel"; range 10 ms .. 2550 ms.
+ *
+ * It is a velocity cap, not a move scheduler: a shorter move takes
+ * proportionally less time rather than being stretched to fill the duration.
+ *
+ * This is a LIMIT and not a precise speed. It is realised through a
+ * friction-dependent plant, so actual timing varies with the fader - expect
+ * within roughly 15% for full-travel times up to ~800 ms, and about 7%
+ * difference between the two directions of travel.
+ *
+ * The mechanism cannot move smoothly below roughly 200 position counts/sec, so
+ * requests slower than about 1.2 s of full travel are clamped rather than
+ * honoured; below that speed the motor creeps in stick-slip steps instead of
+ * moving continuously.
+ */
+#define LAYER_MOVE_TIME_UNLIMITED (0)
+#define LAYER_MOVE_TIME_MS_PER_UNIT (10)
+
 #define REG_DEBUG_DRIVE 0x10  // Open-loop motor drive (W, [flags, duty]); DEBUG_DRIVE builds only
 
 /*
@@ -149,6 +178,7 @@
 #define DEBUG_GAIN_TICK_US     (5)  // control tick period, microseconds
 #define DEBUG_GAIN_RAMP_RATE   (6)  // stiction ramp rate, duty per second
 #define DEBUG_GAIN_TAKEUP      (7)  // backlash take-up duty ceiling (0 = disabled)
+#define DEBUG_GAIN_TAKEUP_RAMP (10) // take-up ceiling ramp rate, duty per second
 #define DEBUG_GAIN_CALIB_MIN   (8)  // override calib_min (RAM only, not saved)
 #define DEBUG_GAIN_CALIB_MAX   (9)  // override calib_max (RAM only, not saved)
 

@@ -80,14 +80,22 @@ In `motor_update()`, `MODE_REMOTE_MOVEMENT_IN_PROGRESS`:
 error = target_adc - input_ewma
 if |error| <= MOVE_DEADBAND:  brake, and start/continue the settle timer
 else:
-    u  = MOVE_KP * error                      # proportional
-    u -= MOVE_KD * velocity_ewma              # damping
+    e_ctrl = clamp(error, +/- move_max_error)     # only when speed limited
+    u  = MOVE_KP * e_ctrl                         # proportional
+    u -= MOVE_KD * velocity_ewma                  # damping
     u += sign(error) * MOVE_FF_{RISING,FALLING}   # friction feedforward
-    u += sign(error) * stiction_ramp          # stall escape
-    clamp |u| to MOVE_TAKEUP_DUTY while stalled, else MOVE_MAX_DUTY
+    u += sign(error) * stiction_ramp              # stall escape
+    if speed limited and over speed:              # governor
+        u -= MOVE_VEL_LIMIT_GAIN * overspeed * sign(velocity)
+    drive_ceiling += MOVE_TAKEUP_RAMP_RATE * dt   # opens up from move start
+    clamp |u| to (drive_ceiling + stiction_ramp), capped at MOVE_MAX_DUTY
 ```
 
-Four ideas, each solving a specific measured problem:
+The two speed-limit lines are inactive unless a move time was requested, and
+`drive_ceiling` reaches `MOVE_MAX_DUTY` within about 100 ms, so on a normal move
+this reduces to PD + feedforward + stall escape.
+
+Five ideas, each solving a specific measured problem:
 
 **Feedforward** supplies the breakaway duty so the P term only has to set speed
 rather than fight stiction. Deliberately set *above* the breakaway measured on
@@ -112,11 +120,29 @@ commanded-but-stalled, capped at `MOVE_RAMP_MAX`, and is dropped the moment the
 carriage moves so it never contributes to overshoot. The cap also means a
 jammed fader cannot wind up to full drive.
 
-**Take-up limit** addresses belt backlash. A direction-reversed move otherwise
+**Take-up ceiling** addresses belt backlash. A direction-reversed move otherwise
 starts at full duty into slack: the rotor free-runs unloaded, then snaps taut
-with an audible click and a jerk. While stalled, drive is capped at
-`MOVE_TAKEUP_DUTY` - enough to cross the slack promptly, gentle on engagement.
-Full authority returns as soon as the carriage moves, costing a few ms.
+with an audible click and a jerk. The drive ceiling therefore starts at
+`MOVE_TAKEUP_DUTY` at the beginning of every move and opens up to full over
+time at `MOVE_TAKEUP_RAMP_RATE`.
+
+Two things about this are easy to get wrong, and both were bugs during
+development:
+
+- **It must be time-based, not gated on "are we moving yet".** While crossing
+  the slack the rotor *is* moving, it just isn't loaded, so a velocity-gated
+  ceiling lifts partway through the slack and full duty still lands on
+  engagement. Time is the only available signal that doesn't depend on whether
+  the belt has taken up.
+- **`MOVE_TAKEUP_DUTY` must stay above `MOVE_FF_RISING/FALLING`.** The ceiling
+  exists to stop drive stepping to full duty, not to suppress the feedforward.
+  Set below FF it starves the term that gets the carriage moving: the fader
+  stalls, waits for the stiction ramp, and breaks free abruptly - which hunts
+  *and* makes the click worse. This regressed when FF was re-centred upward and
+  the ceiling was left at its old value.
+
+**Optional speed limit** (see below) is off by default and changes nothing when
+unset.
 
 ## Fixed-rate loop and the velocity estimate
 
@@ -146,9 +172,13 @@ At 250 us the loop saturates (loop rate == tick rate) with no margin; don't.
 | `MOVE_KD` | 0.04 | Damping. Main speed/robustness dial - see below. |
 | `MOVE_FF_RISING/FALLING` | 106 / 124 | Per-direction friction feedforward, centred for hardware variance. Do not lower. |
 | `MOVE_DEADBAND` | 6.0 | On-target window. Has a hard floor - see below. Don't lower it. |
-| `MOVE_STALL_VELOCITY` | 60 | "Not moving" threshold, for ramp and take-up. |
+| `MOVE_STALL_VELOCITY` | 60 | "Not moving" threshold, for the stiction ramp. |
 | `MOVE_RAMP_RATE/MAX` | 250 / 70 | Stall escape strength. |
-| `MOVE_TAKEUP_DUTY` | 95 | Backlash gentleness. 0 disables. |
+| `MOVE_TAKEUP_DUTY` | 130 | Drive ceiling at move start. Must stay above FF. |
+| `MOVE_TAKEUP_RAMP_RATE` | 1200 | Duty/sec the ceiling opens up. Lower = gentler start. |
+| `MOVE_VEL_LIMIT_GAIN` | 0.08 | Speed-limit governor authority. |
+| `MOVE_VELOCITY_PER_ERROR` | 30 | Measured ADC/s of cruise per ADC of error. |
+| `MOVE_VEL_MIN` | 560 | Slowest smoothly sustainable speed (ADC/s). |
 | `MOVE_TIMEOUT_TOLERANCE` | 20 | On timeout, error below this goes idle instead of `MODE_ERROR`. |
 
 **The deadband has a floor set by the plant, not by taste.** Nothing moves
@@ -234,6 +264,48 @@ If a unit ever falls outside this window, the fix is per-unit calibration rather
 than re-centring the constants: extend self-calibration to ramp duty until
 motion starts in each direction and store the result in EEPROM next to
 `calib_min`/`calib_max`, or have the stiction ramp learn and persist an offset.
+
+## Optional speed limiting
+
+`LAYER_TARGET` (0x0E) takes an optional 4th byte capping the speed of the move.
+Three-byte writes behave exactly as before, so this is backwards compatible and
+does not change the protocol version.
+
+The byte is **the time a full-scale (0 -> 255) move should take, in units of
+10 ms**; 0 means unlimited. So 100 means "one second for full travel", and the
+range is 10 ms .. 2550 ms. It is a velocity cap, not a move scheduler: a shorter
+move takes proportionally less time rather than being stretched to fill the
+duration. The conversion is just `velocity = span / time`, with no scaling
+constant to keep in sync.
+
+It takes **two cooperating parts**, and neither works alone - this is the part
+worth understanding before touching it:
+
+- **An error clamp**, so the proportional term cannot saturate. On a large move
+  `KP*error` is around 1300 duty, so the governor below has no authority
+  whatsoever against the 254 ceiling.
+- **A one-sided governor** on measured velocity, so drive can be pulled *below*
+  the feedforward. FF alone commands ~2200 raw counts/sec, so clamping the error
+  can only slow the fader to that floor and never under it.
+
+Measured on the reference fader, requesting a full-scale time and timing a move
+of 67% of full scale:
+
+| requested full-scale | 250 ms | 400 ms | 600 ms | 800 ms | 1200 ms | 2000 ms |
+|---|---|---|---|---|---|---|
+| measured | 193 ms | 261 ms | 356 ms | 444 ms | 584 ms | 759 ms |
+| vs expected | +16% | -2% | -11% | -17% | -27% | -43% |
+
+**Usable range is roughly 250 ms to 700 ms of full-scale time**, tracking within
+about 15%. Beyond that it saturates: there is a hard floor near **1.1 s of
+full travel** (~200 position counts/sec), below which the motor cannot sustain
+continuous rotation and creeps in stick-slip steps rather than moving smoothly.
+Requests slower than that are clamped, not honoured. Slower smooth motion is not
+reachable by tuning - it needs a different drive scheme. Direction asymmetry is
+within about 7%.
+
+Treat this as a *limit*, not a precise speed control - it is realised through
+the friction-dependent plant, so exact velocity varies with the fader.
 
 ## Reproducing the measurements
 

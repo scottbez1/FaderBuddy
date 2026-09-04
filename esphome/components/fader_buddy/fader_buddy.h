@@ -44,7 +44,11 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // Layer management (Protocol v5: forwards to firmware)
     void set_active_layer(uint8_t layer_index);
     uint8_t get_active_layer() const;
-    void remote_move_to(uint8_t position, uint8_t layer = 0);
+    // move_time_ms: how long a full-scale (0-255) move should take. 0 leaves
+    // the layer's existing limit alone and moves at full speed by default.
+    // Shorter moves take proportionally less time - it is a speed cap, not a
+    // duration the move is stretched to fill.
+    void remote_move_to(uint8_t position, uint8_t layer = 0, uint32_t move_time_ms = 0);
     uint8_t get_position(uint8_t layer = 0) const;
     void set_layer_haptic_config(
         uint8_t layer,
@@ -133,9 +137,11 @@ template<typename... Ts> class RemoteMoveToAction : public Action<Ts...> {
 
   TEMPLATABLE_VALUE(uint8_t, position)
   TEMPLATABLE_VALUE(uint8_t, layer)
+  TEMPLATABLE_VALUE(uint32_t, move_time)
 
   void play(const Ts &...x) override {
-    this->parent_->remote_move_to(this->position_.value(x...), this->layer_.value(x...));
+    this->parent_->remote_move_to(this->position_.value(x...), this->layer_.value(x...),
+                                  this->move_time_.value(x...));
   }
 
  protected:

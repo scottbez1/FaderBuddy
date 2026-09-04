@@ -239,7 +239,7 @@ uint8_t FaderBuddy::get_active_layer() const {
 // Move fader to a specific position (Protocol v5: use REG_LAYER_TARGET)
 // position: USER-FACING position (0-255)
 // layer: which layer to move (0-7)
-void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer) {
+void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer, uint32_t move_time_ms) {
   if (layer > 7) {
     ESP_LOGE(TAG, "Invalid layer index: %d", layer);
     return;
@@ -248,10 +248,33 @@ void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer) {
   // Convert USER-FACING position to HARDWARE position
   uint8_t hw_position = invert_ ? (255 - position) : position;
 
-  // Write to firmware using layer-addressed protocol
-  uint8_t buffer[] = {REG_LAYER_TARGET, layer, hw_position};
-  if (write_with_retry_(buffer, 3)) {
-    ESP_LOGD(TAG, "Set layer %d target to %d (user position)", layer, position);
+  // Write to firmware using layer-addressed protocol. Without a move time this
+  // is the original 3-byte write, which older firmware also accepts.
+  if (move_time_ms == 0) {
+    uint8_t buffer[] = {REG_LAYER_TARGET, layer, hw_position};
+    if (write_with_retry_(buffer, 3)) {
+      ESP_LOGD(TAG, "Set layer %d target to %d (user position)", layer, position);
+    } else {
+      ESP_LOGE(TAG, "Failed to write layer %d target", layer);
+    }
+    return;
+  }
+
+  // Encode as the firmware's 10 ms units, clamped to the representable range
+  uint32_t units = (move_time_ms + LAYER_MOVE_TIME_MS_PER_UNIT / 2) / LAYER_MOVE_TIME_MS_PER_UNIT;
+  if (units < 1) {
+    units = 1;
+  }
+  if (units > 255) {
+    ESP_LOGW(TAG, "move_time %ums exceeds the maximum of %ums; clamping", move_time_ms,
+             255 * LAYER_MOVE_TIME_MS_PER_UNIT);
+    units = 255;
+  }
+
+  uint8_t buffer[] = {REG_LAYER_TARGET, layer, hw_position, (uint8_t) units};
+  if (write_with_retry_(buffer, 4)) {
+    ESP_LOGD(TAG, "Set layer %d target to %d (user position), full-scale move time %ums", layer,
+             position, (unsigned) (units * LAYER_MOVE_TIME_MS_PER_UNIT));
   } else {
     ESP_LOGE(TAG, "Failed to write layer %d target", layer);
   }

@@ -46,6 +46,7 @@ CONF_DETENT_COUNT = "detent_count"
 CONF_DETENT_STRENGTH = "detent_strength"
 CONF_POSITION = "position"
 CONF_VALUE_CHANGE_MIN_INTERVAL = "value_change_min_interval"
+CONF_MOVE_TIME = "move_time"
 
 # Schema for a single layer haptic configuration
 LAYER_HAPTIC_SCHEMA = cv.Schema({
@@ -143,6 +144,12 @@ async def set_active_layer_action_to_code(config, action_id, template_arg, args)
         cv.Required(CONF_ID): cv.use_id(FaderBuddy),
         cv.Required(CONF_POSITION): cv.templatable(cv.int_range(min=0, max=255)),
         cv.Optional(CONF_LAYER, default=0): cv.templatable(cv.int_range(min=0, max=7)),
+        # Time for a full-scale (0-255) move. Shorter moves take proportionally
+        # less time - this caps speed, it does not stretch the move to fill the
+        # duration. Default 0 means unlimited (move at full speed).
+        cv.Optional(CONF_MOVE_TIME, default="0ms"): cv.templatable(
+            cv.positive_time_period_milliseconds
+        ),
     })
 )
 async def remote_move_to_action_to_code(config, action_id, template_arg, args):
@@ -152,6 +159,8 @@ async def remote_move_to_action_to_code(config, action_id, template_arg, args):
     cg.add(var.set_position(position))
     layer = await cg.templatable(config[CONF_LAYER], args, cg.uint8)
     cg.add(var.set_layer(layer))
+    move_time = await cg.templatable(config[CONF_MOVE_TIME], args, cg.uint32)
+    cg.add(var.set_move_time(move_time))
     return var
 
 
