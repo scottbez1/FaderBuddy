@@ -208,11 +208,25 @@ Command the fader to move to a specific position.
     id: my_fader
     position: 128
     layer: 0  # Optional, defaults to layer 0
+
+# Example: move gently rather than at full speed
+- fader_buddy.remote_move_to:
+    id: my_fader
+    position: 200
+    move_time: 500ms
 ```
 
 **Position:** 0-255 (0 = bottom, 255 = top, unless inverted)
 
 **Layer:** Optional layer index (0-7). If the specified layer is not currently active, the position is stored and will be restored when that layer becomes active.
+
+**move_time:** Optional. How long a *full-scale* move (0 to 255) should take. Omit it, or use `0ms`, to move at full speed.
+
+This caps the fader's speed rather than scheduling the move, so a shorter move takes proportionally less time — with `move_time: 500ms`, a half-scale move takes about 250ms. Slowing moves down is mostly useful when several faders move at once, or when you want motion to read as deliberate rather than instant.
+
+Practical range is roughly **250ms to 700ms**, where actual timing lands within about 15% of the request. Longer values keep slowing the fader but increasingly under-run: the mechanism cannot move smoothly slower than about **1.1 seconds** for full travel, because below that speed the motor stops rotating continuously and creeps in small steps instead. Requests slower than that are clamped. Expect around 7% difference between moving up and moving down, since the fader's friction is not symmetric.
+
+Setting `move_time` on a layer that is not currently active also applies when that layer is restored later.
 
 ### fader_buddy.set_active_layer
 

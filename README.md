@@ -70,6 +70,9 @@ fader_buddy:
 and to move the fader from a lambda:
 ```cpp
 id(my_fader).remote_move_to(position, layer);
+
+// optionally cap the speed - here, 500ms for a full-scale move
+id(my_fader).remote_move_to(position, layer, 500);
 ```
 
 That's pretty much all there is to it!

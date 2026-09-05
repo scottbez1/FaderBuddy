@@ -12,6 +12,9 @@ FaderBuddy is a bidirectional motor fader control system with integrated capacit
 - **firmware/** - ATtiny1616 firmware (PlatformIO project, Arduino framework)
   - `src/main.cpp` - Main firmware logic with motor control loop and I2C peripheral
   - `src/shared/i2c_data.h` - I2C protocol v5 definitions (shared across all components)
+  - `ABOUT_MOTOR_CONTROL.md` - **Read before touching the movement code.** Measured plant
+    model, why the control law is shaped as it is, and how the gains are centred for
+    hardware variance rather than tuned against one fader
 - **esphome/** - ESPHome custom component for Home Assistant integration
   - `components/fader_buddy/` - Core component for interfacing with FaderBuddy boards
   - `examples/multi-fader-display.yaml` - ESP32-S3 example with LVGL display
@@ -45,7 +48,15 @@ pio run --target monitor
 
 # Clean build
 pio run --target clean
+
+# System-identification build, adding the debug registers used to measure the
+# motor. Not for production - it lets a host drive the H-bridge directly.
+pio run -e fader_buddy_lab --target upload
 ```
+
+For measuring control-loop behaviour on the test jig, `production_tools/programAndTest`
+has an `env:lab` firmware providing a serial-driven measurement harness (step-response
+capture and runtime gain tuning). See `firmware/ABOUT_MOTOR_CONTROL.md`.
 
 The firmware uses UPDI programming via a USB-to-serial adapter. Upload port and monitor port can be configured in `platformio.ini`.
 
@@ -164,8 +175,17 @@ The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 
 - **8 layers per fader**: Each with independent target position and haptic configuration
 - **State register** (0x01): 32-bit packed register containing mode, layer, nonces, and touch state
 - **Position/haptic nonces**: Used to detect user input vs. remote command echo
+- **Optional move time**: `LAYER_TARGET` (0x0E) accepts an optional 4th byte capping move
+  speed (full-scale travel time in 10ms units, 0 = unlimited). Three-byte writes behave
+  exactly as before, so this is backwards compatible and did not bump the protocol version
+- **Debug registers** (0x10-0x12): open-loop drive, control-loop internals, and runtime gain
+  overrides. Compiled out unless `DEBUG_DRIVE` is defined, so they are absent from
+  production builds
 
 Refer to `i2c_data.h` for complete register map and bit field definitions.
+
+When adding to the protocol, prefer optional trailing bytes over new register semantics -
+that keeps older controllers working and avoids a version bump.
 
 ### State Machine
 
@@ -173,10 +193,13 @@ The firmware implements a state machine to arbitrate between remote control and 
 
 1. **MODE_REMOTE_MOVEMENT_IN_PROGRESS** (0)
    - Motor actively moving to commanded target position
-   - Haptics disabled, simple PID movement
+   - Haptics disabled; PD control plus a friction feedforward, with a stall-escape
+     ramp and a backlash take-up ceiling (see `firmware/ABOUT_MOTOR_CONTROL.md`)
    - Transitions to INPUT_ACTIVE if touch detected for >50ms
    - Transitions to INPUT_IDLE when target reached and stable for >300ms
-   - Transitions to ERROR if movement timeout (8 seconds)
+   - Transitions to ERROR if movement timeout (8 seconds) AND the remaining error is
+     large; a small error at timeout means the fader arrived but kept dithering, so
+     it goes quietly idle instead of latching an error the host must clear
 
 2. **MODE_INPUT_ACTIVE** (1)
    - User is touching/moving the fader
