@@ -91,7 +91,7 @@ else:
     clamp |u| to (drive_ceiling + stiction_ramp), capped at MOVE_MAX_DUTY
 ```
 
-The two speed-limit lines are inactive unless a move time was requested, and
+The two speed-limit lines are inactive unless a speed limit was requested, and
 `drive_ceiling` reaches `MOVE_MAX_DUTY` within about 100 ms, so on a normal move
 this reduces to PD + feedforward + stall escape.
 
@@ -179,6 +179,8 @@ At 250 us the loop saturates (loop rate == tick rate) with no margin; don't.
 | `MOVE_VEL_LIMIT_GAIN` | 0.08 | Speed-limit governor authority. |
 | `MOVE_VELOCITY_PER_ERROR` | 30 | Measured ADC/s of cruise per ADC of error. |
 | `MOVE_VEL_MIN` | 560 | Slowest smoothly sustainable speed (ADC/s). |
+| `MOVE_SPEED_SLOWEST_MS` | 700 | Full-travel time at host speed 0. The slow end of the validated window. |
+| `MOVE_SPEED_FASTEST_MS` | 250 | Full-travel time at host speed 254. Faster than this the limiter stops biting. |
 | `MOVE_TIMEOUT_TOLERANCE` | 20 | On timeout, error below this goes idle instead of `MODE_ERROR`. |
 
 **The deadband has a floor set by the plant, not by taste.** Nothing moves
@@ -269,14 +271,25 @@ motion starts in each direction and store the result in EEPROM next to
 
 `LAYER_TARGET` (0x0E) takes an optional 4th byte capping the speed of the move.
 Three-byte writes behave exactly as before, so this is backwards compatible and
-does not change the protocol version.
+does not change the protocol version. Hosts should keep sending 3-byte writes
+for full-speed moves: firmware predating the byte ignores a 4-byte write
+entirely rather than moving.
 
-The byte is **the time a full-scale (0 -> 255) move should take, in units of
-10 ms**; 0 means unlimited. So 100 means "one second for full travel", and the
-range is 10 ms .. 2550 ms. It is a velocity cap, not a move scheduler: a shorter
-move takes proportionally less time rather than being stretched to fill the
-duration. The conversion is just `velocity = span / time`, with no scaling
-constant to keep in sync.
+The byte is a **unitless 0-255 speed**: 255 (the default) is unlimited, and 0 is
+the slowest the mechanism moves smoothly. Values below 255 map linearly in
+*velocity* across `MOVE_SPEED_SLOWEST_MS` .. `MOVE_SPEED_FASTEST_MS`, which are
+stated as full-travel times because that is how the measurements below were
+taken; the calibrated span turns each into a velocity.
+
+The scale is deliberately unitless rather than a move time in ms. The usable
+window is narrow and bounded at both ends by the plant - past the fast end the
+limiter stops having any effect, past the slow end the mechanism stick-slips -
+so a physical-units parameter mostly offers values that do nothing or cannot be
+honoured. Mapping the whole byte onto the validated window means every value a
+host can send does something, and the endpoints can be re-measured and moved
+without changing the host-facing meaning of the byte. The cost is that "how
+long will this move take" is no longer readable off the parameter, which is
+honest: it was never accurate to better than ~15% anyway.
 
 It takes **two cooperating parts**, and neither works alone - this is the part
 worth understanding before touching it:
@@ -297,15 +310,20 @@ of 67% of full scale:
 | vs expected | +16% | -2% | -11% | -17% | -27% | -43% |
 
 **Usable range is roughly 250 ms to 700 ms of full-scale time**, tracking within
-about 15%. Beyond that it saturates: there is a hard floor near **1.1 s of
-full travel** (~200 position counts/sec), below which the motor cannot sustain
+about 15% - hence those two endpoints for the speed scale. Beyond the slow end
+it saturates: there is a hard floor below which the motor cannot sustain
 continuous rotation and creeps in stick-slip steps rather than moving smoothly.
-Requests slower than that are clamped, not honoured. Slower smooth motion is not
-reachable by tuning - it needs a different drive scheme. Direction asymmetry is
-within about 7%.
+`MOVE_VEL_MIN` (560 ADC counts/sec, ~1.7 s of full travel on the reference unit)
+is the backstop clamp for that, and sits well below anything the speed scale can
+ask for. Slower smooth motion is not reachable by tuning - it needs a different
+drive scheme. Direction asymmetry is within about 7%.
 
 Treat this as a *limit*, not a precise speed control - it is realised through
 the friction-dependent plant, so exact velocity varies with the fader.
+
+The lab jig's `sstep <from> <to> <speed> <log_ms>` command takes the same
+unitless byte, so re-measuring the table above means picking speeds rather than
+times.
 
 ## Reproducing the measurements
 
@@ -332,7 +350,7 @@ in `i2c_data.h` (`DEBUG_GAIN_*`); KP, KD and deadband are scaled by 1000.
 Restore production firmware with `pio run -e fader_buddy -t upload` and
 `pio run -e lilygo-t-display -t upload`.
 
-The debug registers (0x10-0x12) are additive and compiled out unless
+The debug registers (0xF0-0xF2) are additive and compiled out unless
 `DEBUG_DRIVE` is defined, so the protocol version is unchanged.
 
 ## Measurement gotchas

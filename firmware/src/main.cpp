@@ -154,6 +154,17 @@ enum TapState : uint8_t {
 #define MOVE_VEL_MIN (560.0f)            // ADC counts/sec
 #define MOVE_VEL_UNLIMITED (0.0f)
 
+// Endpoints of the host-facing unitless speed scale (LAYER_SPEED_SLOWEST ..
+// LAYER_SPEED_FULL - 1), expressed as the time a full-travel move takes. They
+// are the ends of the range the limiter was actually measured over: below
+// MOVE_SPEED_SLOWEST_MS tracking falls apart as the governor runs into the
+// Stribeck floor, and above MOVE_SPEED_FASTEST_MS the limit sits at or beyond
+// what the unlimited controller already does, so it stops having any effect.
+// Mapping the whole byte onto this window means every value a host can send
+// does something, rather than most of the range being unusable.
+#define MOVE_SPEED_SLOWEST_MS (700.0f)
+#define MOVE_SPEED_FASTEST_MS (250.0f)
+
 // On movement timeout, an error this small means the fader is essentially in
 // position and merely hunting - give up quietly rather than latching
 // MODE_ERROR, which needs a host round-trip to clear. Anything larger is a
@@ -268,7 +279,7 @@ uint8_t last_haptic_nonce = 0;  // Track last seen nonce to detect changes [DEPR
 // Layer state storage (27 bytes total) - Protocol v5+
 uint16_t layer_haptic_configs[8];      // 16 bytes - 16-bit haptic config per layer
 uint8_t layer_restore_positions[8];    // 8 bytes - restore position per layer (0-255)
-uint8_t layer_move_times[8];           // 8 bytes - optional full-travel move time per layer (0 = unlimited)
+uint8_t layer_speeds[8];               // 8 bytes - per-layer move speed (see LAYER_SPEED_*)
 uint8_t active_layer = 0;              // 1 byte - currently active layer (0-7)
 uint8_t pending_layer_change = 0xFF;   // 1 byte - deferred layer change (0xFF = none, 0-7 = layer)
 uint8_t queried_layer = 0;             // 1 byte - for layer-addressed read protocol
@@ -296,11 +307,11 @@ volatile uint8_t i2c_layer_change_request = 0xFF;  // 0xFF = none, 0-7 = layer
 struct LayerTargetWrite {
   uint8_t layer;
   uint8_t target;
-  uint8_t move_time; // optional full-travel move time (see LAYER_MOVE_TIME)
-  bool has_move_time;// false = 3-byte legacy write, leave the limit as-is
+  uint8_t speed;     // optional move speed (see LAYER_SPEED_*)
+  bool has_speed;    // false = 3-byte write, leave the layer's speed as-is
   bool valid;
 };
-volatile LayerTargetWrite i2c_layer_target_write = {0, 0, 0, false, false};
+volatile LayerTargetWrite i2c_layer_target_write = {0, 0, LAYER_SPEED_FULL, false, false};
 
 struct LayerHapticWrite {
   uint8_t layer;
@@ -372,7 +383,7 @@ void reset_tap_detection();
 void request_layer_change(uint8_t new_layer);
 void apply_layer_change(uint8_t new_layer);
 void write_layer_target(uint8_t layer, uint8_t target);
-void apply_move_time(uint8_t move_time_10ms);
+void apply_move_speed(uint8_t speed);
 void write_layer_haptic_config(uint8_t layer, uint16_t config);
 
 Mode get_mode() {
@@ -593,13 +604,13 @@ void onI2cReceive(int howMany) {
         // Read setup: register + layer index
         queried_layer = Wire.read() & 0x07;
       } else if (howMany == 3 || howMany == 4) {
-        // Write: register + layer + target position [+ optional speed limit].
+        // Write: register + layer + target position [+ optional speed].
         // The 3-byte form is the original protocol and leaves the layer's
-        // existing speed limit alone, so old controllers are unaffected.
+        // existing speed alone, so old controllers are unaffected.
         i2c_layer_target_write.layer = Wire.read() & 0x07;
         i2c_layer_target_write.target = Wire.read();
-        i2c_layer_target_write.has_move_time = (howMany == 4);
-        i2c_layer_target_write.move_time = (howMany == 4) ? Wire.read() : 0;
+        i2c_layer_target_write.has_speed = (howMany == 4);
+        i2c_layer_target_write.speed = (howMany == 4) ? Wire.read() : LAYER_SPEED_FULL;
         i2c_layer_target_write.valid = true;
       }
       break;
@@ -798,7 +809,7 @@ void apply_layer_change(uint8_t new_layer) {
     layer_restore_positions[new_layer], 0, 255,
     input_calib_min, input_calib_max
   );
-  apply_move_time(layer_move_times[new_layer]);
+  apply_move_speed(layer_speeds[new_layer]);
   remote_movement_start = millis();
   remote_movement_start_position = input_ewma;
   remote_movement_steady_start = millis();
@@ -821,7 +832,7 @@ void write_layer_target(uint8_t layer, uint8_t target) {
       // Start remote movement
       layer_restore_positions[layer] = target;
       target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
-      apply_move_time(layer_move_times[layer]);
+      apply_move_speed(layer_speeds[layer]);
       set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
       remote_movement_start = millis();
       remote_movement_start_position = input_ewma;
@@ -832,7 +843,7 @@ void write_layer_target(uint8_t layer, uint8_t target) {
       // Update target of in-progress movement
       layer_restore_positions[layer] = target;
       target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
-      apply_move_time(layer_move_times[layer]);
+      apply_move_speed(layer_speeds[layer]);
       remote_movement_start = millis();
       remote_movement_start_position = input_ewma;
       remote_movement_steady_start = millis();
@@ -879,19 +890,24 @@ void adc_drain() {
   }
 }
 
-// Translate a layer's move-time byte into the velocity limit used by the
-// control law. The byte is the time a full-scale (0-255) move should take, in
-// units of 10 ms; 0 means unlimited. Since the whole calibrated span is crossed
-// in that time, the velocity is simply span/time.
-void apply_move_time(uint8_t move_time_10ms) {
-  if (move_time_10ms == LAYER_MOVE_TIME_UNLIMITED) {
+// Translate a layer's unitless speed byte into the velocity limit used by the
+// control law. LAYER_SPEED_FULL means no limit; below that the byte maps
+// linearly in VELOCITY (not in move time) across the validated window, so the
+// host-facing scale is a speed dial and equal steps feel like equal changes.
+// The window is expressed as full-travel times, so the endpoints are stated in
+// the same terms the measurements were taken in; the calibrated span converts
+// each to a velocity.
+void apply_move_speed(uint8_t speed) {
+  if (speed >= LAYER_SPEED_FULL) {
     move_max_velocity = MOVE_VEL_UNLIMITED;
     move_max_error = 1023.0f;
     return;
   }
   uint16_t span = input_calib_max - input_calib_min;
-  float ms = (float)move_time_10ms * LAYER_MOVE_TIME_MS_PER_UNIT;
-  float adc_per_sec = (float)span * 1000.0f / ms;
+  float slowest = (float)span * 1000.0f / MOVE_SPEED_SLOWEST_MS;
+  float fastest = (float)span * 1000.0f / MOVE_SPEED_FASTEST_MS;
+  float adc_per_sec =
+      slowest + (fastest - slowest) * ((float)speed / (float)(LAYER_SPEED_FULL - 1));
   // Clamp to what the mechanism can actually sustain smoothly
   if (adc_per_sec < MOVE_VEL_MIN) adc_per_sec = MOVE_VEL_MIN;
   move_max_velocity = adc_per_sec;
@@ -1270,7 +1286,7 @@ void setup() {
   for (uint8_t i = 0; i < 8; i++) {
     layer_haptic_configs[i] = 0;  // Default: HAPTIC_NO_HAPTICS (smooth mode), all bits 0
     layer_restore_positions[i] = 128;  // Default: midpoint
-    layer_move_times[i] = LAYER_MOVE_TIME_UNLIMITED;
+    layer_speeds[i] = LAYER_SPEED_FULL;
   }
   active_layer = 0;
   pending_layer_change = 0xFF;  // No pending change
@@ -1325,8 +1341,8 @@ void process_i2c_requests() {
   bool has_layer_target = false;
   uint8_t layer_target_layer = 0;
   uint8_t layer_target_target = 0;
-  uint8_t layer_target_move_time = 0;
-  bool layer_target_has_move_time = false;
+  uint8_t layer_target_speed = LAYER_SPEED_FULL;
+  bool layer_target_has_speed = false;
   bool has_layer_haptic = false;
   uint8_t layer_haptic_layer = 0;
   uint16_t layer_haptic_config = 0;
@@ -1355,8 +1371,8 @@ void process_i2c_requests() {
     has_layer_target = true;
     layer_target_layer = i2c_layer_target_write.layer;
     layer_target_target = i2c_layer_target_write.target;
-    layer_target_move_time = i2c_layer_target_write.move_time;
-    layer_target_has_move_time = i2c_layer_target_write.has_move_time;
+    layer_target_speed = i2c_layer_target_write.speed;
+    layer_target_has_speed = i2c_layer_target_write.has_speed;
     i2c_layer_target_write.valid = false;
   }
 
@@ -1400,8 +1416,8 @@ void process_i2c_requests() {
   }
 
   if (has_layer_target) {
-    if (layer_target_has_move_time) {
-      layer_move_times[layer_target_layer & 0x07] = layer_target_move_time;
+    if (layer_target_has_speed) {
+      layer_speeds[layer_target_layer & 0x07] = layer_target_speed;
     }
     write_layer_target(layer_target_layer, layer_target_target);
   }

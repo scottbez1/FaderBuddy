@@ -296,7 +296,7 @@ void handleCommand(char* line) {
     Serial.println(faderBuddy.writeTargetPosition(t) ? "OK" : "ERR write");
 
   } else if (strcmp(cmd, "sstep") == 0) {
-    // sstep <from> <to> <speed> <log_ms>  - step with the optional speed limit
+    // sstep <from> <to> <speed> <log_ms>  - step at a unitless speed (0-255, 255 = full)
     char* a = strtok(nullptr, " ");
     char* b = strtok(nullptr, " ");
     char* c = strtok(nullptr, " ");
@@ -308,7 +308,7 @@ void handleCommand(char* line) {
     WireFaderBuddy.write(REG_LAYER_TARGET);
     WireFaderBuddy.write((uint8_t)0);
     WireFaderBuddy.write((uint8_t)atoi(a));
-    WireFaderBuddy.write((uint8_t)LAYER_MOVE_TIME_UNLIMITED);
+    WireFaderBuddy.write((uint8_t)LAYER_SPEED_FULL);
     if (WireFaderBuddy.endTransmission() != 0) { Serial.println("ERR write from"); return; }
     waitIdle(6000);
     delay(500);

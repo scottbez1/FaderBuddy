@@ -54,15 +54,17 @@
  * -----|---------------------|---------|------|------------
  * 0x0D | ACTIVE_LAYER        | R/W     | u8   | Active layer index (0-7)
  * -----|---------------------|---------|------|------------
- * 0x0E | LAYER_TARGET        | R/W     | -    | Layer restore position + optional move time (see below)
+ * 0x0E | LAYER_TARGET        | R/W     | -    | Layer restore position + optional speed (see below)
  * -----|---------------------|---------|------|------------
  * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
  * -----|---------------------|---------|------|------------
- * 0x10 | DEBUG_DRIVE         | W       | u8[2]| Open-loop motor drive (DEBUG_DRIVE builds only)
+ * 0x10 | ...                 |         |      | (free - next production register goes here)
  * -----|---------------------|---------|------|------------
- * 0x11 | DEBUG_STATUS        | R       |u8[16]| Control-loop internals (DEBUG_DRIVE builds only)
+ * 0xF0 | DEBUG_DRIVE         | W       | u8[2]| Open-loop motor drive (DEBUG_DRIVE builds only)
  * -----|---------------------|---------|------|------------
- * 0x12 | DEBUG_GAINS         | W       | u8[3]| Runtime gain override (DEBUG_DRIVE builds only)
+ * 0xF1 | DEBUG_STATUS        | R       |u8[16]| Control-loop internals (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
+ * 0xF2 | DEBUG_GAINS         | W       | u8[3]| Runtime gain override (DEBUG_DRIVE builds only)
  * -----|---------------------|---------|------|------------
  *
  * Protocol:
@@ -73,11 +75,11 @@
  *   - Read:  Write [register, layer], then read N bytes for that layer
  *   - Write: Write [register, layer, ...data] to write to specific layer
  *
- * LAYER_TARGET (0x0E) accepts an OPTIONAL trailing speed-limit byte:
- *   [0x0E, layer, position]           - move at full speed (unchanged behaviour)
- *   [0x0E, layer, position, move_time] - move no faster than this
+ * LAYER_TARGET (0x0E) accepts an OPTIONAL trailing speed byte:
+ *   [0x0E, layer, position]        - move at full speed (unchanged behaviour)
+ *   [0x0E, layer, position, speed] - move no faster than this
  * Three-byte writes behave exactly as before, so this is backwards compatible
- * and does not change the protocol version. See LAYER_MOVE_TIME below.
+ * and does not change the protocol version. See LAYER_SPEED below.
  * - All multi-byte values are big-endian (MSB first)
  *
  * v5 Breaking Changes from v4:
@@ -104,34 +106,44 @@
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
 /*
- * Optional move-time limit for LAYER_TARGET writes.
+ * Optional speed byte for LAYER_TARGET writes.
  *
- * The byte is the time a FULL-SCALE move (0 -> 255) should take, in units of
- * 10 ms. 0 means unlimited (the default, and what a 3-byte write leaves in
- * place). So 100 = "one second for full travel"; range 10 ms .. 2550 ms.
+ * A unitless 0-255 speed: 255 is full speed (no limit, the default), and 0 is
+ * the slowest the mechanism moves smoothly. The scale is linear in velocity
+ * and its ends are the ends of the validated range - roughly 700 ms of full
+ * travel at 0, down to 250 ms at 254 - so every value is usable and there are
+ * no awkward bounds for a host to know about.
  *
  * It is a velocity cap, not a move scheduler: a shorter move takes
- * proportionally less time rather than being stretched to fill the duration.
+ * proportionally less time rather than being stretched to fill a duration.
  *
  * This is a LIMIT and not a precise speed. It is realised through a
  * friction-dependent plant, so actual timing varies with the fader - expect
- * within roughly 15% for full-travel times up to ~800 ms, and about 7%
- * difference between the two directions of travel.
+ * within roughly 15% of the nominal speed, and about 7% difference between the
+ * two directions of travel. Speeds below the bottom of the scale are not
+ * reachable at all: the motor cannot sustain continuous rotation there and
+ * creeps in stick-slip steps instead, which is why 0 stops where it does.
  *
- * The mechanism cannot move smoothly below roughly 200 position counts/sec, so
- * requests slower than about 1.2 s of full travel are clamped rather than
- * honoured; below that speed the motor creeps in stick-slip steps instead of
- * moving continuously.
+ * A 3-byte write leaves the layer's stored speed alone, and layers power up at
+ * LAYER_SPEED_FULL, so a host that never sends the byte moves at full speed.
+ * Send full-speed moves as 3-byte writes: firmware predating this byte ignores
+ * a 4-byte write entirely rather than moving.
  */
-#define LAYER_MOVE_TIME_UNLIMITED (0)
-#define LAYER_MOVE_TIME_MS_PER_UNIT (10)
-
-#define REG_DEBUG_DRIVE 0x10  // Open-loop motor drive (W, [flags, duty]); DEBUG_DRIVE builds only
+#define LAYER_SPEED_SLOWEST (0)
+#define LAYER_SPEED_FULL (255)
 
 /*
- * REG_DEBUG_DRIVE (0x10) - write-only, present only in DEBUG_DRIVE builds.
+ * Debug registers live at the top of the address space, not immediately after
+ * the production registers, so that adding a real register never has to step
+ * over them or leave a hole where they used to be. They are compiled out of
+ * production builds entirely, so nothing on a shipped board answers here.
+ */
+#define REG_DEBUG_DRIVE 0xF0  // Open-loop motor drive (W, [flags, duty]); DEBUG_DRIVE builds only
+
+/*
+ * REG_DEBUG_DRIVE (0xF0) - write-only, present only in DEBUG_DRIVE builds.
  *
- * Write [0x10, flags, duty] to command the H-bridge directly, bypassing the
+ * Write [0xF0, flags, duty] to command the H-bridge directly, bypassing the
  * control loop, for system identification. Writing flags = 0xFF exits open-loop
  * mode. The firmware coasts the motor if a command is not refreshed within
  * 400 ms, or if the fader nears a travel limit.
@@ -156,20 +168,20 @@
 #define DEBUG_DRIVE_CLK_bm (0x03 << DEBUG_DRIVE_CLK_bp)
 
 /*
- * REG_DEBUG_STATUS (0x11) - read-only, DEBUG_DRIVE builds only.
+ * REG_DEBUG_STATUS (0xF1) - read-only, DEBUG_DRIVE builds only.
  * 16 bytes, big-endian: calib_min u16, calib_max u16, target_adc i16,
  * drive i16, velocity i16 (ADC counts/sec), error_x8 i16 (error * 8),
  * loop_hz u16, tick_hz u16.
  */
-#define REG_DEBUG_STATUS 0x11
+#define REG_DEBUG_STATUS 0xF1
 
 /*
- * REG_DEBUG_GAINS (0x12) - write-only, DEBUG_DRIVE builds only.
- * Write [0x12, index, value_hi, value_lo] to override one control-loop gain at
+ * REG_DEBUG_GAINS (0xF2) - write-only, DEBUG_DRIVE builds only.
+ * Write [0xF2, index, value_hi, value_lo] to override one control-loop gain at
  * runtime, so tuning doesn't need a reflash per trial. Values are fixed point:
  * KP and KD are scaled by 1000, the rest are integers.
  */
-#define REG_DEBUG_GAINS 0x12
+#define REG_DEBUG_GAINS 0xF2
 #define DEBUG_GAIN_KP          (0)  // duty per ADC count, x1000
 #define DEBUG_GAIN_KD          (1)  // duty per (ADC count/sec), x1000
 #define DEBUG_GAIN_FF_RISING   (2)  // duty

@@ -46,7 +46,11 @@ CONF_DETENT_COUNT = "detent_count"
 CONF_DETENT_STRENGTH = "detent_strength"
 CONF_POSITION = "position"
 CONF_VALUE_CHANGE_MIN_INTERVAL = "value_change_min_interval"
-CONF_MOVE_TIME = "move_time"
+CONF_SPEED = "speed"
+CONF_DEFAULT_SPEED = "default_speed"
+
+# Unitless move speed: 255 is full speed, 0 the slowest smooth motion
+SPEED_FULL = 255
 
 # Schema for a single layer haptic configuration
 LAYER_HAPTIC_SCHEMA = cv.Schema({
@@ -55,6 +59,9 @@ LAYER_HAPTIC_SCHEMA = cv.Schema({
     cv.Optional(CONF_DETENT_COUNT, default=0): cv.int_range(min=0, max=15),
     cv.Optional(CONF_DETENT_STRENGTH, default=0): cv.int_range(min=0, max=7),
     cv.Optional(CONF_VALUE_CHANGE_MIN_INTERVAL, default="0ms"): cv.positive_time_period_milliseconds,
+    # Speed used for moves on this layer that don't name one. Kept host-side
+    # and sent with each move rather than stored on the fader.
+    cv.Optional(CONF_DEFAULT_SPEED, default=SPEED_FULL): cv.int_range(min=0, max=255),
 })
 
 CONFIG_SCHEMA = (
@@ -87,11 +94,13 @@ async def to_code(config):
             detent_count = haptic_config[CONF_DETENT_COUNT]
             detent_strength = haptic_config[CONF_DETENT_STRENGTH]
             min_interval = haptic_config[CONF_VALUE_CHANGE_MIN_INTERVAL]
+            default_speed = haptic_config[CONF_DEFAULT_SPEED]
 
             cg.add(var.store_initial_layer_haptic_config(
                 layer, mode, detent_count, detent_strength
             ))
             cg.add(var.set_layer_value_change_min_interval(layer, min_interval))
+            cg.add(var.set_layer_default_speed(layer, default_speed))
 
     if CONF_ON_MANUAL_MOVE in config:
         await automation.build_automation(
@@ -144,12 +153,11 @@ async def set_active_layer_action_to_code(config, action_id, template_arg, args)
         cv.Required(CONF_ID): cv.use_id(FaderBuddy),
         cv.Required(CONF_POSITION): cv.templatable(cv.int_range(min=0, max=255)),
         cv.Optional(CONF_LAYER, default=0): cv.templatable(cv.int_range(min=0, max=7)),
-        # Time for a full-scale (0-255) move. Shorter moves take proportionally
-        # less time - this caps speed, it does not stretch the move to fill the
-        # duration. Default 0 means unlimited (move at full speed).
-        cv.Optional(CONF_MOVE_TIME, default="0ms"): cv.templatable(
-            cv.positive_time_period_milliseconds
-        ),
+        # Unitless move speed, 0 (slowest smooth motion) to 255 (full speed).
+        # This caps speed, it does not stretch the move to fill a duration, so
+        # a shorter move takes proportionally less time. Omit it to use the
+        # layer's default_speed.
+        cv.Optional(CONF_SPEED): cv.templatable(cv.int_range(min=0, max=255)),
     })
 )
 async def remote_move_to_action_to_code(config, action_id, template_arg, args):
@@ -159,8 +167,9 @@ async def remote_move_to_action_to_code(config, action_id, template_arg, args):
     cg.add(var.set_position(position))
     layer = await cg.templatable(config[CONF_LAYER], args, cg.uint8)
     cg.add(var.set_layer(layer))
-    move_time = await cg.templatable(config[CONF_MOVE_TIME], args, cg.uint32)
-    cg.add(var.set_move_time(move_time))
+    if CONF_SPEED in config:
+        speed = await cg.templatable(config[CONF_SPEED], args, cg.uint8)
+        cg.add(var.set_speed(speed))
     return var
 
 

@@ -175,12 +175,15 @@ The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 
 - **8 layers per fader**: Each with independent target position and haptic configuration
 - **State register** (0x01): 32-bit packed register containing mode, layer, nonces, and touch state
 - **Position/haptic nonces**: Used to detect user input vs. remote command echo
-- **Optional move time**: `LAYER_TARGET` (0x0E) accepts an optional 4th byte capping move
-  speed (full-scale travel time in 10ms units, 0 = unlimited). Three-byte writes behave
-  exactly as before, so this is backwards compatible and did not bump the protocol version
-- **Debug registers** (0x10-0x12): open-loop drive, control-loop internals, and runtime gain
+- **Optional move speed**: `LAYER_TARGET` (0x0E) accepts an optional 4th byte capping move
+  speed, as a unitless 0-255 value spanning the validated speed range (255 = full speed).
+  Three-byte writes behave exactly as before, so this is backwards compatible and did not
+  bump the protocol version; send full-speed moves as 3-byte writes, since firmware
+  predating the byte ignores a 4-byte write entirely
+- **Debug registers** (0xF0-0xF2): open-loop drive, control-loop internals, and runtime gain
   overrides. Compiled out unless `DEBUG_DRIVE` is defined, so they are absent from
-  production builds
+  production builds. They sit at the top of the address space deliberately, so new
+  production registers can keep growing from 0x10 without a hole
 
 Refer to `i2c_data.h` for complete register map and bit field definitions.
 

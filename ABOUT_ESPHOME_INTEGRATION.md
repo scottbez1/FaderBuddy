@@ -86,6 +86,7 @@ fader_buddy:
     layer_haptics:
       - layer: 0
         mode: smooth
+        default_speed: 120  # move deliberately rather than instantly
 
     # User moves fader → update light brightness
     on_manual_move:
@@ -130,6 +131,7 @@ For additional complete working examples, see the `esphome/examples/` directory:
     - `detents`: Creates distinct "notches" along the fader's travel (requires `detent_count`)
   - **detent_count** (optional, default: `0`): Number of detents (1-15, for detents mode only)
   - **detent_strength** (optional, default: `0`): Detent force feedback strength (0-7, for detents mode only)
+  - **default_speed** (optional, default: `255`): Move speed for this layer, 0-255, used by `fader_buddy.remote_move_to` and by lambda calls to `remote_move_to()` that don't pass a speed of their own. `255` is full speed; see the `speed` parameter of `fader_buddy.remote_move_to` below. This one is tracked in ESPHome rather than on the fader — the component looks up the active layer's value and sends it with each move — so changing it costs no extra I2C traffic.
   - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices like zigbee lights. Set to `0ms` for no rate limiting. Keep as low as possible.
 
 ### Triggers
@@ -213,20 +215,22 @@ Command the fader to move to a specific position.
 - fader_buddy.remote_move_to:
     id: my_fader
     position: 200
-    move_time: 500ms
+    speed: 80
 ```
 
 **Position:** 0-255 (0 = bottom, 255 = top, unless inverted)
 
 **Layer:** Optional layer index (0-7). If the specified layer is not currently active, the position is stored and will be restored when that layer becomes active.
 
-**move_time:** Optional. How long a *full-scale* move (0 to 255) should take. Omit it, or use `0ms`, to move at full speed.
+**speed:** Optional. How fast to move, as a unitless **0-255** value: `255` is full speed, `0` is the slowest the fader moves smoothly. Omit it to use the layer's `default_speed`.
 
-This caps the fader's speed rather than scheduling the move, so a shorter move takes proportionally less time — with `move_time: 500ms`, a half-scale move takes about 250ms. Slowing moves down is mostly useful when several faders move at once, or when you want motion to read as deliberate rather than instant.
+The scale is linear in velocity, and both ends are usable — `0` is the slowest speed the mechanism sustains without creeping in stick-slip steps (roughly 700ms for full travel), and `255` removes the limit entirely. There is nothing outside the range worth reaching for.
 
-Practical range is roughly **250ms to 700ms**, where actual timing lands within about 15% of the request. Longer values keep slowing the fader but increasingly under-run: the mechanism cannot move smoothly slower than about **1.1 seconds** for full travel, because below that speed the motor stops rotating continuously and creeps in small steps instead. Requests slower than that are clamped. Expect around 7% difference between moving up and moving down, since the fader's friction is not symmetric.
+This caps the fader's speed rather than scheduling the move, so a shorter move takes proportionally less time — at a given speed, a half-scale move takes about half as long as a full-scale one. Slowing moves down is mostly useful when several faders move at once, or when you want motion to read as deliberate rather than instant.
 
-Setting `move_time` on a layer that is not currently active also applies when that layer is restored later.
+Treat it as a limit rather than a precise speed. It is realised through a friction-dependent mechanism, so actual velocity lands within about 15% of nominal, with around 7% difference between moving up and moving down.
+
+Moving a layer that is not currently active also stores the speed, so it applies when that layer is restored later.
 
 ### fader_buddy.set_active_layer
 
