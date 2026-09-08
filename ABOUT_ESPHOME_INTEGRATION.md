@@ -131,7 +131,7 @@ For additional complete working examples, see the `esphome/examples/` directory:
     - `detents`: Creates distinct "notches" along the fader's travel (requires `detent_count`)
   - **detent_count** (optional, default: `0`): Number of detents (1-15, for detents mode only)
   - **detent_strength** (optional, default: `0`): Detent force feedback strength (0-7, for detents mode only)
-  - **default_speed** (optional, default: `255`): Move speed for this layer, 0-255, used by `fader_buddy.remote_move_to` and by lambda calls to `remote_move_to()` that don't pass a speed of their own. `255` is full speed; see the `speed` parameter of `fader_buddy.remote_move_to` below. This one is tracked in ESPHome rather than on the fader — the component looks up the active layer's value and sends it with each move — so changing it costs no extra I2C traffic.
+  - **default_speed** (optional, default: `255`, requires fader firmware 1.1+): Move speed for this layer, 0-255, used by `fader_buddy.remote_move_to` and by lambda calls to `remote_move_to()` that don't pass a speed of their own. `255` is full speed; see the `speed` parameter of `fader_buddy.remote_move_to` below. This one is tracked in ESPHome rather than on the fader — the component looks up the active layer's value and sends it with each move — so changing it costs no extra I2C traffic.
   - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices like zigbee lights. Set to `0ms` for no rate limiting. Keep as low as possible.
 
 ### Triggers
@@ -223,6 +223,8 @@ Command the fader to move to a specific position.
 **Layer:** Optional layer index (0-7). If the specified layer is not currently active, the position is stored and will be restored when that layer becomes active.
 
 **speed:** Optional. How fast to move, as a unitless **0-255** value: `255` is full speed, `0` is the slowest the fader moves smoothly. Omit it to use the layer's `default_speed`.
+
+Requires fader firmware **1.1 or newer**. On older firmware the component logs a warning once and moves at full speed instead; it checks the firmware version at startup, so a `default_speed` that cannot be honoured is reported then rather than on the first move.
 
 The scale is linear in velocity, and both ends are usable — `0` is the slowest speed the mechanism sustains without creeping in stick-slip steps (roughly 700ms for full travel), and `255` removes the limit entirely. There is nothing outside the range worth reaching for.
 

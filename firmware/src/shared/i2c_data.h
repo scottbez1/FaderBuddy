@@ -18,6 +18,40 @@
 #include <stdint.h>
 
 #define I2C_PROTOCOL_VERSION (5)  // v5: Layer management in firmware, 16-bit haptic config
+// The protocol version covers the WIRE FORMAT of the registers below, and is
+// deliberately not bumped for additive changes that older hosts can ignore -
+// the LAYER_TARGET speed byte being the case in point. Feature-detect on
+// FW_VERSION instead; hosts that hard-fail on an unexpected protocol version
+// would otherwise be bricked by a bump they didn't need to care about.
+
+/*
+ * Application firmware version, as a packed u16: (major << 8) | minor.
+ * Reported at REG_FW_VERSION, and MONOTONICALLY INCREASING, so a host can both
+ * feature-gate on it and compare it against a packaged image to decide whether
+ * an update is needed. Bump the minor on every released build that changes
+ * observable behaviour.
+ *
+ * Two values are reserved and never reported by a real build:
+ *   0x0000 - unused
+ *   0xFFFF - what an I2C read returns from firmware that has no FW_VERSION
+ *            register at all: the peripheral stops driving SDA for an unknown
+ *            register and the bus pulls high. Firmware that old is treated as
+ *            version 1.0 - the last unversioned release.
+ *
+ * Overridable via build flag (-DFW_VERSION=N) so one-off builds can stamp a
+ * different version without touching this default.
+ */
+#define FW_VERSION_MAJOR (1)
+#define FW_VERSION_MINOR (1)
+#ifndef FW_VERSION
+#define FW_VERSION ((FW_VERSION_MAJOR << 8) | FW_VERSION_MINOR)
+#endif
+#define FW_VERSION_NONE (0xFFFF)  // read back from firmware predating the register
+
+// Minimum firmware version that honours the LAYER_TARGET speed byte. Older
+// firmware ignores a 4-byte write completely, so a host MUST check this before
+// sending one rather than letting the move be silently dropped.
+#define FW_VERSION_MOVE_SPEED (0x0101)  // 1.1
 
 
 /*
@@ -58,7 +92,11 @@
  * -----|---------------------|---------|------|------------
  * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
  * -----|---------------------|---------|------|------------
- * 0x10 | ...                 |         |      | (free - next production register goes here)
+ * 0x10 | (reserved)          |         |      | Reserved for ENTER_BOOTLOADER (I2C bootloader work)
+ * -----|---------------------|---------|------|------------
+ * 0x11 | FW_VERSION          | R       | u16  | Application firmware version (see FW_VERSION)
+ * -----|---------------------|---------|------|------------
+ * 0x12 | ...                 |         |      | (free - next production register goes here)
  * -----|---------------------|---------|------|------------
  * 0xF0 | DEBUG_DRIVE         | W       | u8[2]| Open-loop motor drive (DEBUG_DRIVE builds only)
  * -----|---------------------|---------|------|------------
@@ -105,6 +143,8 @@
 #define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
+// 0x10 reserved for REG_ENTER_BOOTLOADER (see the I2C bootloader work)
+#define REG_FW_VERSION 0x11  // Application firmware version (R, u16 big-endian, see FW_VERSION)
 /*
  * Optional speed byte for LAYER_TARGET writes.
  *

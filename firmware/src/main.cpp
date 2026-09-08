@@ -501,6 +501,9 @@ void onI2cRequest() {
   uint8_t r = current_register;
   if (r == REG_VERSION) {
       Wire.write(I2C_PROTOCOL_VERSION);
+  } else if (r == REG_FW_VERSION) {
+      Wire.write((FW_VERSION >> 8) & 0xFF);
+      Wire.write(FW_VERSION & 0xFF);
   } else if (r == REG_STATE) {
       // Snapshot once: the main loop can update i2c_outgoing_state between
       // byte writes, which would hand the controller a torn value.
@@ -643,6 +646,7 @@ void onI2cReceive(int howMany) {
       break;
 #endif
     case REG_VERSION:
+    case REG_FW_VERSION:
     case REG_STATE:
     case REG_UPTIME:
     case REG_TOUCH_RAW:

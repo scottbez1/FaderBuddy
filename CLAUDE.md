@@ -162,6 +162,14 @@ npm run build
 - Layer switching and per-layer position control
 - Direct I2C register read/write
 
+## Versioning
+
+Hardware, fader firmware, and the ESPHome component version independently; `CHANGELOG.md`
+at the repo root holds the compatibility matrix and per-release notes. Update it when
+changing observable behaviour of any of the three, and bump `FW_VERSION_MINOR`
+(`firmware/src/shared/i2c_data.h`) or `FADER_BUDDY_COMPONENT_VERSION`
+(`esphome/components/fader_buddy/fader_buddy.h`) alongside.
+
 ## Architecture
 
 ### I2C Protocol
@@ -180,6 +188,10 @@ The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 
   Three-byte writes behave exactly as before, so this is backwards compatible and did not
   bump the protocol version; send full-speed moves as 3-byte writes, since firmware
   predating the byte ignores a 4-byte write entirely
+- **Firmware version** (0x11): `REG_FW_VERSION`, a packed `(major << 8) | minor` u16, distinct
+  from the protocol version at 0x00. Hosts feature-detect on this; firmware predating it reads
+  back as 0xFFFF. The protocol version is only bumped when an existing register's wire format
+  changes, never for additive features. 0x10 is reserved for the I2C bootloader work
 - **Debug registers** (0xF0-0xF2): open-loop drive, control-loop internals, and runtime gain
   overrides. Compiled out unless `DEBUG_DRIVE` is defined, so they are absent from
   production builds. They sit at the top of the address space deliberately, so new

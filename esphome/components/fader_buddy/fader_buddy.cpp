@@ -42,16 +42,40 @@ void FaderBuddy::setup() {
     return;
   }
 
-  if (buffer != I2C_PROTOCOL_VERSION) {
-    ESP_LOGE(TAG, "Init: Incompatible I2C protocol version. Expected %d but got %d", I2C_PROTOCOL_VERSION, buffer);
+  // Older protocols really are incompatible - the register layout differs - but
+  // a NEWER one is not, because bumps are only made for changes a host can
+  // ignore. Failing on those would brick this host on a fader that merely got
+  // updated, so warn and carry on instead.
+  if (buffer < I2C_PROTOCOL_VERSION) {
+    ESP_LOGE(TAG, "Init: Incompatible I2C protocol version. Expected at least %d but got %d",
+             I2C_PROTOCOL_VERSION, buffer);
     this->mark_failed();
     return;
   }
+  if (buffer > I2C_PROTOCOL_VERSION) {
+    ESP_LOGW(TAG, "Fader reports protocol v%d, newer than the v%d this component was built against. "
+                  "Continuing, but consider updating the component.", buffer, I2C_PROTOCOL_VERSION);
+  }
 
-  ESP_LOGCONFIG(TAG, "FaderBuddy initialized (protocol v%d)", buffer);
+  ESP_LOGCONFIG(TAG, "FaderBuddy initialized (component %s, protocol v%d)",
+                FADER_BUDDY_COMPONENT_VERSION, buffer);
 
   // Read the chip serial number once (static factory ID) and publish it.
   read_serial_number_();
+  read_firmware_version_();
+
+  // Flag a config that asks for something this fader's firmware cannot do, at
+  // startup rather than waiting for the first move to warn.
+  if (!speed_supported_) {
+    for (uint8_t i = 0; i < 8; i++) {
+      if (layer_states_[i].default_speed != LAYER_SPEED_FULL) {
+        ESP_LOGW(TAG, "Layer %d sets default_speed, but this fader's firmware does not support move "
+                      "speed. Moves will run at full speed. Update the fader firmware to %d.%d or newer.",
+                 i, FW_VERSION_MOVE_SPEED >> 8, FW_VERSION_MOVE_SPEED & 0xFF);
+        break;
+      }
+    }
+  }
 
   // Send initial haptic configurations to firmware
   for (uint8_t i = 0; i < 8; i++) {
@@ -75,6 +99,14 @@ void FaderBuddy::dump_config() {
   LOG_I2C_DEVICE(this);
   if (this->is_failed()) {
     ESP_LOGE(TAG, "Communication failed");
+  }
+
+  ESP_LOGCONFIG(TAG, "  Component Version: %s", FADER_BUDDY_COMPONENT_VERSION);
+  if (this->firmware_version_ == FW_VERSION_NONE) {
+    ESP_LOGCONFIG(TAG, "  Firmware Version: 1.0 or older (does not report a version)");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Firmware Version: %d.%d", this->firmware_version_ >> 8,
+                  this->firmware_version_ & 0xFF);
   }
 
   if (!this->serial_number_.empty()) {
@@ -106,6 +138,33 @@ void FaderBuddy::read_serial_number_() {
   if (this->serial_text_sensor_ != nullptr) {
     this->serial_text_sensor_->publish_state(this->serial_number_);
   }
+}
+
+// Read the reported firmware version and derive what this fader can do.
+// Firmware predating the register leaves the bus undriven, so the read
+// succeeds and returns 0xFFFF rather than failing - hence checking the value,
+// not just the error code.
+void FaderBuddy::read_firmware_version_() {
+  uint8_t reg = REG_FW_VERSION;
+  uint8_t buffer[2] = {0xFF, 0xFF};
+  auto read_result = this->write_read(&reg, 1, buffer, sizeof(buffer));
+  if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
+    ESP_LOGW(TAG, "Failed to read firmware version: %d; assuming pre-1.1 firmware", read_result);
+    this->firmware_version_ = FW_VERSION_NONE;
+  } else {
+    this->firmware_version_ = ((uint16_t) buffer[0] << 8) | buffer[1];
+  }
+
+  if (this->firmware_version_ == FW_VERSION_NONE || this->firmware_version_ == 0) {
+    this->firmware_version_ = FW_VERSION_NONE;
+    ESP_LOGCONFIG(TAG, "Fader firmware: 1.0 or older (no version register)");
+  } else {
+    ESP_LOGCONFIG(TAG, "Fader firmware: %d.%d", this->firmware_version_ >> 8,
+                  this->firmware_version_ & 0xFF);
+  }
+
+  this->speed_supported_ = this->firmware_version_ != FW_VERSION_NONE &&
+                           this->firmware_version_ >= FW_VERSION_MOVE_SPEED;
 }
 
 float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }
@@ -257,6 +316,19 @@ void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer, uint8_t speed) 
 
   // Convert USER-FACING position to HARDWARE position
   uint8_t hw_position = invert_ ? (255 - position) : position;
+
+  // Firmware without the speed byte drops a 4-byte write entirely, so fall
+  // back to a full-speed move rather than letting the fader not move at all.
+  if (speed != LAYER_SPEED_FULL && !speed_supported_) {
+    if (!warned_speed_unsupported_) {
+      warned_speed_unsupported_ = true;
+      ESP_LOGW(TAG, "Requested move speed %d, but this fader's firmware does not support it "
+                    "(needs %d.%d or newer). Moving at full speed instead. "
+                    "This warning is logged once.",
+               speed, FW_VERSION_MOVE_SPEED >> 8, FW_VERSION_MOVE_SPEED & 0xFF);
+    }
+    speed = LAYER_SPEED_FULL;
+  }
 
   // Write to firmware using layer-addressed protocol. At full speed send the
   // original 3-byte write: it is equivalent, and firmware predating the speed

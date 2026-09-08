@@ -28,6 +28,11 @@
 namespace esphome {
 namespace fader_buddy {
 
+// Version of this ESPHome component, independent of the fader's firmware
+// version. Logged at startup so a bug report identifies both halves.
+#define FADER_BUDDY_COMPONENT_VERSION "0.2.0"
+
+
 // Protocol v5: Layer management is now handled in firmware
 // ESPHome component is a simple protocol wrapper
 
@@ -70,6 +75,10 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     void set_layer_default_speed(uint8_t layer, uint8_t speed);
     uint8_t get_layer_default_speed(uint8_t layer) const;
 
+    // Firmware version reported by the fader, packed as (major << 8) | minor.
+    // FW_VERSION_NONE for firmware old enough to have no version register.
+    uint16_t get_firmware_version() const { return firmware_version_; }
+
     // Chip serial number (10-byte factory ID, read once at setup). Returns an
     // uppercase hex string (e.g. "AABBCCDDEEFF00112233"), or "" if not yet read.
     std::string get_serial_number() const { return serial_number_; }
@@ -95,6 +104,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
 
     private:
         void read_serial_number_();
+        void read_firmware_version_();
 
         // State variables
         uint32_t last_state_{0};
@@ -104,6 +114,9 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         bool invert_{false};
         bool last_touch_{false};
         uint8_t last_double_tap_nonce_{0};
+        uint16_t firmware_version_{FW_VERSION_NONE};
+        bool speed_supported_{false};
+        bool warned_speed_unsupported_{false};  // warn once, not once per move
 
         // Per-layer state for value change rate limiting and position tracking
         struct LayerState {
