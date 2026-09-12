@@ -30,7 +30,7 @@ namespace fader_buddy {
 
 // Version of this ESPHome component, independent of the fader's firmware
 // version. Logged at startup so a bug report identifies both halves.
-#define FADER_BUDDY_COMPONENT_VERSION "0.2.0"
+#define FADER_BUDDY_COMPONENT_VERSION "0.3.0"
 
 
 // Protocol v5: Layer management is now handled in firmware
@@ -105,6 +105,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     private:
         void read_serial_number_();
         void read_firmware_version_();
+        void read_motor_calibration_();
 
         // State variables
         uint32_t last_state_{0};

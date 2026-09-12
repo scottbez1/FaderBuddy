@@ -42,7 +42,7 @@
  * different version without touching this default.
  */
 #define FW_VERSION_MAJOR (1)
-#define FW_VERSION_MINOR (1)
+#define FW_VERSION_MINOR (2)
 #ifndef FW_VERSION
 #define FW_VERSION ((FW_VERSION_MAJOR << 8) | FW_VERSION_MINOR)
 #endif
@@ -52,6 +52,10 @@
 // firmware ignores a 4-byte write completely, so a host MUST check this before
 // sending one rather than letting the move be silently dropped.
 #define FW_VERSION_MOVE_SPEED (0x0101)  // 1.1
+
+// Minimum firmware version that measures motor characteristics during
+// self-calibration and reports them at REG_MOTOR_CAL.
+#define FW_VERSION_MOTOR_CAL (0x0102)  // 1.2
 
 
 /*
@@ -96,7 +100,9 @@
  * -----|---------------------|---------|------|------------
  * 0x11 | FW_VERSION          | R       | u16  | Application firmware version (see FW_VERSION)
  * -----|---------------------|---------|------|------------
- * 0x12 | ...                 |         |      | (free - next production register goes here)
+ * 0x12 | MOTOR_CAL           | R       |u8[12]| Measured motor characteristics (see below)
+ * -----|---------------------|---------|------|------------
+ * 0x13 | ...                 |         |      | (free - next production register goes here)
  * -----|---------------------|---------|------|------------
  * 0xF0 | DEBUG_DRIVE         | W       | u8[2]| Open-loop motor drive (DEBUG_DRIVE builds only)
  * -----|---------------------|---------|------|------------
@@ -145,6 +151,42 @@
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
 // 0x10 reserved for REG_ENTER_BOOTLOADER (see the I2C bootloader work)
 #define REG_FW_VERSION 0x11  // Application firmware version (R, u16 big-endian, see FW_VERSION)
+#define REG_MOTOR_CAL 0x12  // Measured motor characteristics (R, 12 bytes, see below)
+
+/*
+ * REG_MOTOR_CAL (0x12) - read-only, 12 bytes.
+ *
+ * What self-calibration measured about THIS motor, and the feedforward it
+ * derived from it. Purely diagnostic: the firmware needs no host involvement
+ * to use these, and a host that ignores the register loses nothing.
+ *
+ * The control law is written against three per-unit plant parameters, because
+ * the same duty means different things on different faders (see
+ * firmware/ABOUT_MOTOR_CONTROL.md):
+ *
+ *   breakaway  duty at which the carriage first moves at all
+ *   k          ADC counts/sec of cruise per duty count above breakaway
+ *   v_jump     the speed motion starts at once breakaway is crossed - the
+ *              Stribeck jump, which sets the floor on the on-target deadband
+ *
+ *   byte  0    valid          1 = measured, 0 = using compiled-in defaults
+ *   byte  1    breakaway_rising   duty
+ *   byte  2    breakaway_falling  duty
+ *   byte  3    k_rising           ADC counts/sec per duty
+ *   byte  4    k_falling          ADC counts/sec per duty
+ *   bytes 5-6  v_jump_rising      ADC counts/sec, big-endian u16
+ *   bytes 7-8  v_jump_falling     ADC counts/sec, big-endian u16
+ *   bytes 9-10 vel_min            slowest velocity reference the control law
+ *                                 will ask for, ADC counts/sec, big-endian u16
+ *   byte 11    deadband           on-target window, ADC counts
+ *
+ * breakaway and k feed the feedforward (breakaway + v_ref/k) and the velocity
+ * loop gain (scaled by 1/k); v_jump sets vel_min and the deadband floor.
+ *
+ * With valid = 0 the measurement never ran, or ran and produced values outside
+ * the plausible range; bytes 1-8 are then zero and 9-11 report the compiled-in
+ * defaults actually in use. Trigger a measurement with REG_SELF_CAL.
+ */
 /*
  * Optional speed byte for LAYER_TARGET writes.
  *
@@ -222,10 +264,12 @@
  * KP and KD are scaled by 1000, the rest are integers.
  */
 #define REG_DEBUG_GAINS 0xF2
-#define DEBUG_GAIN_KP          (0)  // duty per ADC count, x1000
-#define DEBUG_GAIN_KD          (1)  // duty per (ADC count/sec), x1000
-#define DEBUG_GAIN_FF_RISING   (2)  // duty
-#define DEBUG_GAIN_FF_FALLING  (3)  // duty
+#define DEBUG_GAIN_VREF_SLOPE  (0)  // velocity reference per ADC count of error, x1000
+#define DEBUG_GAIN_KV          (1)  // duty per (ADC count/sec) of velocity error, x1000
+#define DEBUG_GAIN_BD_RISING   (2)  // assumed breakaway duty, rising
+#define DEBUG_GAIN_BD_FALLING  (3)  // assumed breakaway duty, falling
+#define DEBUG_GAIN_K           (11) // assumed ADC counts/sec per duty, both directions
+#define DEBUG_GAIN_VEL_MIN     (12) // velocity reference floor, ADC counts/sec
 #define DEBUG_GAIN_DEADBAND    (4)  // ADC counts, x1000
 #define DEBUG_GAIN_TICK_US     (5)  // control tick period, microseconds
 #define DEBUG_GAIN_RAMP_RATE   (6)  // stiction ramp rate, duty per second

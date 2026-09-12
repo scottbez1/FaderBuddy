@@ -16,7 +16,10 @@ the protocol version; see `firmware/src/shared/i2c_data.h`.
 
 | Hardware | Firmware | I2C protocol | ESPHome component | Notes |
 |---|---|---|---|---|
-| Rev A | 1.1 | 5 | 0.2.0 | Current |
+| Rev A | 1.2 | 5 | 0.3.0 | Current |
+| Rev A | 1.2 | 5 | 0.2.0 | Works; host does not log the motor characterisation |
+| Rev A | 1.1 | 5 | 0.3.0 | Works; no motor characterisation to report |
+| Rev A | 1.1 | 5 | 0.2.0 | Works |
 | Rev A | 1.1 | 5 | 0.1.0 | Works; host cannot use move speed |
 | Rev A | 1.0 | 5 | 0.2.0 | Works; move speed logs a warning and falls back to full speed |
 | Rev A | 1.0 | 5 | 0.1.0 | Works |
@@ -43,6 +46,50 @@ something printed on the board.
 
 ## Firmware (ATtiny1616)
 
+### 1.2 - unreleased
+
+- Remote movement restructured as explicit cascade control: the position loop
+  sets a velocity reference and an inner velocity loop realises it. The old
+  flat `KP*e - KD*v + FF` was algebraically the same loop, but writing it out
+  exposed two defects it was hiding.
+- The feedforward is now the plant model inverted, `breakaway + v_ref/k`,
+  instead of a fixed duty. A fixed feedforward commands a fixed speed, so no
+  slower speed was reachable without subtracting drive back off - which is what
+  the one-sided velocity governor did, and why slow moves limit-cycled
+  (overshoot, brake, fall under, accelerate). The governor and its companion
+  error clamp are both gone; the speed limit is now a clamp on the reference.
+- The velocity loop gain is scaled by `1/k`. Its open-loop gain is `k*KV`, so a
+  higher-torque motor previously closed a proportionally hotter loop and rang
+  through the lag of the velocity estimate - visible as the movement chugging
+  even at full speed, on a fader with more torque than the reference unit.
+- The stall-escape ramp is shed over ~20 ms rather than dropped in one tick,
+  which was a relay that chattered around the stall threshold.
+- The on-target window is sized from the time it takes to actually stop
+  (reaction + detection + coast, 15 ms) rather than from the coast alone
+  (6 ms), and is clamped to 8-20 ADC counts. The old figure produced a window a
+  low-friction fader could not land inside, so it dithered at the end of a move
+  instead of settling. The default window goes from 6 to 8 ADC counts.
+
+- Self-calibration now characterises the motor as well as the endpoints,
+  measuring per-direction breakaway duty, the speed/duty slope above it, and
+  the speed motion starts at, then deriving the friction feedforward, the
+  take-up ceiling and the on-target deadband from them. This is what makes the
+  tuning hold across faders whose friction or torque differs from the unit the
+  constants were centred on; a fader with materially lower stiction previously
+  hunted at the deadband and could not settle. See
+  `firmware/ABOUT_MOTOR_CONTROL.md`.
+- New `REG_MOTOR_CAL` (0x12), reporting those measurements and the gains
+  derived from them. Read-only and diagnostic; a host that ignores it loses
+  nothing.
+- Calibration is stored in one EEPROM record together with the endpoints. The
+  record's magic changed, so the first boot after this update falls back to
+  default endpoints until self-calibration is run - which it needs to be
+  anyway, to measure the motor.
+- Unrelated but necessary to fit the above: dropped an unused
+  `<megaTinyCore.h>` include that was pulling the whole serial stack into a
+  build with serial disabled, and moved several hot paths off floating point.
+  Net flash is now below the pre-1.1 firmware despite the added feature.
+
 ### 1.1 - unreleased
 
 - Rewritten remote-movement control: PD on position with a per-direction
@@ -68,6 +115,14 @@ layer-addressed registers.
 ---
 
 ## ESPHome component
+
+### 0.3.0 - unreleased
+
+- Reads `REG_MOTOR_CAL` at startup and logs what the fader measured about its
+  motor, plus the gains derived from it, or a note that the unit has not been
+  characterised yet. Diagnostic only - nothing else in the component depends
+  on it - but it is the only way to see those numbers on a bench with no test
+  jig attached.
 
 ### 0.2.0 - unreleased
 

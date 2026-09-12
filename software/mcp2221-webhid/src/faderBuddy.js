@@ -48,6 +48,9 @@ export class FaderBuddy {
         this.REG_ACTIVE_LAYER = 0x0D;
         this.REG_LAYER_TARGET = 0x0E;         // Layer-addressed
         this.REG_LAYER_HAPTIC_CONFIG = 0x0F;  // Layer-addressed
+        // 0x10 reserved for REG_ENTER_BOOTLOADER
+        this.REG_FW_VERSION = 0x11;
+        this.REG_MOTOR_CAL = 0x12;
 
         // Mode states
         this.MODE_REMOTE_MOVEMENT = 0;
@@ -338,6 +341,41 @@ export class FaderBuddy {
      */
     async selfCalibrate() {
         await this.writeRegister(this.REG_SELF_CAL);
+    }
+
+    /**
+     * Read what self-calibration measured about this unit's motor, and the
+     * gains derived from it. Diagnostic: these are the numbers to look at when
+     * a fader hunts near its target or settles slowly.
+     *
+     * `valid` false means the unit has never been characterised (or the
+     * measurement was rejected), and the compiled-in default gains are in use -
+     * run selfCalibrate() to measure it.
+     *
+     * breakaway and k feed the feedforward (breakaway + v_ref/k) and the
+     * velocity loop gain (scaled by 1/k); jump sets velMin and the deadband.
+     *
+     * @returns {object} - {valid, breakaway: {rising, falling},
+     *                      k: {rising, falling}, jump: {rising, falling},
+     *                      velMin, deadband}
+     */
+    async readMotorCalibration() {
+        const d = await this.readRegister(this.REG_MOTOR_CAL, 12);
+        return {
+            valid: d[0] !== 0,
+            // Duty at which the carriage first moves at all
+            breakaway: { rising: d[1], falling: d[2] },
+            // ADC counts/sec of cruise gained per duty count above breakaway
+            k: { rising: d[3], falling: d[4] },
+            // Speed motion starts at once breakaway is crossed (Stribeck jump)
+            jump: {
+                rising: (d[5] << 8) | d[6],
+                falling: (d[7] << 8) | d[8],
+            },
+            // What the control law runs with, measured or default
+            velMin: (d[9] << 8) | d[10],
+            deadband: d[11],
+        };
     }
 
     /**

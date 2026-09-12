@@ -63,6 +63,7 @@ void FaderBuddy::setup() {
   // Read the chip serial number once (static factory ID) and publish it.
   read_serial_number_();
   read_firmware_version_();
+  read_motor_calibration_();
 
   // Flag a config that asks for something this fader's firmware cannot do, at
   // startup rather than waiting for the first move to warn.
@@ -165,6 +166,41 @@ void FaderBuddy::read_firmware_version_() {
 
   this->speed_supported_ = this->firmware_version_ != FW_VERSION_NONE &&
                            this->firmware_version_ >= FW_VERSION_MOVE_SPEED;
+}
+
+// Log what self-calibration measured about this fader's motor, and the
+// feedforward it derived. Diagnostic only - the fader needs nothing from the
+// host here - but these are the numbers to look at when a fader hunts or
+// settles slowly, and on a bench with no test jig attached this log is the
+// only way to see them.
+void FaderBuddy::read_motor_calibration_() {
+  if (this->firmware_version_ == FW_VERSION_NONE ||
+      this->firmware_version_ < FW_VERSION_MOTOR_CAL) {
+    return;  // Older firmware has no such register; nothing to report
+  }
+
+  uint8_t reg = REG_MOTOR_CAL;
+  uint8_t b[12] = {0};
+  if (this->write_read(&reg, 1, b, sizeof(b)) != esphome::i2c::ErrorCode::NO_ERROR) {
+    ESP_LOGW(TAG, "Failed to read motor calibration");
+    return;
+  }
+
+  uint16_t vel_min = ((uint16_t) b[9] << 8) | b[10];
+
+  if (b[0] == 0) {
+    ESP_LOGCONFIG(TAG, "Motor: not characterised, using the default plant model "
+                       "(vel_min %u ADC/s, deadband %d). Run self-calibration to measure this unit.",
+                  vel_min, b[11]);
+    return;
+  }
+
+  ESP_LOGCONFIG(TAG, "Motor: breakaway %d/%d duty, k %d/%d ADC/s per duty, "
+                     "jump %u/%u ADC/s (rising/falling)",
+                b[1], b[2], b[3], b[4],
+                ((uint16_t) b[5] << 8) | b[6], ((uint16_t) b[7] << 8) | b[8]);
+  ESP_LOGCONFIG(TAG, "Motor: vel_min %u ADC/s, deadband %d ADC counts",
+                vel_min, b[11]);
 }
 
 float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }

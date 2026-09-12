@@ -471,7 +471,7 @@ void handleCommand(char* line) {
     Serial.print(" recal="); Serial.println(recal);
 
   } else if (strcmp(cmd, "gain") == 0) {
-    // gain <index> <value>   (KP/KD/deadband are x1000)
+    // gain <index> <value>   (vref slope, KV and deadband are x1000)
     char* a = strtok(nullptr, " ");
     char* b = strtok(nullptr, " ");
     if (a == nullptr || b == nullptr) { Serial.println("ERR usage: gain <index> <value>"); return; }

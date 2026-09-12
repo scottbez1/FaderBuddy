@@ -14,9 +14,9 @@
  */
 
 #include <Arduino.h>
+#include <util/delay.h>
 #include <Wire.h>
 #include <ptc_touch.h>
-#include <megaTinyCore.h>
 #include <EEPROM.h>
 
 #include "shared/i2c_data.h"
@@ -27,8 +27,10 @@
 #define DEMO 0
 
 #define PIN_LED (PIN_PB2)
+#define LED_bm (1 << 2)  // PIN_LED on VPORTB, for direct port access
 
 #define PIN_MOTOR_nSLEEP (PIN_PB3)
+#define MOTOR_nSLEEP_bm (1 << 3)  // PIN_MOTOR_nSLEEP on VPORTB, for direct port access
 
 // Energizing pin A moves fader toward the motor end
 #define PIN_MOTOR_A (PIN_PA4)
@@ -86,27 +88,45 @@ enum TapState : uint8_t {
 // moves at all. Coast-down is first order with tau ~5 ms, so stopping distance
 // is ~v * 6 ms - which is why arriving at full speed overshoots by ~40 ADC
 // counts no matter how hard the bridge brakes afterwards.
-#define MOVE_KP (2.0f)                  // duty per ADC count of error
-#define MOVE_KD (0.04f)                 // duty per (ADC count/sec) of velocity
-// KD also sets the tolerance to added carriage mass (e.g. a heavier knob cap):
-// drive is cut at v = (KP/KD)*error, and overshoot appears once that ratio
-// approaches 1/tau. At KP/KD = 50/s against a measured 1/tau of ~200/s there is
-// roughly a 2-2.5x margin on effective moving mass before ringing returns.
-// Friction feedforward, per direction. These are deliberately set ABOVE the
-// breakaway duty measured on any one fader (68/88 on the reference unit), and
-// are centred in the range that keeps every move settling rather than tuned for
-// best accuracy on one fader. Rationale: the failure that matters is a fader
-// that never settles and times out, and that happens when FF lands BELOW a
-// unit's breakaway - the carriage then stalls just outside the deadband, waits
-// for the stiction ramp, and escapes with a jump it cannot stop inside the
-// window. Overshooting FF upward is cheap because MOVE_TAKEUP_DUTY caps drive
-// while stalled, so an over-high FF is clamped rather than violent.
-// Measured settling window on the reference fader is FF 66..146 rising; 106 is
-// its centre, giving roughly +/-40 duty counts of breakaway tolerance instead
-// of the +/-10 that a "just under breakaway" value gives. Accuracy is better at
-// the centre too. Do not "optimise" these down against a single fader.
-#define MOVE_FF_RISING (106)            // centred in the stable window
-#define MOVE_FF_FALLING (124)           // same, plus the measured direction offset
+// The law is a cascade: the position loop sets a velocity reference, and the
+// velocity loop realises it. The old flat form (u = KP*e - KD*v + FF) was
+// already this - it factors exactly as FF + KD*((KP/KD)*e - v) - but written
+// flat it hid two things worth seeing:
+//
+//  - the inner loop's open-loop gain is k*KV, where k is the plant's ADC/s per
+//    duty. That, not KV alone, is what sets damping, so a higher-torque motor
+//    is a more aggressive loop. Through the lag of the velocity estimate it
+//    goes underdamped and the fader oscillates on velocity - overshoot, brake,
+//    re-accelerate. KV is therefore scaled by 1/k on a characterised unit.
+//  - the speed limit belongs on the reference, not bolted on as a governor
+//    that subtracts drive once the fader is already too fast.
+//
+// MOVE_VREF_SLOPE is the old KP/KD ratio and keeps its meaning: drive is cut
+// when the carriage is faster than slope*error, so the controller coasts the
+// last stretch. At 50/s against a measured 1/tau of ~200/s it cuts about four
+// stopping distances short, which also leaves roughly 2-2.5x margin on
+// effective moving mass (a heavier knob cap) before ringing returns.
+#define MOVE_VREF_SLOPE (50.0f)         // ADC counts/sec of reference per ADC count of error
+#define MOVE_KV (0.04f)                 // duty per (ADC count/sec) of velocity error
+// Friction feedforward. The plant needs `breakaway` duty before it moves at
+// all, then gains `k` ADC counts/sec of speed per further duty count, so the
+// drive that produces a wanted speed is exactly
+//
+//     u_ff = breakaway + v_ref / k
+//
+// Expressing it this way rather than as one fixed number is what lets the
+// speed limit be honoured: a fixed feedforward commands whatever speed it
+// commands (~1100 ADC/s on the reference unit) and nothing below that is
+// reachable without subtracting drive back off again - which is what the old
+// one-sided governor did, and why it limit-cycled.
+//
+// The defaults below are the reference unit's plant, implied by the previous
+// fixed feedforward: FF 106/124 at k 29 is breakaway 68/86 plus 38 duty, and
+// 38 duty at k 29 is 1100 ADC/s. A characterised unit measures all of this.
+#define MOVE_BD_RISING (68)             // assumed breakaway duty, rising ADC
+#define MOVE_BD_FALLING (86)            // assumed breakaway duty, falling ADC
+#define MOVE_K_DEFAULT (29)             // assumed ADC counts/sec per duty count
+#define MOVE_VJUMP_DEFAULT (448)        // assumed Stribeck jump; 1.25x it is MOVE_VEL_MIN
 // On-target window. This has a hard floor set by the plant, not by taste:
 // nothing moves below breakaway duty, and at breakaway speed jumps straight to
 // ~900 raw/s, so the smallest correction the fader can make is roughly that
@@ -116,7 +136,7 @@ enum TapState : uint8_t {
 // the window in both directions forever and eventually trips the movement
 // timeout. Keep this at or above the floor; it is ~1.5 LSB of the 8-bit
 // position the host sees, so tightening it buys nothing a host can observe.
-#define MOVE_DEADBAND (6.0f)            // ADC counts considered "on target"
+#define MOVE_DEADBAND (8.0f)            // ADC counts considered "on target"
 #define MOVE_MAX_DUTY (254)
 
 // Optional speed limiting. Cruise velocity is already proportional to error
@@ -144,14 +164,13 @@ enum TapState : uint8_t {
 //  - the governor pulls drive below the feedforward. The feedforward alone
 //    commands ~2200 raw counts/sec, so clamping the error can only slow the
 //    fader to that floor, never under it.
-#define MOVE_VELOCITY_PER_ERROR (30.0f)  // ADC counts/sec per ADC count of error
-#define MOVE_VEL_LIMIT_GAIN (0.08f)      // duty per (ADC count/sec) of overspeed
-// Slowest speed the mechanism sustains smoothly. Below roughly this the motor
-// cannot maintain continuous rotation (Stribeck friction) and creeps in
-// stick-slip steps instead, so requests slower than this are clamped rather
-// than honoured. Measured floor is ~150 position counts/sec, i.e. full travel
-// in about 1.7 s.
-#define MOVE_VEL_MIN (560.0f)            // ADC counts/sec
+// Slowest speed the mechanism sustains smoothly, and therefore the floor the
+// velocity reference is held at even right next to the target. Below roughly
+// this the motor cannot maintain continuous rotation (Stribeck friction) and
+// creeps in stick-slip steps instead. It doubles as the guarantee that the
+// feedforward stays clear of breakaway: the drive never falls below
+// breakaway + MOVE_VEL_MIN/k, so small errors still command real motion.
+#define MOVE_VEL_MIN (560)            // ADC counts/sec
 #define MOVE_VEL_UNLIMITED (0.0f)
 
 // Endpoints of the host-facing unitless speed scale (LAYER_SPEED_SLOWEST ..
@@ -162,8 +181,8 @@ enum TapState : uint8_t {
 // what the unlimited controller already does, so it stops having any effect.
 // Mapping the whole byte onto this window means every value a host can send
 // does something, rather than most of the range being unusable.
-#define MOVE_SPEED_SLOWEST_MS (700.0f)
-#define MOVE_SPEED_FASTEST_MS (250.0f)
+#define MOVE_SPEED_SLOWEST_MS (700)
+#define MOVE_SPEED_FASTEST_MS (250)
 
 // On movement timeout, an error this small means the fader is essentially in
 // position and merely hunting - give up quietly rather than latching
@@ -183,6 +202,7 @@ enum TapState : uint8_t {
 #define MOVE_STALL_VELOCITY (60.0f)     // ADC counts/sec below which we're stalled
 #define MOVE_RAMP_RATE (250.0f)         // duty per second of ramp-in
 #define MOVE_RAMP_MAX (70.0f)           // ceiling, so a jam can't wind up to full drive
+#define MOVE_RAMP_DECAY_RATE (3500.0f)  // duty/sec shed once moving (~20 ms from full)
 
 // Backlash take-up. There is a little slack in the belt, so a move that
 // reverses direction starts with the motor unloaded. Commanding full duty into
@@ -209,24 +229,125 @@ enum TapState : uint8_t {
 #define MOVE_TAKEUP_DUTY (130)           // duty ceiling at the start of a move
 #define MOVE_TAKEUP_RAMP_RATE (1200.0f)  // duty per second the ceiling opens up
 
+// ---------------------------------------------------------------------------
+// Per-unit motor characterisation
+// ---------------------------------------------------------------------------
+// Self-calibration measures three things about this specific motor, in each
+// direction, and the gains above are re-derived from them:
+//
+//   breakaway  the duty at which the carriage first moves at all
+//   k          ADC counts/sec of cruise gained per duty count above breakaway
+//   v_jump     the speed motion starts at the instant breakaway is crossed
+//
+// Why this is worth doing rather than picking better constants: the smallest
+// correction the controller can command near the target is roughly
+//
+//   v_min = k * (KP*deadband + FF - breakaway) / (1 + k*KD)
+//
+// and it can only settle if v_min * (stopping time) fits inside the deadband.
+// FF is a fixed duty, so on a unit whose breakaway is well BELOW the value FF
+// was centred on, (FF - breakaway) is large, v_min is high, and the carriage
+// physically cannot land inside the window - it steps past in both directions
+// until the movement timeout. That is the low-stiction failure, and it is the
+// mirror image of the high-stiction one the stiction ramp already handles.
+// Measuring breakaway makes (FF - breakaway) a designed quantity rather than
+// an accident of which fader is fitted.
+//
+// k is what turns a wanted speed into a duty, so it appears twice in the
+// control law: in the feedforward (breakaway + v_ref/k) and in the velocity
+// loop gain, which is scaled by 1/k so the loop's open-loop gain k*KV - the
+// thing that actually sets damping - is the same on every unit.
+
+// Target open-loop gain for the velocity loop, k*KV, held constant across
+// units by scaling KV with 1/k. 1.16 is what the reference unit ran at
+// (k 29, KV 0.04) and settles cleanly; higher rings through the lag of the
+// velocity estimate, lower is sluggish and lets the feedforward's own error
+// show up as steady-state speed droop.
+#define MOTORCAL_KV_LOOP_GAIN (1.16f)
+
+// Floor and ceiling on the derived reference floor (1.25x the Stribeck jump).
+#define MOTORCAL_VEL_MIN_LO (200)
+#define MOTORCAL_VEL_MIN_HI (1500)
+
+// How long it takes to actually stop, measured from the carriage reaching the
+// window rather than from drive being cut. This is NOT the coast time alone:
+// the position filter and the control tick both have to notice first, and the
+// carriage keeps travelling throughout. Coast-down is first order with tau
+// ~5 ms (so ~6 ms of travel), but the reference unit's measured minimum
+// correction of 5-8 ADC counts at 450-560 ADC/s implies 9-18 ms end to end.
+//
+// Getting this wrong is the expensive direction: too small a deadband cannot
+// be satisfied at all, so the fader steps past the window in both directions
+// indefinitely and dithers until the movement timeout. Too large just means a
+// slightly less accurate final position, which is worth well under an LSB of
+// what the host can see. Size it for the pessimistic end.
+#define MOTORCAL_STOP_TIME_MS (15)       // reaction + detection + coast, ms
+#define MOTORCAL_TAKEUP_MARGIN (20)      // take-up ceiling sits this far above FF
+// Bounds on the derived on-target window. The floor is the reference unit's
+// validated value; the ceiling is a backstop against an implausible v_jump
+// measurement, not a judgement that a wider window would be wrong.
+#define MOTORCAL_DEADBAND_LO (8)         // ADC counts
+#define MOTORCAL_DEADBAND_HI (20)
+
+// Measurement procedure. Each run parks at one end, ramps duty until motion
+// starts, then dwells at two fixed duties above breakaway to get a two-point
+// fit for k. Runs alternate direction, so each one starts where the previous
+// one left off and only the first needs a long park.
+#define MOTORCAL_PASSES (2)              // runs per direction, averaged
+// Ramp rate trades calibration time against breakaway resolution. Detection
+// latency is set by the velocity filter (~5 ms), not by the ramp, so 80 duty/s
+// still resolves breakaway to well under a duty count while keeping a full
+// calibration under ~10 s.
+#define MOTORCAL_RAMP_RATE (80.0f)       // duty/sec
+#define MOTORCAL_RAMP_MAX (200.0f)       // give up: this unit has no usable breakaway
+#define MOTORCAL_MOTION_VEL (200.0f)     // ADC counts/sec that counts as "moving"
+#define MOTORCAL_JUMP_MS (40)            // window for capturing the Stribeck jump
+#define MOTORCAL_DWELL_A (25)            // duty above breakaway, first fit point
+#define MOTORCAL_DWELL_B (50)            // duty above breakaway, second fit point
+#define MOTORCAL_DWELL_MS (100)          // hold per fit point
+#define MOTORCAL_DWELL_AVG_MS (50)       // average over the last part of the hold
+#define MOTORCAL_SETTLE_MS (200)         // coast to a stop before ramping
+#define MOTORCAL_PARK_MARGIN (60)        // ADC counts from the end to start a run
+#define MOTORCAL_PARK_DUTY (200)         // open-loop duty used to park
+#define MOTORCAL_PARK_TIMEOUT (2500)     // ms
+#define MOTORCAL_EDGE_MARGIN (25)        // abort if a run gets this close to an end
+
+// Plausibility bounds. Anything outside these means the measurement, not the
+// fader, is wrong - fall back to the compiled defaults rather than trusting it.
+#define MOTORCAL_BD_MIN (10)
+#define MOTORCAL_BD_MAX (180)
+#define MOTORCAL_K_MIN (8)
+#define MOTORCAL_K_MAX (90)
+#define MOTORCAL_VJUMP_MIN (100)
+#define MOTORCAL_VJUMP_MAX (4000)
+
+// The MOVE_* constants above are the DEFAULTS, used by a unit that has never
+// been motor-calibrated. They are not the gains the controller runs: every one
+// of them is really a statement about this unit's friction and torque written
+// in absolute duty, so self-calibration measures those two things directly and
+// derives the live values below (see apply_motor_calibration). A fader whose
+// breakaway or torque differs materially from the reference unit the constants
+// were centred on cannot be served by any single set of numbers - see
+// "Tuning for hardware variance" in ABOUT_MOTOR_CONTROL.md.
+//
+// DEBUG_DRIVE builds additionally let a host overwrite these at runtime via
+// REG_DEBUG_GAINS, so a gain sweep doesn't need a reflash per trial.
+// Plant model and gains in use, indexed [MOTORCAL_FALLING]/[MOTORCAL_RISING]
+// where per-direction. Defaults until a unit is characterised.
+float move_bd[2];                                          // breakaway duty
+float move_inv_k[2];                                       // duty per (ADC/s)
+float move_kv = MOVE_KV;                                   // velocity loop gain
+int16_t move_takeup_duty = MOVE_TAKEUP_DUTY;
+float move_deadband = MOVE_DEADBAND;
+float move_vel_min = MOVE_VEL_MIN;
 #if DEBUG_DRIVE
 // Runtime-tunable copies, so gain sweeps don't need a reflash per trial.
-float move_kp = MOVE_KP;
-float move_kd = MOVE_KD;
-int16_t move_ff_rising = MOVE_FF_RISING;
-int16_t move_ff_falling = MOVE_FF_FALLING;
-float move_deadband = MOVE_DEADBAND;
+float move_vref_slope = MOVE_VREF_SLOPE;
 float move_ramp_rate = MOVE_RAMP_RATE;
-int16_t move_takeup_duty = MOVE_TAKEUP_DUTY;
 float move_takeup_ramp_rate = MOVE_TAKEUP_RAMP_RATE;
 #else
-#define move_kp MOVE_KP
-#define move_kd MOVE_KD
-#define move_ff_rising MOVE_FF_RISING
-#define move_ff_falling MOVE_FF_FALLING
-#define move_deadband MOVE_DEADBAND
+#define move_vref_slope MOVE_VREF_SLOPE
 #define move_ramp_rate MOVE_RAMP_RATE
-#define move_takeup_duty MOVE_TAKEUP_DUTY
 #define move_takeup_ramp_rate MOVE_TAKEUP_RAMP_RATE
 #endif
 
@@ -234,7 +355,6 @@ const float ALPHA = 0.05;
 float input_ewma = 0;
 float stiction_ramp = 0;                // extra drive ramped in while stalled
 float move_max_velocity = MOVE_VEL_UNLIMITED;  // 0 = unlimited
-float move_max_error = 1023.0f;         // matching P-term clamp; large = inactive
 float drive_ceiling = MOVE_MAX_DUTY;    // take-up ceiling, reset at each move start
 float velocity_ewma = 0;                // ADC counts/sec, + toward the motor end
 float last_control_ewma = 0;
@@ -255,19 +375,39 @@ uint16_t touch_recal_count = 0;  // Count of touch recalibrations since boot
 // I2C slave base address (before A0/A1/A2 jumpers are applied)
 const uint8_t I2C_BASE_ADDRESS = 0x20;
 
-// EEPROM calibration storage
+// EEPROM calibration storage. The magic changes whenever the layout does; an
+// older record simply fails validation and the unit falls back to defaults
+// until self-calibration is run again, which it needs anyway.
 #define EEPROM_CALIBRATION_ADDR 0
-#define EEPROM_CALIBRATION_MAGIC 0xCAFE  // Magic number to validate EEPROM data
+#define EEPROM_CALIBRATION_MAGIC 0xCAF1  // Magic number to validate EEPROM data
+
+// Motor characterisation, as measured and as reported at REG_MOTOR_CAL.
+// Held separately from the derived gains so the raw measurement stays
+// inspectable - if a fader misbehaves, these are the numbers worth seeing.
+// Indexed by direction of travel throughout - [MOTORCAL_FALLING] and
+// [MOTORCAL_RISING] - so the measurement, the derivation and the accumulators
+// all address it the same way instead of each carrying its own pair of cases.
+#define MOTORCAL_FALLING (0)
+#define MOTORCAL_RISING (1)
+
+struct MotorCalData {
+  uint8_t valid;      // 0 = never measured, or measured implausibly
+  uint8_t bd[2];      // breakaway duty
+  uint8_t k[2];       // ADC counts/sec per duty above breakaway
+  uint16_t vjump[2];  // ADC counts/sec at the moment motion starts
+};
 
 struct CalibrationData {
   uint16_t magic;         // Magic number for validation
   uint16_t calib_min;     // Minimum ADC value (fader at one end)
   uint16_t calib_max;     // Maximum ADC value (fader at other end)
+  MotorCalData motor;     // Per-unit motor characterisation (valid=0 if absent)
   uint16_t checksum;      // Simple checksum for data integrity
 };
 
 uint16_t input_calib_min = 40;
 uint16_t input_calib_max = 1010;
+MotorCalData motor_cal = {0, {0, 0}, {0, 0}, {0, 0}};
 
 int16_t target_adc = 512;
 uint8_t current_register = REG_VERSION;  // Track which register was last accessed
@@ -372,6 +512,41 @@ uint8_t self_calibration_stage = 0;
 #define SELF_CALIBRATION_BUFFER (0.995)  // Buffer factor to prevent hitting physical limits
 uint16_t self_calibration_adc_stage_0 = 0;
 uint16_t self_calibration_adc_stage_1 = 0;
+
+// Self-calibration runs the endpoint sweep first, then characterises the motor
+// (see the MOTORCAL_* constants). Stages 0-2 are the original endpoint sweep;
+// their numbering is unchanged.
+enum SelfCalStage : uint8_t {
+  SELFCAL_ENDPOINT_LOW = 0,   // drive to the low end, record it
+  SELFCAL_ENDPOINT_HIGH,      // drive to the high end, record it
+  SELFCAL_ENDPOINT_APPLY,     // validate the span, adopt it in RAM
+  SELFCAL_MOTOR_PARK,         // drive to the end this run starts from
+  SELFCAL_MOTOR_SETTLE,       // coast to a genuine stop before measuring
+  SELFCAL_MOTOR_RAMP,         // ramp to breakaway, then hold and capture the jump
+  SELFCAL_MOTOR_DWELL_A,      // hold breakaway + A, measure cruise speed
+  SELFCAL_MOTOR_DWELL_B,      // hold breakaway + B, measure cruise speed
+  SELFCAL_MOTOR_NEXT,         // fold in the run, advance or finish
+  SELFCAL_FINISH,             // derive gains, persist, return to the target
+};
+
+// Motor characterisation working state. Runs alternate direction starting with
+// falling (the endpoint sweep leaves the carriage at the high end), so each run
+// begins where the previous one ended.
+uint8_t motorcal_run = 0;          // 0..2*MOTORCAL_PASSES-1; even falling, odd rising
+bool motorcal_failed = false;
+uint16_t motorcal_duty = 0;        // ramped duty, fixed point (1/64 duty per LSB)
+int16_t motorcal_bd = 0;           // breakaway duty found by this run
+int16_t motorcal_vjump = 0;        // peak speed just after breakaway, ADC/s
+int16_t motorcal_dwell_a = 0;      // cruise speed at breakaway + A, ADC/s
+int32_t motorcal_vel_sum = 0;      // dwell velocity accumulator
+uint16_t motorcal_vel_n = 0;
+// Per-direction accumulators, indexed [0] = falling, [1] = rising. Integer,
+// because flash is the scarce resource on this part and a duty count or an
+// ADC count/sec is all the resolution any of these needs.
+uint16_t motorcal_bd_sum[2] = {0, 0};
+uint16_t motorcal_k_sum[2] = {0, 0};
+uint16_t motorcal_vjump_max[2] = {0, 0};
+uint8_t motorcal_samples[2] = {0, 0};
 
 bool pending_report_on_idle = false;
 
@@ -495,6 +670,19 @@ void setup_tca0() {
   TCA0.SPLIT.CTRLA = TCA_SPLIT_ENABLE_bm | TCA_SPLIT_CLKSEL_DIV4_gc;  // 19.6 kHz
 }
 
+// Big-endian multi-byte replies. Consolidating these into helpers rather than
+// writing the bytes out at each call site is worth real flash on this part -
+// every Wire.write() is a call, and the register handler has a lot of them.
+void i2c_write_u16(uint16_t v) {
+  uint8_t b[2] = {(uint8_t)(v >> 8), (uint8_t)v};
+  Wire.write(b, 2);
+}
+
+void i2c_write_u32(uint32_t v) {
+  uint8_t b[4] = {(uint8_t)(v >> 24), (uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v};
+  Wire.write(b, 4);
+}
+
 // I2C request handler - called when master requests data
 // IMPORTANT: This runs in ISR context - only read i2c_ prefixed state!
 void onI2cRequest() {
@@ -502,52 +690,27 @@ void onI2cRequest() {
   if (r == REG_VERSION) {
       Wire.write(I2C_PROTOCOL_VERSION);
   } else if (r == REG_FW_VERSION) {
-      Wire.write((FW_VERSION >> 8) & 0xFF);
-      Wire.write(FW_VERSION & 0xFF);
+      i2c_write_u16(FW_VERSION);
   } else if (r == REG_STATE) {
       // Snapshot once: the main loop can update i2c_outgoing_state between
       // byte writes, which would hand the controller a torn value.
-      uint32_t s = i2c_outgoing_state;
-      Wire.write((s >> 24) & 0xFF);
-      Wire.write((s >> 16) & 0xFF);
-      Wire.write((s >> 8) & 0xFF);
-      Wire.write(s & 0xFF);
+      i2c_write_u32(i2c_outgoing_state);
   } else if (r == REG_UPTIME) {
-      uint32_t uptime = millis();
-      Wire.write((uptime >> 24) & 0xFF);
-      Wire.write((uptime >> 16) & 0xFF);
-      Wire.write((uptime >> 8) & 0xFF);
-      Wire.write(uptime & 0xFF);
+      i2c_write_u32(millis());
   } else if (r == REG_TOUCH_RAW) {
-      uint16_t touch_raw = touch_sensor.sensorData;
-      Wire.write((touch_raw >> 8) & 0xFF);  // High byte
-      Wire.write(touch_raw & 0xFF);         // Low byte
+      i2c_write_u16(touch_sensor.sensorData);
   } else if (r == REG_SERIAL) {
       // Read 10-byte serial number from SIGROW
-      Wire.write(SIGROW.SERNUM0);
-      Wire.write(SIGROW.SERNUM1);
-      Wire.write(SIGROW.SERNUM2);
-      Wire.write(SIGROW.SERNUM3);
-      Wire.write(SIGROW.SERNUM4);
-      Wire.write(SIGROW.SERNUM5);
-      Wire.write(SIGROW.SERNUM6);
-      Wire.write(SIGROW.SERNUM7);
-      Wire.write(SIGROW.SERNUM8);
-      Wire.write(SIGROW.SERNUM9);
+      Wire.write((const uint8_t *)&SIGROW.SERNUM0, 10);
   } else if (r == REG_TOUCH_DELTA) {
       // Touch delta (signed 16-bit): sensorData - reference
-      int16_t delta = ptc_get_node_delta(&touch_sensor);
-      Wire.write((delta >> 8) & 0xFF);  // High byte
-      Wire.write(delta & 0xFF);         // Low byte
+      i2c_write_u16((uint16_t)ptc_get_node_delta(&touch_sensor));
   } else if (r == REG_TOUCH_REF) {
       // Touch reference value (unsigned 16-bit)
-      uint16_t reference = touch_sensor.reference;
-      Wire.write((reference >> 8) & 0xFF);  // High byte
-      Wire.write(reference & 0xFF);         // Low byte
+      i2c_write_u16(touch_sensor.reference);
   } else if (r == REG_TOUCH_RECAL) {
       // Touch recalibration count (unsigned 16-bit)
-      Wire.write((touch_recal_count >> 8) & 0xFF);  // High byte
-      Wire.write(touch_recal_count & 0xFF);         // Low byte
+      i2c_write_u16(touch_recal_count);
 #if DEBUG_DRIVE
   } else if (r == REG_DEBUG_STATUS) {
       int16_t vel = (int16_t)debug_status_velocity;
@@ -558,11 +721,23 @@ void onI2cRequest() {
         debug_status_loop_hz, debug_status_tick_hz,
         (uint16_t)move_max_velocity,
       };
-      for (uint8_t i = 0; i < 9; i++) {
-        Wire.write((vals[i] >> 8) & 0xFF);
-        Wire.write(vals[i] & 0xFF);
-      }
+      for (uint8_t i = 0; i < 9; i++) i2c_write_u16(vals[i]);
 #endif
+  } else if (r == REG_MOTOR_CAL) {
+      const uint8_t vals[12] = {
+        motor_cal.valid,
+        motor_cal.bd[MOTORCAL_RISING], motor_cal.bd[MOTORCAL_FALLING],
+        motor_cal.k[MOTORCAL_RISING], motor_cal.k[MOTORCAL_FALLING],
+        (uint8_t)(motor_cal.vjump[MOTORCAL_RISING] >> 8),
+        (uint8_t)motor_cal.vjump[MOTORCAL_RISING],
+        (uint8_t)(motor_cal.vjump[MOTORCAL_FALLING] >> 8),
+        (uint8_t)motor_cal.vjump[MOTORCAL_FALLING],
+        // What the control law actually runs with, derived or default, so a
+        // host can see the outcome without knowing how it is derived.
+        (uint8_t)(((uint16_t)move_vel_min) >> 8), (uint8_t)move_vel_min,
+        (uint8_t)move_deadband,
+      };
+      Wire.write(vals, 12);
   } else if (r == REG_ACTIVE_LAYER) {
       Wire.write(active_layer);
   } else if (r == REG_LAYER_TARGET) {
@@ -668,14 +843,95 @@ void onI2cReceive(int howMany) {
 
 }
 
+// Re-derive the live control gains from this unit's measured motor
+// characteristics, or restore the compiled-in defaults when no valid
+// measurement exists. Safe to call at any time; it only touches gains.
+//
+// Everything here is a restatement of the MOVE_* defaults in terms of the
+// plant rather than in absolute duty:
+//   FF       = breakaway + (a fixed SPEED of headroom), not a fixed duty
+//   KP, KD   = scaled by k_ref/k, holding the real loop gains KP*k and KD*k
+//              constant, and with them the KP/KD ratio the coast-in relies on
+//   deadband = at least the distance covered by this unit's Stribeck jump
+//   take-up  = above FF, which is an invariant of the take-up ceiling
+// At the reference unit's measurements this reproduces the shipped values.
+void apply_motor_calibration() {
+  // The compiled-in defaults are themselves a plant model - the reference
+  // unit's - so there is one derivation, not one per case. That is not just
+  // tidiness: it guarantees an uncharacterised fader runs exactly the gains
+  // the constants were tuned to, because they are computed the same way.
+  uint8_t bd[2], k[2];
+  uint16_t vjump;
+  if (motor_cal.valid) {
+    bd[MOTORCAL_FALLING] = motor_cal.bd[MOTORCAL_FALLING];
+    bd[MOTORCAL_RISING] = motor_cal.bd[MOTORCAL_RISING];
+    k[MOTORCAL_FALLING] = motor_cal.k[MOTORCAL_FALLING];
+    k[MOTORCAL_RISING] = motor_cal.k[MOTORCAL_RISING];
+    vjump = (motor_cal.vjump[0] > motor_cal.vjump[1]) ? motor_cal.vjump[0]
+                                                      : motor_cal.vjump[1];
+  } else {
+    bd[MOTORCAL_FALLING] = MOVE_BD_FALLING;
+    bd[MOTORCAL_RISING] = MOVE_BD_RISING;
+    k[MOTORCAL_FALLING] = MOVE_K_DEFAULT;
+    k[MOTORCAL_RISING] = MOVE_K_DEFAULT;
+    vjump = MOVE_VJUMP_DEFAULT;
+  }
+
+  // The Stribeck jump is the slowest the mechanism moves at all, so it floors
+  // both the velocity reference and the on-target window: the fader cannot
+  // correct by less than the distance it covers before it can be stopped.
+  uint16_t vel_min = vjump + vjump / 4;  // 1.25x, for margin above the floor
+  if (vel_min < MOTORCAL_VEL_MIN_LO) vel_min = MOTORCAL_VEL_MIN_LO;
+  if (vel_min > MOTORCAL_VEL_MIN_HI) vel_min = MOTORCAL_VEL_MIN_HI;
+  move_vel_min = vel_min;
+
+  uint16_t deadband = (uint16_t)(((uint32_t)vel_min * MOTORCAL_STOP_TIME_MS + 500) / 1000);
+  if (deadband < MOTORCAL_DEADBAND_LO) deadband = MOTORCAL_DEADBAND_LO;
+  if (deadband > MOTORCAL_DEADBAND_HI) deadband = MOTORCAL_DEADBAND_HI;
+  move_deadband = deadband;
+
+  // Take-up ceiling: limits drive at the start of a move so the belt is not
+  // engaged at full duty. It has to stay above the feedforward at the floor
+  // speed, or it starves the term that gets the carriage moving. Integer
+  // arithmetic deliberately - this runs once, but flash is permanent.
+  int16_t takeup = MOVE_TAKEUP_DUTY;
+  for (uint8_t i = 0; i < 2; i++) {
+    int16_t ff = bd[i] + (int16_t)(vel_min / (k[i] ? k[i] : 1)) + MOTORCAL_TAKEUP_MARGIN;
+    if (ff > takeup) takeup = ff;
+  }
+  if (takeup > MOVE_MAX_DUTY) takeup = MOVE_MAX_DUTY;
+  move_takeup_duty = takeup;
+
+  // The only float work: the control law needs 1/k per direction for the
+  // feedforward, and the velocity loop gain scaled so its open-loop gain k*KV
+  // - the thing that actually sets damping - matches the reference unit's.
+  uint16_t k_avg = ((uint16_t)k[0] + k[1] + 1) / 2;
+  if (k_avg < MOTORCAL_K_MIN) k_avg = MOTORCAL_K_MIN;
+  if (k_avg > MOTORCAL_K_MAX) k_avg = MOTORCAL_K_MAX;
+  move_kv = MOTORCAL_KV_LOOP_GAIN / (float)k_avg;
+  for (uint8_t i = 0; i < 2; i++) {
+    move_bd[i] = bd[i];
+    move_inv_k[i] = 1.0f / (float)(k[i] ? k[i] : 1);
+  }
+}
+
+// Checksum over everything in the record except the checksum itself.
+uint16_t calibration_checksum(const CalibrationData &cal) {
+  uint16_t sum = cal.magic + cal.calib_min + cal.calib_max + cal.motor.valid;
+  for (uint8_t i = 0; i < 2; i++) {
+    sum += cal.motor.bd[i] + cal.motor.k[i] + cal.motor.vjump[i];
+  }
+  return sum;
+}
+
 // Save calibration data to EEPROM
 void saveCalibration() {
   CalibrationData cal;
   cal.magic = EEPROM_CALIBRATION_MAGIC;
   cal.calib_min = input_calib_min;
   cal.calib_max = input_calib_max;
-  // Simple checksum: sum of all data
-  cal.checksum = cal.magic + cal.calib_min + cal.calib_max;
+  cal.motor = motor_cal;
+  cal.checksum = calibration_checksum(cal);
 
   EEPROM.put(EEPROM_CALIBRATION_ADDR, cal);
 }
@@ -692,8 +948,7 @@ bool loadCalibration() {
   }
 
   // Validate checksum
-  uint16_t expected_checksum = cal.magic + cal.calib_min + cal.calib_max;
-  if (cal.checksum != expected_checksum) {
+  if (cal.checksum != calibration_checksum(cal)) {
     return false;
   }
 
@@ -710,19 +965,28 @@ bool loadCalibration() {
   // Load calibration values
   input_calib_min = cal.calib_min;
   input_calib_max = cal.calib_max;
+  motor_cal = cal.motor;
 
   return true;
 }
 
 void setup_i2c() {
-  pinMode(PIN_ADDR_0, INPUT_PULLUP);
-  pinMode(PIN_ADDR_1, INPUT_PULLUP);
-  pinMode(PIN_ADDR_2, INPUT_PULLUP);
+  // Straight to the port. The three address jumpers are PC0-PC2, read once at
+  // boot, and going through pinMode()/digitalRead() for them links both
+  // functions (~120 bytes) for no benefit.
+  PORTC.PIN0CTRL |= PORT_PULLUPEN_bm;
+  PORTC.PIN1CTRL |= PORT_PULLUPEN_bm;
+  PORTC.PIN2CTRL |= PORT_PULLUPEN_bm;
+  _delay_us(10);  // let the pullups settle before sampling
 
+  // A fitted jumper pulls its pin low, so the bits are inverted. Note the
+  // address pins run the opposite way round from the port bits: PIN_ADDR_0 is
+  // PC2 and PIN_ADDR_2 is PC0, so the three bits are reversed, not copied.
+  uint8_t fitted = (~VPORTC.IN) & 0x07;  // bit n set = jumper on PCn
   uint8_t address = I2C_BASE_ADDRESS +
-    (!digitalRead(PIN_ADDR_2) << 2) +
-    (!digitalRead(PIN_ADDR_1) << 1) +
-    (!digitalRead(PIN_ADDR_0) << 0);
+    ((fitted & (1 << 0)) << 2) +  // PC0 -> A2
+    ((fitted & (1 << 1))) +       // PC1 -> A1
+    ((fitted & (1 << 2)) >> 2);   // PC2 -> A0
 
   // Initialize I2C as slave
   Wire.begin(address);
@@ -747,6 +1011,15 @@ void increment_double_tap_nonce() {
 
 void reset_tap_detection() {
   tap_state = TAP_NONE;
+}
+
+// How far the carriage has moved since the tap started. Raw ADC deliberately,
+// not input_ewma: the filter's lag is comparable to the tap timings being
+// judged here, so a filtered value would report movement that already ended.
+uint16_t tap_position_delta() {
+  uint16_t current_adc = ADC1.RES;
+  return (current_adc > tap_position_start) ? (current_adc - tap_position_start)
+                                            : (tap_position_start - current_adc);
 }
 
 // Calculate max PWM from 3-bit strength value (0-7)
@@ -806,6 +1079,17 @@ void request_layer_change(uint8_t new_layer) {
   pending_layer_change = new_layer;  // Defer until appropriate to apply
 }
 
+// Enter (or restart) a remote move toward the current target_adc. Every caller
+// needs the same three timestamps reset together - a half-reset move either
+// times out early or never does.
+void begin_remote_move() {
+  uint32_t now = millis();
+  remote_movement_start = now;
+  remote_movement_start_position = input_ewma;
+  remote_movement_steady_start = now;
+  set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+}
+
 // Apply layer change and start movement to new layer's restore position
 void apply_layer_change(uint8_t new_layer) {
   // Start movement to new layer's restore position
@@ -814,10 +1098,7 @@ void apply_layer_change(uint8_t new_layer) {
     input_calib_min, input_calib_max
   );
   apply_move_speed(layer_speeds[new_layer]);
-  remote_movement_start = millis();
-  remote_movement_start_position = input_ewma;
-  remote_movement_steady_start = millis();
-  set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+  begin_remote_move();
 
   // Load new layer's haptic config
   haptic_config = layer_haptic_configs[new_layer];
@@ -831,26 +1112,15 @@ void write_layer_target(uint8_t layer, uint8_t target) {
   if (layer > 7) return;
 
   if (layer == active_layer) {
+    // Starting a move and retargeting one already under way are the same
+    // thing. Anything else - the user has control, an error is latched, a
+    // calibration is running - leaves the fader alone.
     Mode mode = get_mode();
-    if (mode == MODE_INPUT_IDLE) {
-      // Start remote movement
+    if (mode == MODE_INPUT_IDLE || mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
       layer_restore_positions[layer] = target;
       target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
       apply_move_speed(layer_speeds[layer]);
-      set_mode(MODE_REMOTE_MOVEMENT_IN_PROGRESS);
-      remote_movement_start = millis();
-      remote_movement_start_position = input_ewma;
-      remote_movement_steady_start = millis();
-    } else if (mode == MODE_INPUT_ACTIVE) {
-      // Ignore - user has control
-    } else if (mode == MODE_REMOTE_MOVEMENT_IN_PROGRESS) {
-      // Update target of in-progress movement
-      layer_restore_positions[layer] = target;
-      target_adc = BOUNDED_LERP_UINT16(target, 0, 255, input_calib_min, input_calib_max);
-      apply_move_speed(layer_speeds[layer]);
-      remote_movement_start = millis();
-      remote_movement_start_position = input_ewma;
-      remote_movement_steady_start = millis();
+      begin_remote_move();
     }
   } else {
     // Non-active layer - just update restore position
@@ -904,22 +1174,39 @@ void adc_drain() {
 void apply_move_speed(uint8_t speed) {
   if (speed >= LAYER_SPEED_FULL) {
     move_max_velocity = MOVE_VEL_UNLIMITED;
-    move_max_error = 1023.0f;
     return;
   }
+  // Integer throughout: the result is an ADC-counts/sec limit that the plant
+  // only honours to within ~15% anyway, so sub-count precision here would buy
+  // nothing and float on this part is not free.
   uint16_t span = input_calib_max - input_calib_min;
-  float slowest = (float)span * 1000.0f / MOVE_SPEED_SLOWEST_MS;
-  float fastest = (float)span * 1000.0f / MOVE_SPEED_FASTEST_MS;
-  float adc_per_sec =
-      slowest + (fastest - slowest) * ((float)speed / (float)(LAYER_SPEED_FULL - 1));
+  uint16_t slowest = ((uint32_t)span * 1000) / MOVE_SPEED_SLOWEST_MS;
+  // The fast endpoint divides 1000 exactly, so it stays in 16-bit arithmetic
+  // (span is at most 1023, so span * 4 cannot overflow). The static_asserts
+  // keep that true if the endpoint is ever re-measured and changed.
+  static_assert(1000 % MOVE_SPEED_FASTEST_MS == 0,
+                "MOVE_SPEED_FASTEST_MS must divide 1000 exactly, or use 32-bit math here");
+  static_assert(1023UL * (1000 / MOVE_SPEED_FASTEST_MS) <= 65535UL, "span scaling overflows");
+  uint16_t fastest = span * (1000 / MOVE_SPEED_FASTEST_MS);
+  uint16_t adc_per_sec =
+      slowest + (uint16_t)(((uint32_t)(fastest - slowest) * speed) / (LAYER_SPEED_FULL - 1));
   // Clamp to what the mechanism can actually sustain smoothly
-  if (adc_per_sec < MOVE_VEL_MIN) adc_per_sec = MOVE_VEL_MIN;
+  if (adc_per_sec < move_vel_min) adc_per_sec = move_vel_min;
   move_max_velocity = adc_per_sec;
-  // Matching error clamp, so the proportional term cannot saturate past the
-  // point where the governor has any authority.
-  float clamp = adc_per_sec / MOVE_VELOCITY_PER_ERROR;
-  if (clamp < MOVE_DEADBAND * 2) clamp = MOVE_DEADBAND * 2;
-  move_max_error = clamp;
+}
+
+// Direction of travel for the current characterisation run: runs alternate,
+// starting with falling, so each begins where the previous one ended.
+int8_t motorcal_dir() {
+  return (motorcal_run & 1) ? 1 : -1;
+}
+
+// A run drives open-loop, so it has to police its own travel. Bail out before
+// the carriage reaches the mechanical end rather than measuring a fader that
+// is being held by an endstop.
+bool motorcal_out_of_band(int8_t dir) {
+  if (dir > 0) return input_ewma > input_calib_max - MOTORCAL_EDGE_MARGIN;
+  return input_ewma < input_calib_min + MOTORCAL_EDGE_MARGIN;
 }
 
 void motor_update() {
@@ -1021,44 +1308,61 @@ void motor_update() {
         }
         float error = target_adc - input_ewma;
         if (error > move_deadband || error < -move_deadband) {
-          // PD on position plus a friction feedforward, which covers the
-          // breakaway duty so the controller only has to supply the part of
-          // the drive that sets speed rather than fighting stiction. The D term
-          // is what prevents overshoot: it cancels the feedforward while the
-          // carriage is still moving fast, cutting drive roughly one stopping
-          // distance short of the target so it coasts in.
+          // Cascade control. The position loop asks for a velocity, the
+          // velocity loop delivers it:
+          //
+          //   v_ref = clamp(slope * error, floor .. speed limit)
+          //   u     = breakaway + v_ref/k          (feedforward)
+          //         + KV * (v_ref - v)             (feedback)
+          //
+          // The feedforward is the plant model inverted, so at steady state the
+          // feedback term is zero and the fader simply travels at v_ref. That
+          // is what makes the speed limit a limit rather than a fight: the old
+          // law carried a fixed feedforward that commanded ~1100 ADC/s no
+          // matter what was asked for, and needed a one-sided governor to
+          // subtract drive back off once the fader was already too fast. A
+          // one-sided correction with the operating point sitting exactly on
+          // its discontinuity is a limit-cycle generator, and it behaved like
+          // one: overshoot the limit, brake, fall under, accelerate again.
+          //
+          // Clamping the reference instead keeps one well-damped loop in charge
+          // at every speed, and the same clamp replaces the separate P-term
+          // error clamp the governor needed to stop KP saturating.
+          float v_ref = move_vref_slope * error;
+          float mag = v_ref < 0 ? -v_ref : v_ref;
+          if (move_max_velocity > MOVE_VEL_UNLIMITED && mag > move_max_velocity) {
+            mag = move_max_velocity;
+          }
+          // Never ask for less than the mechanism can actually sustain: below
+          // the Stribeck floor it stick-slips rather than moving, and holding
+          // the reference here is also what keeps the feedforward clear of
+          // breakaway when the error is small.
+          if (mag < move_vel_min) mag = move_vel_min;
 
-          // Clamp the error driving the P term when a speed limit is active.
-          // Inactive near the target and when unlimited, so the tuned approach
-          // and settle behaviour is unchanged.
-          float e_ctrl = error;
-          if (e_ctrl > move_max_error) e_ctrl = move_max_error;
-          if (e_ctrl < -move_max_error) e_ctrl = -move_max_error;
+          uint8_t d = (error > 0) ? MOTORCAL_RISING : MOTORCAL_FALLING;
+          float ff = move_bd[d] + mag * move_inv_k[d];
+          if (error < 0) ff = -ff;
+          v_ref = (error > 0) ? mag : -mag;
+          float u = ff + move_kv * (v_ref - velocity_ewma);
 
-          float u = move_kp * e_ctrl - move_kd * velocity_ewma;
-          u += (error > 0) ? move_ff_rising : -move_ff_falling;
-
-          // Ramp in extra drive only while stalled, and shed it as soon as the
-          // carriage moves, so the ramp never contributes to overshoot.
+          // Ramp in extra drive only while stalled. The feedforward is derived
+          // to sit above breakaway, so this should now be rare - it covers
+          // measurement error, a cold or stiff unit, and the uncharacterised
+          // case.
           float speed = velocity_ewma < 0 ? -velocity_ewma : velocity_ewma;
           if (speed < MOVE_STALL_VELOCITY) {
             stiction_ramp += move_ramp_rate * (control_dt_us * 1e-6f);
             if (stiction_ramp > MOVE_RAMP_MAX) stiction_ramp = MOVE_RAMP_MAX;
-          } else {
-            stiction_ramp = 0;
+          } else if (stiction_ramp > 0) {
+            // Shed it quickly once the carriage breaks free, but not in one
+            // step: dropping up to MOVE_RAMP_MAX of drive instantly is itself a
+            // relay, and around the stall threshold it chatters. A few tens of
+            // ms is far shorter than the coast time, so it still cannot
+            // contribute to overshoot.
+            stiction_ramp -= MOVE_RAMP_DECAY_RATE * (control_dt_us * 1e-6f);
+            if (stiction_ramp < 0) stiction_ramp = 0;
           }
           u += (error > 0) ? stiction_ramp : -stiction_ramp;
-
-          // Optional velocity limit: bleed off drive only while over the
-          // requested speed, so approach and settle near the target (already
-          // slower than any useful limit) are unaffected.
-          if (move_max_velocity > MOVE_VEL_UNLIMITED) {
-            float speed_now = velocity_ewma < 0 ? -velocity_ewma : velocity_ewma;
-            if (speed_now > move_max_velocity) {
-              float excess = MOVE_VEL_LIMIT_GAIN * (speed_now - move_max_velocity);
-              u += (velocity_ewma > 0) ? -excess : excess;
-            }
-          }
 
           // Drive ceiling opens up over time from the take-up value, easing
           // the motor through belt backlash instead of stepping to full duty.
@@ -1181,9 +1485,23 @@ void motor_update() {
     case MODE_ERROR:
       motor_set(0, false, MOTOR_IDLE_COAST);
       break;
-    case MODE_SELF_CALIBRATION:
+    case MODE_SELF_CALIBRATION: {
+      // Direction of travel and travel policing are the same for every
+      // measurement stage, so they live here rather than in each case. The
+      // runs drive open loop, so something has to stop them at the ends.
+      int8_t dir = motorcal_dir();
+      // Speed along the direction of travel, as an integer once, so the
+      // measurement stages below never touch the float paths again. One ADC
+      // count/sec is far finer than anything derived from these needs.
+      int16_t speed = (int16_t)((dir > 0) ? velocity_ewma : -velocity_ewma);
+      if (self_calibration_stage >= SELFCAL_MOTOR_RAMP &&
+          self_calibration_stage <= SELFCAL_MOTOR_DWELL_B &&
+          motorcal_out_of_band(dir)) {
+        motorcal_failed = true;
+        self_calibration_stage = SELFCAL_MOTOR_NEXT;
+      }
       switch (self_calibration_stage) {
-        case 0:
+        case SELFCAL_ENDPOINT_LOW:
           if (now > self_calibration_start + SELF_CALIBRATION_TIMEOUT) {
             self_calibration_adc_stage_0 = adc_val;
             self_calibration_stage++;
@@ -1193,7 +1511,7 @@ void motor_update() {
             motor_set(-254, true, MOTOR_IDLE_COAST);
           }
           break;
-        case 1:
+        case SELFCAL_ENDPOINT_HIGH:
           if (now > self_calibration_start + SELF_CALIBRATION_TIMEOUT) {
             self_calibration_adc_stage_1 = adc_val;
             self_calibration_stage++;
@@ -1203,7 +1521,7 @@ void motor_update() {
             motor_set(254, true, MOTOR_IDLE_COAST);
           }
           break;
-        case 2:
+        case SELFCAL_ENDPOINT_APPLY:
           motor_set(0, false, MOTOR_IDLE_COAST);
           if (abs((int16_t)self_calibration_adc_stage_0 - self_calibration_adc_stage_1) < 900) {
             set_mode(Mode::MODE_ERROR);
@@ -1213,19 +1531,185 @@ void motor_update() {
             input_calib_min = (SELF_CALIBRATION_BUFFER * self_calibration_adc_stage_0 + (1.0 - SELF_CALIBRATION_BUFFER) * self_calibration_adc_stage_1) / 2;
             input_calib_max = (SELF_CALIBRATION_BUFFER * self_calibration_adc_stage_1 + (1.0 - SELF_CALIBRATION_BUFFER) * self_calibration_adc_stage_0) / 2;
 
-            // Save calibration to EEPROM
-            saveCalibration();
-
-            // Since we moved the position, do a remote movement to the previous target
-            remote_movement_start = millis();
-            remote_movement_start_position = input_ewma;
-            remote_movement_steady_start = millis();
-            // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
-            set_mode(Mode::MODE_REMOTE_MOVEMENT_IN_PROGRESS);
+            // Endpoints are known, so the motor characterisation that follows
+            // has a calibrated span to keep itself inside. Persist once, at the
+            // end, so endpoints and motor data are written together.
+            motorcal_run = 0;
+            motorcal_failed = false;
+            for (uint8_t i = 0; i < 2; i++) {
+              motorcal_bd_sum[i] = 0;
+              motorcal_k_sum[i] = 0;
+              motorcal_vjump_max[i] = 0;
+              motorcal_samples[i] = 0;
+            }
+            self_calibration_stage = SELFCAL_MOTOR_PARK;
+            self_calibration_start = now;
           }
+          break;
+        case SELFCAL_MOTOR_PARK: {
+          // A run needs room to ramp to breakaway and then dwell twice without
+          // reaching the far end, so it starts from the end it travels away
+          // from. Runs alternate direction, so only the first park is long.
+          bool parked = (dir > 0)
+              ? (input_ewma <= input_calib_min + MOTORCAL_PARK_MARGIN)
+              : (input_ewma >= input_calib_max - MOTORCAL_PARK_MARGIN);
+          if (parked || now > self_calibration_start + MOTORCAL_PARK_TIMEOUT) {
+            motor_set(0, true, MOTOR_IDLE_BRAKE);
+            self_calibration_stage = SELFCAL_MOTOR_SETTLE;
+            self_calibration_start = now;
+          } else {
+            motor_set(dir > 0 ? -MOTORCAL_PARK_DUTY : MOTORCAL_PARK_DUTY,
+                      true, MOTOR_IDLE_COAST);
+          }
+          break;
+        }
+        case SELFCAL_MOTOR_SETTLE:
+          // Breakaway is only meaningful from a standstill: measuring it while
+          // the carriage still coasts would find the (much lower) duty needed
+          // to sustain motion rather than the duty needed to start it.
+          motor_set(0, true, MOTOR_IDLE_BRAKE);
+          if (now > self_calibration_start + MOTORCAL_SETTLE_MS) {
+            motorcal_duty = 0;
+            motorcal_bd = 0;
+            motorcal_vjump = 0;
+            self_calibration_stage = SELFCAL_MOTOR_RAMP;
+            self_calibration_start = now;
+          }
+          break;
+        case SELFCAL_MOTOR_RAMP: {
+          int16_t duty;
+          if (motorcal_bd == 0) {
+            // Still hunting for breakaway. Fixed point, 1/256 duty per LSB:
+            // the ramp is the only thing here needing sub-duty resolution, and
+            // a float multiply per tick for it is not worth the flash. The
+            // fraction has to be fine enough that a tick's increment does not
+            // truncate to nothing - 84/4096 per us is 80.1 duty/sec at the
+            // 500 us tick, where a coarser LSB would quietly give ~62.
+            motorcal_duty += (uint16_t)((control_dt_us * 84UL) >> 12);
+            duty = motorcal_duty >> 8;
+            if (duty > MOTORCAL_RAMP_MAX) {
+              // Nothing moved short of a duty no sane fader needs: jammed, or
+              // the motor isn't connected.
+              motorcal_failed = true;
+              self_calibration_stage = SELFCAL_MOTOR_NEXT;
+              break;
+            }
+            // duty > 0 keeps a still-coasting carriage from "breaking away" at
+            // zero drive, which would also defeat the sentinel below.
+            if (duty > 0 && speed > MOTORCAL_MOTION_VEL) {
+              motorcal_bd = duty;
+              motorcal_vjump = speed;
+              self_calibration_start = now;  // start the jump hold
+            }
+          } else {
+            // Breakaway found (motorcal_bd is the sentinel; it is never 0 for
+            // a real detection). Hold there and take the peak speed. Motion does
+            // not ease in from zero - it jumps (Stribeck) - and that jump is
+            // the floor on the smallest correction the controller can make.
+            duty = motorcal_bd;
+            if (speed > motorcal_vjump) motorcal_vjump = speed;
+            if (now > self_calibration_start + MOTORCAL_JUMP_MS) {
+              motorcal_vel_sum = 0;
+              motorcal_vel_n = 0;
+              self_calibration_stage = SELFCAL_MOTOR_DWELL_A;
+              self_calibration_start = now;
+            }
+          }
+          motor_set((dir > 0) ? duty : -duty, true, MOTOR_IDLE_BRAKE);
+          break;
+        }
+        case SELFCAL_MOTOR_DWELL_A:
+        case SELFCAL_MOTOR_DWELL_B: {
+          // Two fixed duties above breakaway give a two-point fit for k, the
+          // slope of the speed/duty line. One point would only give a speed,
+          // which says nothing about how the plant responds to a change.
+          bool second = (self_calibration_stage == SELFCAL_MOTOR_DWELL_B);
+          int16_t duty = motorcal_bd + (second ? MOTORCAL_DWELL_B : MOTORCAL_DWELL_A);
+          if (duty > MOVE_MAX_DUTY) duty = MOVE_MAX_DUTY;
+          motor_set((dir > 0) ? duty : -duty, true, MOTOR_IDLE_BRAKE);
+
+          // Average the tail of the hold only, once the speed has settled.
+          if (now > self_calibration_start + (MOTORCAL_DWELL_MS - MOTORCAL_DWELL_AVG_MS)) {
+            motorcal_vel_sum += speed;
+            motorcal_vel_n++;
+          }
+          if (now > self_calibration_start + MOTORCAL_DWELL_MS) {
+            int16_t v = (motorcal_vel_n > 0)
+                            ? (int16_t)(motorcal_vel_sum / motorcal_vel_n)
+                            : 0;
+            motorcal_vel_sum = 0;
+            motorcal_vel_n = 0;
+            if (!second) {
+              motorcal_dwell_a = v;
+              self_calibration_stage = SELFCAL_MOTOR_DWELL_B;
+              self_calibration_start = now;
+            } else {
+              int16_t k = (v - motorcal_dwell_a) / (MOTORCAL_DWELL_B - MOTORCAL_DWELL_A);
+              int16_t bd = motorcal_bd;
+              int16_t vjump = motorcal_vjump;
+              uint8_t idx = (dir > 0) ? MOTORCAL_RISING : MOTORCAL_FALLING;
+              if (bd >= MOTORCAL_BD_MIN && bd <= MOTORCAL_BD_MAX &&
+                  k >= MOTORCAL_K_MIN && k <= MOTORCAL_K_MAX &&
+                  vjump >= MOTORCAL_VJUMP_MIN && vjump <= MOTORCAL_VJUMP_MAX) {
+                motorcal_bd_sum[idx] += bd;
+                motorcal_k_sum[idx] += k;
+                if ((uint16_t)vjump > motorcal_vjump_max[idx]) {
+                  motorcal_vjump_max[idx] = vjump;
+                }
+                motorcal_samples[idx]++;
+              } else {
+                motorcal_failed = true;
+              }
+              self_calibration_stage = SELFCAL_MOTOR_NEXT;
+              self_calibration_start = now;
+            }
+          }
+          break;
+        }
+        case SELFCAL_MOTOR_NEXT:
+          motor_set(0, true, MOTOR_IDLE_BRAKE);
+          motorcal_run++;
+          self_calibration_stage =
+              (!motorcal_failed && motorcal_run < 2 * MOTORCAL_PASSES)
+                  ? SELFCAL_MOTOR_PARK
+                  : SELFCAL_FINISH;
+          self_calibration_start = now;
+          break;
+        case SELFCAL_FINISH:
+          motor_set(0, false, MOTOR_IDLE_COAST);
+          // Every run must have produced a plausible sample. A partial set
+          // means something was wrong with the fader or the measurement, and
+          // half-measured gains are worse than the tuned defaults.
+          if (!motorcal_failed && motorcal_samples[MOTORCAL_FALLING] == MOTORCAL_PASSES &&
+              motorcal_samples[MOTORCAL_RISING] == MOTORCAL_PASSES) {
+            motor_cal.valid = 1;
+            for (uint8_t i = 0; i < 2; i++) {
+              motor_cal.bd[i] = (motorcal_bd_sum[i] + MOTORCAL_PASSES / 2) / MOTORCAL_PASSES;
+              motor_cal.k[i] = (motorcal_k_sum[i] + MOTORCAL_PASSES / 2) / MOTORCAL_PASSES;
+              motor_cal.vjump[i] = motorcal_vjump_max[i];
+            }
+          } else {
+            // Endpoints are still good and worth keeping; only the motor
+            // characterisation is discarded, and the tuned defaults stand in.
+            motor_cal.valid = 0;
+            for (uint8_t i = 0; i < 2; i++) {
+              motor_cal.bd[i] = 0;
+              motor_cal.k[i] = 0;
+              motor_cal.vjump[i] = 0;
+            }
+          }
+          apply_motor_calibration();
+
+          // Save calibration to EEPROM
+          saveCalibration();
+
+          // Since we moved the position, do a remote movement to the previous target
+          // TODO: re-calculate target_adc using the new calibration bounds. Can't do that now since we lerp target to an ADC value upon receipt, without saving the 0-255 value
+          begin_remote_move();
           break;
       }
       break;
+    }
     }
 
   // TODO: lerp bounds...
@@ -1272,19 +1756,24 @@ void setup() {
   Serial.println("Hello world!");
 #endif
 
-  // Load calibration from EEPROM if available
-  if (loadCalibration()) {
+  // Load calibration from EEPROM if available; defaults stand if there is none.
+  bool have_calibration = loadCalibration();
+  // Unconditional, and after the load either way: the derived gains have no
+  // compile-time initialiser, so a unit with no stored calibration still has to
+  // run the derivation to pick up the default plant model.
+  apply_motor_calibration();
 #if SERIAL_ENABLED
+  if (have_calibration) {
     Serial.print("Loaded calibration from EEPROM: min=");
     Serial.print(input_calib_min);
     Serial.print(", max=");
     Serial.println(input_calib_max);
-#endif
   } else {
-#if SERIAL_ENABLED
     Serial.println("No valid calibration found, using defaults");
-#endif
   }
+#else
+  (void)have_calibration;
+#endif
 
   // Initialize all layers with default configuration (Protocol v5+)
   for (uint8_t i = 0; i < 8; i++) {
@@ -1301,17 +1790,18 @@ void setup() {
 
   setup_i2c();
 
-  pinMode(PIN_LED, OUTPUT);
-  pinMode(PIN_FADER, INPUT);
-  pinMode(PIN_MOTOR_nSLEEP, OUTPUT);
-  pinMode(PIN_MOTOR_A, OUTPUT);
-  pinMode(PIN_MOTOR_B, OUTPUT);
+  // Direct port setup, for the same reason as the address pins above.
+  // PB2 LED, PB3 nSLEEP out; PA4/PA5 motor out; PA6 fader in.
+  VPORTB.DIR |= LED_bm | MOTOR_nSLEEP_bm;
+  VPORTA.DIR |= MOTOR_A_bm | MOTOR_B_bm;
+  VPORTA.DIR &= ~(1 << 6);
 
   // Set up TCA0 for high-frequency PWM
   setup_tca0();
   
-  digitalWrite(PIN_MOTOR_nSLEEP, HIGH);
-  digitalWrite(PIN_LED, HIGH);
+  // Direct to the port, as in loop(): these two calls are the only reason
+  // digitalWrite() would be linked in at all, and it costs 160 bytes.
+  VPORTB.OUT |= MOTOR_nSLEEP_bm | LED_bm;
 
   // Init ADC1 for free-running motor fader input.
   // Using ADC1 with raw setup rather than megaTinyCore's analogRead helpers since
@@ -1437,10 +1927,14 @@ void process_i2c_requests() {
 #if DEBUG_DRIVE
   if (has_debug_gain) {
     switch (debug_gain_index) {
-      case DEBUG_GAIN_KP:         move_kp = debug_gain_value / 1000.0f; break;
-      case DEBUG_GAIN_KD:         move_kd = debug_gain_value / 1000.0f; break;
-      case DEBUG_GAIN_FF_RISING:  move_ff_rising = debug_gain_value; break;
-      case DEBUG_GAIN_FF_FALLING: move_ff_falling = debug_gain_value; break;
+      case DEBUG_GAIN_VREF_SLOPE: move_vref_slope = debug_gain_value / 1000.0f; break;
+      case DEBUG_GAIN_KV:         move_kv = debug_gain_value / 1000.0f; break;
+      case DEBUG_GAIN_BD_RISING:  move_bd[MOTORCAL_RISING] = debug_gain_value; break;
+      case DEBUG_GAIN_BD_FALLING: move_bd[MOTORCAL_FALLING] = debug_gain_value; break;
+      case DEBUG_GAIN_K:
+        move_inv_k[0] = move_inv_k[1] = 1.0f / (float)(debug_gain_value ? debug_gain_value : 1);
+        break;
+      case DEBUG_GAIN_VEL_MIN:    move_vel_min = debug_gain_value; break;
       case DEBUG_GAIN_DEADBAND:   move_deadband = debug_gain_value / 1000.0f; break;
       case DEBUG_GAIN_RAMP_RATE:  move_ramp_rate = debug_gain_value; break;
       case DEBUG_GAIN_TAKEUP:     move_takeup_duty = debug_gain_value; break;
@@ -1535,9 +2029,13 @@ void loop() {
 
   ptc_process(millis());
 
-  // digitalWrite(PIN_LED, (state & STATE_TOUCH_bm) >> STATE_TOUCH_bp);
-  digitalWrite(PIN_LED, (motor_drive_value != 0) || (millis() % 512 < 128));
-  // digitalWrite(PIN_LED, millis()%512 < 128 || touch);
+  // Straight to the port: digitalWrite() is ~180 bytes of pin lookup for a
+  // heartbeat LED on a part with no flash to spare.
+  if ((motor_drive_value != 0) || (millis() % 512 < 128)) {
+    VPORTB.OUT |= LED_bm;
+  } else {
+    VPORTB.OUT &= ~LED_bm;
+  }
 
 }
 
@@ -1558,14 +2056,9 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
       tap_position_start = ADC1.RES;  // Store raw ADC value (no EWMA latency)
       tap_state = TAP_FIRST_PRESSED;
     } else if (tap_state == TAP_WAITING_FOR_DOUBLE) {
-      // Use raw ADC for immediate movement detection (no EWMA latency)
-      uint16_t current_adc = ADC1.RES;
-      uint16_t position_change = (current_adc > tap_position_start) ?
-                                  (current_adc - tap_position_start) :
-                                  (tap_position_start - current_adc);
-
       uint32_t now = millis();
-      if (now - tap_timestamp <= DOUBLE_TAP_MAX_INTERVAL && position_change <= TAP_MAX_MOVEMENT) {
+      if (now - tap_timestamp <= DOUBLE_TAP_MAX_INTERVAL &&
+          tap_position_delta() <= TAP_MAX_MOVEMENT) {
         tap_timestamp = now;
         tap_state = TAP_SECOND_PRESSED;
       } else {
@@ -1586,14 +2079,8 @@ void ptc_event_callback(const ptc_cb_event_t eventType, cap_sensor_t* node) {
       uint32_t now = millis();
       uint32_t tap_duration = now - tap_timestamp;
 
-      // Use raw ADC for immediate movement detection (no EWMA latency)
-      uint16_t current_adc = ADC1.RES;
-      uint16_t position_change = (current_adc > tap_position_start) ?
-                                  (current_adc - tap_position_start) :
-                                  (tap_position_start - current_adc);
-
       // Validate tap duration and movement
-      if (tap_duration <= TAP_MAX_DURATION && position_change <= TAP_MAX_MOVEMENT) {
+      if (tap_duration <= TAP_MAX_DURATION && tap_position_delta() <= TAP_MAX_MOVEMENT) {
         // Valid tap!
         if (tap_state == TAP_FIRST_PRESSED) {
           // First tap complete, wait for possible double-tap
