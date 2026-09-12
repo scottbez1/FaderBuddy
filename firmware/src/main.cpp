@@ -76,228 +76,97 @@ enum TapState : uint8_t {
   TAP_SECOND_PRESSED,          // Second tap touch detected
 };
 
-// Fixed-rate control tick. The control law needs a known, constant period so
-// the derivative term and the filter time constants mean the same thing
-// regardless of how long touch processing takes on a given loop iteration.
+// Fixed-rate control tick, so gains and filter time constants keep the same
+// meaning regardless of how long touch processing takes on a given loop().
 #define CONTROL_TICK_US (500)           // 2 kHz (leaves loop headroom for touch)
 #define VELOCITY_TAU_S (0.004f)         // velocity estimate smoothing, seconds
 
-// Remote-movement control gains, in ADC counts (see MODEL notes below).
-// The plant is close to a velocity source with a friction deadband: above a
-// breakaway duty, speed is roughly proportional to duty; below it nothing
-// moves at all. Coast-down is first order with tau ~5 ms, so stopping distance
-// is ~v * 6 ms - which is why arriving at full speed overshoots by ~40 ADC
-// counts no matter how hard the bridge brakes afterwards.
-// The law is a cascade: the position loop sets a velocity reference, and the
-// velocity loop realises it. The old flat form (u = KP*e - KD*v + FF) was
-// already this - it factors exactly as FF + KD*((KP/KD)*e - v) - but written
-// flat it hid two things worth seeing:
-//
-//  - the inner loop's open-loop gain is k*KV, where k is the plant's ADC/s per
-//    duty. That, not KV alone, is what sets damping, so a higher-torque motor
-//    is a more aggressive loop. Through the lag of the velocity estimate it
-//    goes underdamped and the fader oscillates on velocity - overshoot, brake,
-//    re-accelerate. KV is therefore scaled by 1/k on a characterised unit.
-//  - the speed limit belongs on the reference, not bolted on as a governor
-//    that subtracts drive once the fader is already too fast.
-//
-// MOVE_VREF_SLOPE is the old KP/KD ratio and keeps its meaning: drive is cut
-// when the carriage is faster than slope*error, so the controller coasts the
-// last stretch. At 50/s against a measured 1/tau of ~200/s it cuts about four
-// stopping distances short, which also leaves roughly 2-2.5x margin on
-// effective moving mass (a heavier knob cap) before ringing returns.
+// Remote-movement control gains, in ADC counts. Cascade control: the position
+// loop turns error into a velocity reference (MOVE_VREF_SLOPE), the velocity
+// loop (MOVE_KV) realises it, and MOVE_BD_*/MOVE_K_DEFAULT feed forward the
+// plant's friction. See "The control law" in ABOUT_MOTOR_CONTROL.md for the
+// derivation and how these were tuned for hardware variance.
 #define MOVE_VREF_SLOPE (50.0f)         // ADC counts/sec of reference per ADC count of error
-#define MOVE_KV (0.04f)                 // duty per (ADC count/sec) of velocity error
-// Friction feedforward. The plant needs `breakaway` duty before it moves at
-// all, then gains `k` ADC counts/sec of speed per further duty count, so the
-// drive that produces a wanted speed is exactly
-//
-//     u_ff = breakaway + v_ref / k
-//
-// Expressing it this way rather than as one fixed number is what lets the
-// speed limit be honoured: a fixed feedforward commands whatever speed it
-// commands (~1100 ADC/s on the reference unit) and nothing below that is
-// reachable without subtracting drive back off again - which is what the old
-// one-sided governor did, and why it limit-cycled.
-//
-// The defaults below are the reference unit's plant, implied by the previous
-// fixed feedforward: FF 106/124 at k 29 is breakaway 68/86 plus 38 duty, and
-// 38 duty at k 29 is 1100 ADC/s. A characterised unit measures all of this.
+#define MOVE_KV (0.04f)                 // duty per (ADC count/sec) of velocity error; default only, scaled by 1/k when characterised
+// Friction feedforward: u_ff = breakaway + v_ref/k. Defaults are the
+// reference unit's measured plant; a characterised unit overrides them.
 #define MOVE_BD_RISING (68)             // assumed breakaway duty, rising ADC
 #define MOVE_BD_FALLING (86)            // assumed breakaway duty, falling ADC
 #define MOVE_K_DEFAULT (29)             // assumed ADC counts/sec per duty count
 #define MOVE_VJUMP_DEFAULT (448)        // assumed Stribeck jump; 1.25x it is MOVE_VEL_MIN
-// On-target window. This has a hard floor set by the plant, not by taste:
-// nothing moves below breakaway duty, and at breakaway speed jumps straight to
-// ~900 raw/s, so the smallest correction the fader can make is roughly that
-// speed times the reaction+stopping time - about 10-16 raw, i.e. 5-8 ADC
-// counts. A deadband below that floor cannot be satisfied on a fader whose
-// breakaway differs from the feedforward constants: the controller steps past
-// the window in both directions forever and eventually trips the movement
-// timeout. Keep this at or above the floor; it is ~1.5 LSB of the 8-bit
-// position the host sees, so tightening it buys nothing a host can observe.
+// On-target window. Has a hard floor set by the plant, not by taste - see
+// ABOUT_MOTOR_CONTROL.md. Don't lower it below the floor.
 #define MOVE_DEADBAND (8.0f)            // ADC counts considered "on target"
 #define MOVE_MAX_DUTY (254)
 
-// Optional speed limiting. Cruise velocity is already proportional to error
-// (the plant is a velocity source, so v ~ kv*KP*e / (1 + kv*KD)), which is why
-// big moves are fast and small ones are slow. Capping the error fed to the P
-// term therefore caps cruise speed, with no extra state and no motion profile.
-// Near the target the error is below the cap, so the clamp is inactive and the
-// tuned decel/coast/settle behaviour is untouched.
-//
-// This is a limit, not a precise speed: the constant below is the measured
-// closed-loop velocity per unit of error on the reference fader, and it varies
-// by ~20% between directions (friction is direction-dependent) plus unit to
-// unit. Callers wanting an exact velocity need a governor closing the loop on
-// measured velocity instead.
-// Implemented as a one-sided governor on measured velocity rather than by
-// clamping the error: the feedforward sits well above breakaway (deliberately,
-// for hardware tolerance), so it alone commands ~2200 raw counts/sec. Clamping
-// the error can only slow the fader to that floor, whereas subtracting from the
-// drive pulls it below the feedforward and reaches the real limit - the
-// Stribeck floor of ~900 raw counts/sec, below which the mechanism stick-slips
-// rather than moving smoothly.
-// Two cooperating parts are needed, and neither works alone:
-//  - the error clamp stops the P term saturating. For a large move KP*error is
-//    ~1300 duty, so the governor below cannot pull it under the 254 ceiling.
-//  - the governor pulls drive below the feedforward. The feedforward alone
-//    commands ~2200 raw counts/sec, so clamping the error can only slow the
-//    fader to that floor, never under it.
-// Slowest speed the mechanism sustains smoothly, and therefore the floor the
-// velocity reference is held at even right next to the target. Below roughly
-// this the motor cannot maintain continuous rotation (Stribeck friction) and
-// creeps in stick-slip steps instead. It doubles as the guarantee that the
-// feedforward stays clear of breakaway: the drive never falls below
-// breakaway + MOVE_VEL_MIN/k, so small errors still command real motion.
+// MOVE_VEL_MIN floors the velocity reference: below it the mechanism
+// stick-slips instead of moving smoothly (the Stribeck floor), and it's what
+// keeps the feedforward clear of breakaway when the error is small.
 #define MOVE_VEL_MIN (560)            // ADC counts/sec
-#define MOVE_VEL_UNLIMITED (0.0f)
+#define MOVE_VEL_UNLIMITED (0.0f)     // move_max_velocity: no speed limit requested
 
 // Endpoints of the host-facing unitless speed scale (LAYER_SPEED_SLOWEST ..
-// LAYER_SPEED_FULL - 1), expressed as the time a full-travel move takes. They
-// are the ends of the range the limiter was actually measured over: below
-// MOVE_SPEED_SLOWEST_MS tracking falls apart as the governor runs into the
-// Stribeck floor, and above MOVE_SPEED_FASTEST_MS the limit sits at or beyond
-// what the unlimited controller already does, so it stops having any effect.
-// Mapping the whole byte onto this window means every value a host can send
-// does something, rather than most of the range being unusable.
+// LAYER_SPEED_FULL - 1), as the full-travel time at each end - the validated
+// range of the speed limiter. See "Optional speed limiting" in
+// ABOUT_MOTOR_CONTROL.md.
 #define MOVE_SPEED_SLOWEST_MS (700)
 #define MOVE_SPEED_FASTEST_MS (250)
 
-// On movement timeout, an error this small means the fader is essentially in
-// position and merely hunting - give up quietly rather than latching
-// MODE_ERROR, which needs a host round-trip to clear. Anything larger is a
-// genuine fault and still errors.
+// On movement timeout, an error below this means the fader arrived but is
+// still dithering - go idle instead of latching MODE_ERROR.
 #define MOVE_TIMEOUT_TOLERANCE (20.0f)  // ADC counts
 
-// Stiction ramp. The feedforward alone leaves a dead region: for small errors
-// FF + KP*error can sit below this unit's actual breakaway duty, so the
-// controller commands motion it cannot produce and the move never completes
-// (previously this timed out into MODE_ERROR). Rather than raise the
-// feedforward - which overshoots on a looser fader, since anything above
-// breakaway jumps straight to ~900 raw counts/sec - ramp in extra drive only
-// while we are asking for motion and not getting it, and drop it the moment
-// the carriage breaks free. This finds whatever breakaway a given fader has
-// instead of relying on a per-unit constant.
+// Stiction ramp: extra drive added while commanded to move but stalled, so a
+// unit whose breakaway sits above the feedforward can still complete a move.
 #define MOVE_STALL_VELOCITY (60.0f)     // ADC counts/sec below which we're stalled
 #define MOVE_RAMP_RATE (250.0f)         // duty per second of ramp-in
 #define MOVE_RAMP_MAX (70.0f)           // ceiling, so a jam can't wind up to full drive
 #define MOVE_RAMP_DECAY_RATE (3500.0f)  // duty/sec shed once moving (~20 ms from full)
 
-// Backlash take-up. There is a little slack in the belt, so a move that
-// reverses direction starts with the motor unloaded. Commanding full duty into
-// that slack lets the rotor spin up freely and then snap taut, which is both an
-// audible click and a jerk at the carriage. While we are still stalled the
-// drive is therefore capped just above breakaway: enough to cross the slack
-// promptly, but slow enough that engagement is gentle. Full authority returns
-// as soon as the carriage is actually moving, so this costs only a few ms.
-// Backlash take-up. A direction-reversed move starts with the motor unloaded,
-// so commanding full duty lets the rotor spin up through the slack and snap it
-// taut - an audible click and a jerk at the carriage. The drive ceiling
-// therefore starts low at the beginning of every move and opens up over time.
-//
-// This is deliberately time-based rather than gated on "are we moving yet":
-// while crossing the slack the rotor IS moving (it just isn't loaded), so a
-// velocity-gated ceiling lifts partway through the slack and full duty still
-// lands on engagement. Time is the only signal available that does not depend
-// on whether the belt has taken up yet.
-// MUST stay above MOVE_FF_RISING/FALLING. The ceiling exists to stop the drive
-// stepping to full duty, not to suppress the feedforward: set below FF it
-// starves the very term that gets the carriage moving, so the fader stalls,
-// waits for the stiction ramp, and breaks free abruptly - which both hunts and
-// makes the click worse rather than better.
+// Backlash take-up: a direction-reversed move starts with the motor
+// unloaded, so full duty would spin the rotor through the belt slack and
+// snap it taut - an audible click and a jerk. The drive ceiling instead
+// starts low at the beginning of every move and opens up over time (this has
+// to be time-based, not "are we moving yet", since crossing the slack the
+// rotor is already moving but unloaded). Must stay above the feedforward
+// (MOVE_BD_RISING/FALLING plus headroom) or it starves the term that gets
+// the carriage moving.
 #define MOVE_TAKEUP_DUTY (130)           // duty ceiling at the start of a move
 #define MOVE_TAKEUP_RAMP_RATE (1200.0f)  // duty per second the ceiling opens up
 
 // ---------------------------------------------------------------------------
 // Per-unit motor characterisation
 // ---------------------------------------------------------------------------
-// Self-calibration measures three things about this specific motor, in each
-// direction, and the gains above are re-derived from them:
+// Self-calibration measures three things about this motor, per direction, and
+// the gains above are re-derived from them (apply_motor_calibration):
 //
 //   breakaway  the duty at which the carriage first moves at all
 //   k          ADC counts/sec of cruise gained per duty count above breakaway
 //   v_jump     the speed motion starts at the instant breakaway is crossed
 //
-// Why this is worth doing rather than picking better constants: the smallest
-// correction the controller can command near the target is roughly
-//
-//   v_min = k * (KP*deadband + FF - breakaway) / (1 + k*KD)
-//
-// and it can only settle if v_min * (stopping time) fits inside the deadband.
-// FF is a fixed duty, so on a unit whose breakaway is well BELOW the value FF
-// was centred on, (FF - breakaway) is large, v_min is high, and the carriage
-// physically cannot land inside the window - it steps past in both directions
-// until the movement timeout. That is the low-stiction failure, and it is the
-// mirror image of the high-stiction one the stiction ramp already handles.
-// Measuring breakaway makes (FF - breakaway) a designed quantity rather than
-// an accident of which fader is fitted.
-//
-// k is what turns a wanted speed into a duty, so it appears twice in the
-// control law: in the feedforward (breakaway + v_ref/k) and in the velocity
-// loop gain, which is scaled by 1/k so the loop's open-loop gain k*KV - the
-// thing that actually sets damping - is the same on every unit.
+// See "Per-unit motor characterisation" in ABOUT_MOTOR_CONTROL.md for why a
+// fixed set of gains can't serve every unit and how these are derived.
 
 // Target open-loop gain for the velocity loop, k*KV, held constant across
-// units by scaling KV with 1/k. 1.16 is what the reference unit ran at
-// (k 29, KV 0.04) and settles cleanly; higher rings through the lag of the
-// velocity estimate, lower is sluggish and lets the feedforward's own error
-// show up as steady-state speed droop.
+// units by scaling KV with 1/k. 1.16 is what the reference unit ran at.
 #define MOTORCAL_KV_LOOP_GAIN (1.16f)
 
-// Floor and ceiling on the derived reference floor (1.25x the Stribeck jump).
+// Bounds on the derived velocity floor (1.25x the Stribeck jump).
 #define MOTORCAL_VEL_MIN_LO (200)
 #define MOTORCAL_VEL_MIN_HI (1500)
 
-// How long it takes to actually stop, measured from the carriage reaching the
-// window rather than from drive being cut. This is NOT the coast time alone:
-// the position filter and the control tick both have to notice first, and the
-// carriage keeps travelling throughout. Coast-down is first order with tau
-// ~5 ms (so ~6 ms of travel), but the reference unit's measured minimum
-// correction of 5-8 ADC counts at 450-560 ADC/s implies 9-18 ms end to end.
-//
-// Getting this wrong is the expensive direction: too small a deadband cannot
-// be satisfied at all, so the fader steps past the window in both directions
-// indefinitely and dithers until the movement timeout. Too large just means a
-// slightly less accurate final position, which is worth well under an LSB of
-// what the host can see. Size it for the pessimistic end.
-#define MOTORCAL_STOP_TIME_MS (15)       // reaction + detection + coast, ms
+// Time from the carriage reaching the deadband to actually stopping -
+// reaction + detection + coast, not coast alone (see ABOUT_MOTOR_CONTROL.md).
+#define MOTORCAL_STOP_TIME_MS (15)       // ms
 #define MOTORCAL_TAKEUP_MARGIN (20)      // take-up ceiling sits this far above FF
-// Bounds on the derived on-target window. The floor is the reference unit's
-// validated value; the ceiling is a backstop against an implausible v_jump
-// measurement, not a judgement that a wider window would be wrong.
+// Bounds on the derived on-target window.
 #define MOTORCAL_DEADBAND_LO (8)         // ADC counts
 #define MOTORCAL_DEADBAND_HI (20)
 
-// Measurement procedure. Each run parks at one end, ramps duty until motion
-// starts, then dwells at two fixed duties above breakaway to get a two-point
-// fit for k. Runs alternate direction, so each one starts where the previous
-// one left off and only the first needs a long park.
+// Measurement procedure: park, ramp to breakaway, then dwell at two duties
+// above breakaway for a two-point fit of k. Runs alternate direction, so each
+// one starts where the previous one left off.
 #define MOTORCAL_PASSES (2)              // runs per direction, averaged
-// Ramp rate trades calibration time against breakaway resolution. Detection
-// latency is set by the velocity filter (~5 ms), not by the ramp, so 80 duty/s
-// still resolves breakaway to well under a duty count while keeping a full
-// calibration under ~10 s.
 #define MOTORCAL_RAMP_RATE (80.0f)       // duty/sec
 #define MOTORCAL_RAMP_MAX (200.0f)       // give up: this unit has no usable breakaway
 #define MOTORCAL_MOTION_VEL (200.0f)     // ADC counts/sec that counts as "moving"
@@ -312,8 +181,8 @@ enum TapState : uint8_t {
 #define MOTORCAL_PARK_TIMEOUT (2500)     // ms
 #define MOTORCAL_EDGE_MARGIN (25)        // abort if a run gets this close to an end
 
-// Plausibility bounds. Anything outside these means the measurement, not the
-// fader, is wrong - fall back to the compiled defaults rather than trusting it.
+// Plausibility bounds - outside these, the measurement (not the fader) is
+// wrong, so fall back to the compiled defaults.
 #define MOTORCAL_BD_MIN (10)
 #define MOTORCAL_BD_MAX (180)
 #define MOTORCAL_K_MIN (8)
@@ -321,19 +190,13 @@ enum TapState : uint8_t {
 #define MOTORCAL_VJUMP_MIN (100)
 #define MOTORCAL_VJUMP_MAX (4000)
 
-// The MOVE_* constants above are the DEFAULTS, used by a unit that has never
-// been motor-calibrated. They are not the gains the controller runs: every one
-// of them is really a statement about this unit's friction and torque written
-// in absolute duty, so self-calibration measures those two things directly and
-// derives the live values below (see apply_motor_calibration). A fader whose
-// breakaway or torque differs materially from the reference unit the constants
-// were centred on cannot be served by any single set of numbers - see
-// "Tuning for hardware variance" in ABOUT_MOTOR_CONTROL.md.
+// The MOVE_* constants above are defaults for a unit that has never been
+// motor-calibrated; apply_motor_calibration() derives the live values below
+// from a real measurement when one exists.
 //
 // DEBUG_DRIVE builds additionally let a host overwrite these at runtime via
 // REG_DEBUG_GAINS, so a gain sweep doesn't need a reflash per trial.
-// Plant model and gains in use, indexed [MOTORCAL_FALLING]/[MOTORCAL_RISING]
-// where per-direction. Defaults until a unit is characterised.
+// Indexed [MOTORCAL_FALLING]/[MOTORCAL_RISING] where per-direction.
 float move_bd[2];                                          // breakaway duty
 float move_inv_k[2];                                       // duty per (ADC/s)
 float move_kv = MOVE_KV;                                   // velocity loop gain
@@ -381,12 +244,9 @@ const uint8_t I2C_BASE_ADDRESS = 0x20;
 #define EEPROM_CALIBRATION_ADDR 0
 #define EEPROM_CALIBRATION_MAGIC 0xCAF1  // Magic number to validate EEPROM data
 
-// Motor characterisation, as measured and as reported at REG_MOTOR_CAL.
-// Held separately from the derived gains so the raw measurement stays
-// inspectable - if a fader misbehaves, these are the numbers worth seeing.
-// Indexed by direction of travel throughout - [MOTORCAL_FALLING] and
-// [MOTORCAL_RISING] - so the measurement, the derivation and the accumulators
-// all address it the same way instead of each carrying its own pair of cases.
+// Motor characterisation, as measured and reported at REG_MOTOR_CAL. Held
+// separately from the derived gains so the raw measurement stays inspectable.
+// Indexed by direction of travel throughout: [MOTORCAL_FALLING]/[MOTORCAL_RISING].
 #define MOTORCAL_FALLING (0)
 #define MOTORCAL_RISING (1)
 
@@ -845,21 +705,12 @@ void onI2cReceive(int howMany) {
 
 // Re-derive the live control gains from this unit's measured motor
 // characteristics, or restore the compiled-in defaults when no valid
-// measurement exists. Safe to call at any time; it only touches gains.
-//
-// Everything here is a restatement of the MOVE_* defaults in terms of the
-// plant rather than in absolute duty:
-//   FF       = breakaway + (a fixed SPEED of headroom), not a fixed duty
-//   KP, KD   = scaled by k_ref/k, holding the real loop gains KP*k and KD*k
-//              constant, and with them the KP/KD ratio the coast-in relies on
-//   deadband = at least the distance covered by this unit's Stribeck jump
-//   take-up  = above FF, which is an invariant of the take-up ceiling
-// At the reference unit's measurements this reproduces the shipped values.
+// measurement exists. Safe to call at any time; it only touches gains. See
+// "What is derived" in ABOUT_MOTOR_CONTROL.md for the formulas.
 void apply_motor_calibration() {
   // The compiled-in defaults are themselves a plant model - the reference
-  // unit's - so there is one derivation, not one per case. That is not just
-  // tidiness: it guarantees an uncharacterised fader runs exactly the gains
-  // the constants were tuned to, because they are computed the same way.
+  // unit's - so there is one derivation, not one per case: an uncharacterised
+  // fader runs exactly the gains the constants were tuned to.
   uint8_t bd[2], k[2];
   uint16_t vjump;
   if (motor_cal.valid) {
@@ -1308,26 +1159,10 @@ void motor_update() {
         }
         float error = target_adc - input_ewma;
         if (error > move_deadband || error < -move_deadband) {
-          // Cascade control. The position loop asks for a velocity, the
-          // velocity loop delivers it:
-          //
-          //   v_ref = clamp(slope * error, floor .. speed limit)
-          //   u     = breakaway + v_ref/k          (feedforward)
-          //         + KV * (v_ref - v)             (feedback)
-          //
-          // The feedforward is the plant model inverted, so at steady state the
-          // feedback term is zero and the fader simply travels at v_ref. That
-          // is what makes the speed limit a limit rather than a fight: the old
-          // law carried a fixed feedforward that commanded ~1100 ADC/s no
-          // matter what was asked for, and needed a one-sided governor to
-          // subtract drive back off once the fader was already too fast. A
-          // one-sided correction with the operating point sitting exactly on
-          // its discontinuity is a limit-cycle generator, and it behaved like
-          // one: overshoot the limit, brake, fall under, accelerate again.
-          //
-          // Clamping the reference instead keeps one well-damped loop in charge
-          // at every speed, and the same clamp replaces the separate P-term
-          // error clamp the governor needed to stop KP saturating.
+          // Cascade control: the position loop turns error into a velocity
+          // reference, the velocity loop delivers it via feedforward (plant
+          // inverted) plus feedback. See "The control law" in
+          // ABOUT_MOTOR_CONTROL.md for the derivation.
           float v_ref = move_vref_slope * error;
           float mag = v_ref < 0 ? -v_ref : v_ref;
           if (move_max_velocity > MOVE_VEL_UNLIMITED && mag > move_max_velocity) {
