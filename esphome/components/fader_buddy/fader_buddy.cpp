@@ -15,6 +15,8 @@
 
 #include "fader_buddy.h"
 
+#include <cstdio>
+
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
@@ -42,16 +44,41 @@ void FaderBuddy::setup() {
     return;
   }
 
-  if (buffer != I2C_PROTOCOL_VERSION) {
-    ESP_LOGE(TAG, "Init: Incompatible I2C protocol version. Expected %d but got %d", I2C_PROTOCOL_VERSION, buffer);
+  // Older protocols really are incompatible - the register layout differs - but
+  // a NEWER one is not, because bumps are only made for changes a host can
+  // ignore. Failing on those would brick this host on a fader that merely got
+  // updated, so warn and carry on instead.
+  if (buffer < I2C_PROTOCOL_VERSION) {
+    ESP_LOGE(TAG, "Init: Incompatible I2C protocol version. Expected at least %d but got %d",
+             I2C_PROTOCOL_VERSION, buffer);
     this->mark_failed();
     return;
   }
+  if (buffer > I2C_PROTOCOL_VERSION) {
+    ESP_LOGW(TAG, "Fader reports protocol v%d, newer than the v%d this component was built against. "
+                  "Continuing, but consider updating the component.", buffer, I2C_PROTOCOL_VERSION);
+  }
 
-  ESP_LOGCONFIG(TAG, "FaderBuddy initialized (protocol v%d)", buffer);
+  ESP_LOGCONFIG(TAG, "FaderBuddy initialized (component %s, protocol v%d)",
+                FADER_BUDDY_COMPONENT_VERSION, buffer);
 
   // Read the chip serial number once (static factory ID) and publish it.
   read_serial_number_();
+  read_firmware_version_();
+  read_motor_calibration_();
+
+  // Flag a config that asks for something this fader's firmware cannot do, at
+  // startup rather than waiting for the first move to warn.
+  if (!speed_supported_) {
+    for (uint8_t i = 0; i < 8; i++) {
+      if (layer_states_[i].default_speed != LAYER_SPEED_FULL) {
+        ESP_LOGW(TAG, "Layer %d sets default_speed, but this fader's firmware does not support move "
+                      "speed. Moves will run at full speed. Update the fader firmware to %d.%d or newer.",
+                 i, FW_VERSION_MOVE_SPEED >> 8, FW_VERSION_MOVE_SPEED & 0xFF);
+        break;
+      }
+    }
+  }
 
   // Send initial haptic configurations to firmware
   for (uint8_t i = 0; i < 8; i++) {
@@ -77,10 +104,19 @@ void FaderBuddy::dump_config() {
     ESP_LOGE(TAG, "Communication failed");
   }
 
+  ESP_LOGCONFIG(TAG, "  Component Version: %s", FADER_BUDDY_COMPONENT_VERSION);
+  if (this->firmware_version_ == FW_VERSION_NONE) {
+    ESP_LOGCONFIG(TAG, "  Firmware Version: 1.0 or older (does not report a version)");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Firmware Version: %d.%d", this->firmware_version_ >> 8,
+                  this->firmware_version_ & 0xFF);
+  }
+
   if (!this->serial_number_.empty()) {
     ESP_LOGCONFIG(TAG, "  Serial Number: %s", this->serial_number_.c_str());
   }
   LOG_TEXT_SENSOR("  ", "Serial Number", this->serial_text_sensor_);
+  LOG_TEXT_SENSOR("  ", "Firmware Version", this->firmware_text_sensor_);
 
   LOG_UPDATE_INTERVAL(this);
 }
@@ -106,6 +142,77 @@ void FaderBuddy::read_serial_number_() {
   if (this->serial_text_sensor_ != nullptr) {
     this->serial_text_sensor_->publish_state(this->serial_number_);
   }
+}
+
+// Read the reported firmware version and derive what this fader can do.
+// Firmware predating the register leaves the bus undriven, so the read
+// succeeds and returns 0xFFFF rather than failing - hence checking the value,
+// not just the error code.
+void FaderBuddy::read_firmware_version_() {
+  uint8_t reg = REG_FW_VERSION;
+  uint8_t buffer[2] = {0xFF, 0xFF};
+  auto read_result = this->write_read(&reg, 1, buffer, sizeof(buffer));
+  if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
+    ESP_LOGW(TAG, "Failed to read firmware version: %d; assuming pre-1.1 firmware", read_result);
+    this->firmware_version_ = FW_VERSION_NONE;
+  } else {
+    this->firmware_version_ = ((uint16_t) buffer[0] << 8) | buffer[1];
+  }
+
+  char version[16];
+  if (this->firmware_version_ == FW_VERSION_NONE || this->firmware_version_ == 0) {
+    this->firmware_version_ = FW_VERSION_NONE;
+    // Pre-1.1 firmware has no version register, so this is the most specific
+    // thing that can be said about it.
+    snprintf(version, sizeof(version), "1.0 or older");
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s (no version register)", version);
+  } else {
+    snprintf(version, sizeof(version), "%d.%d", this->firmware_version_ >> 8,
+             this->firmware_version_ & 0xFF);
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s", version);
+  }
+
+  if (this->firmware_text_sensor_ != nullptr) {
+    this->firmware_text_sensor_->publish_state(version);
+  }
+
+  this->speed_supported_ = this->firmware_version_ != FW_VERSION_NONE &&
+                           this->firmware_version_ >= FW_VERSION_MOVE_SPEED;
+}
+
+// Log what self-calibration measured about this fader's motor, and the
+// feedforward it derived. Diagnostic only - the fader needs nothing from the
+// host here - but these are the numbers to look at when a fader hunts or
+// settles slowly, and on a bench with no test jig attached this log is the
+// only way to see them.
+void FaderBuddy::read_motor_calibration_() {
+  if (this->firmware_version_ == FW_VERSION_NONE ||
+      this->firmware_version_ < FW_VERSION_MOTOR_CAL) {
+    return;  // Older firmware has no such register; nothing to report
+  }
+
+  uint8_t reg = REG_MOTOR_CAL;
+  uint8_t b[12] = {0};
+  if (this->write_read(&reg, 1, b, sizeof(b)) != esphome::i2c::ErrorCode::NO_ERROR) {
+    ESP_LOGW(TAG, "Failed to read motor calibration");
+    return;
+  }
+
+  uint16_t vel_min = ((uint16_t) b[9] << 8) | b[10];
+
+  if (b[0] == 0) {
+    ESP_LOGCONFIG(TAG, "Motor: not characterised, using the default plant model "
+                       "(vel_min %u ADC/s, deadband %d). Run self-calibration to measure this unit.",
+                  vel_min, b[11]);
+    return;
+  }
+
+  ESP_LOGCONFIG(TAG, "Motor: breakaway %d/%d duty, k %d/%d ADC/s per duty, "
+                     "jump %u/%u ADC/s (rising/falling)",
+                b[1], b[2], b[3], b[4],
+                ((uint16_t) b[5] << 8) | b[6], ((uint16_t) b[7] << 8) | b[8]);
+  ESP_LOGCONFIG(TAG, "Motor: vel_min %u ADC/s, deadband %d ADC counts",
+                vel_min, b[11]);
 }
 
 float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }
@@ -153,6 +260,33 @@ bool FaderBuddy::read_sensor_data_() {
   uint16_t raw_adc = (state & STATE_RAW_ADC_bm) >> STATE_RAW_ADC_bp;
   uint8_t double_tap_nonce = (state & STATE_DOUBLE_TAP_NONCE_bm) >> STATE_DOUBLE_TAP_NONCE_bp;
   uint8_t active_layer = (state & STATE_ACTIVE_LAYER_bm) >> STATE_ACTIVE_LAYER_bp;
+
+  // The fader's mode changes on its own - self-calibration finishing, a move
+  // timing out into MODE_ERROR - and nothing else here reports that.
+  if (mode != this->last_mode_) {
+    Mode previous = this->last_mode_;
+    this->last_mode_ = mode;
+
+    if (mode == MODE_SELF_CALIBRATION) {
+      ESP_LOGI(TAG, "Self-calibration started");
+    } else if (previous == MODE_SELF_CALIBRATION) {
+      if (mode == MODE_ERROR) {
+        ESP_LOGE(TAG, "Self-calibration failed: the endpoint sweep found no usable travel. "
+                      "Check the motor and potentiometer wiring. The fader ignores position "
+                      "commands until the error is cleared.");
+      } else {
+        // Re-read what it measured. The startup log ran before this, so these
+        // are the only numbers that reflect the run that just finished.
+        ESP_LOGI(TAG, "Self-calibration complete");
+        this->read_motor_calibration_();
+      }
+    } else if (mode == MODE_ERROR) {
+      ESP_LOGW(TAG, "Fader latched MODE_ERROR (a move did not reach its target). "
+                    "Position commands are ignored until the error is cleared.");
+    } else {
+      ESP_LOGD(TAG, "Mode %d -> %d", previous, mode);
+    }
+  }
 
   if (state != last_state_) {
     last_state_ = state;
@@ -239,7 +373,17 @@ uint8_t FaderBuddy::get_active_layer() const {
 // Move fader to a specific position (Protocol v5: use REG_LAYER_TARGET)
 // position: USER-FACING position (0-255)
 // layer: which layer to move (0-7)
+// Uses the layer's configured default speed.
 void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer) {
+  if (layer > 7) {
+    ESP_LOGE(TAG, "Invalid layer index: %d", layer);
+    return;
+  }
+  this->remote_move_to(position, layer, layer_states_[layer].default_speed);
+}
+
+// speed: unitless 0-255 (LAYER_SPEED_FULL = full speed, 0 = slowest smooth motion)
+void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer, uint8_t speed) {
   if (layer > 7) {
     ESP_LOGE(TAG, "Invalid layer index: %d", layer);
     return;
@@ -248,10 +392,29 @@ void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer) {
   // Convert USER-FACING position to HARDWARE position
   uint8_t hw_position = invert_ ? (255 - position) : position;
 
-  // Write to firmware using layer-addressed protocol
-  uint8_t buffer[] = {REG_LAYER_TARGET, layer, hw_position};
-  if (write_with_retry_(buffer, 3)) {
-    ESP_LOGD(TAG, "Set layer %d target to %d (user position)", layer, position);
+  // Firmware without the speed byte drops a 4-byte write entirely, so fall
+  // back to a full-speed move rather than letting the fader not move at all.
+  if (speed != LAYER_SPEED_FULL && !speed_supported_) {
+    if (!warned_speed_unsupported_) {
+      warned_speed_unsupported_ = true;
+      ESP_LOGW(TAG, "Requested move speed %d, but this fader's firmware does not support it "
+                    "(needs %d.%d or newer). Moving at full speed instead. "
+                    "This warning is logged once.",
+               speed, FW_VERSION_MOVE_SPEED >> 8, FW_VERSION_MOVE_SPEED & 0xFF);
+    }
+    speed = LAYER_SPEED_FULL;
+  }
+
+  // Always send the speed when the firmware understands it, full speed
+  // included. A 3-byte write leaves the layer's STORED speed alone, so after
+  // any slower move it would silently re-apply that old limit - it is only
+  // equivalent to a full-speed move if the layer was already at full speed.
+  // Firmware predating the byte ignores a 4-byte write entirely, so that case
+  // (where speed has been forced to LAYER_SPEED_FULL above) still sends 3.
+  uint8_t buffer[] = {REG_LAYER_TARGET, layer, hw_position, speed};
+  size_t len = speed_supported_ ? 4 : 3;
+  if (write_with_retry_(buffer, len)) {
+    ESP_LOGD(TAG, "Set layer %d target to %d (user position) at speed %d", layer, position, speed);
   } else {
     ESP_LOGE(TAG, "Failed to write layer %d target", layer);
   }
@@ -363,6 +526,21 @@ void FaderBuddy::set_layer_value_change_min_interval(uint8_t layer, uint32_t min
     return;
   }
   layer_states_[layer].value_change_min_interval = min_interval_ms;
+}
+
+void FaderBuddy::set_layer_default_speed(uint8_t layer, uint8_t speed) {
+  if (layer > 7) {
+    ESP_LOGE(TAG, "Invalid layer index: %d", layer);
+    return;
+  }
+  layer_states_[layer].default_speed = speed;
+}
+
+uint8_t FaderBuddy::get_layer_default_speed(uint8_t layer) const {
+  if (layer > 7) {
+    return LAYER_SPEED_FULL;
+  }
+  return layer_states_[layer].default_speed;
 }
 
 void FaderBuddy::run_self_calibration() {

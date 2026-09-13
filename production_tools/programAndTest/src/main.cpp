@@ -825,7 +825,7 @@ void readFaderBuddyState() {
 }
 
 bool testSelfCalibration() {
-  const uint32_t TOTAL_TIMEOUT_MS = 8000;
+  const uint32_t TOTAL_TIMEOUT_MS = 15000;
   const uint32_t MODE_ENTRY_TIMEOUT_MS = 1000;
   const uint16_t MIN_ADC_THRESHOLD = 100;
   const uint16_t MAX_ADC_THRESHOLD = 1900;

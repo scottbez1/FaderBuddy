@@ -14,15 +14,23 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import i2c
-from esphome.const import CONF_ID, CONF_MODE
+from esphome.components import button, i2c
+
+# Aliased: importing the sibling `text_sensor.py` platform module binds it as an
+# attribute of this package, which would shadow a plain `text_sensor` name here.
+from esphome.components import text_sensor as core_text_sensor
+from esphome.const import CONF_ID, CONF_MODE, CONF_NAME
+from esphome.core import CORE
 
 MULTI_CONF = True
 DEPENDENCIES = ["i2c"]
-AUTO_LOAD = ["text_sensor"]
+AUTO_LOAD = ["button", "text_sensor"]
 
 fader_buddy_ns = cg.esphome_ns.namespace("fader_buddy")
 FaderBuddy = fader_buddy_ns.class_("FaderBuddy", cg.PollingComponent, i2c.I2CDevice)
+SelfCalibrationButton = fader_buddy_ns.class_(
+    "SelfCalibrationButton", button.Button, cg.Parented.template(FaderBuddy)
+)
 
 # Used by platform files (e.g. text_sensor) to reference the parent hub
 CONF_FADER_BUDDY_ID = "fader_buddy_id"
@@ -46,6 +54,72 @@ CONF_DETENT_COUNT = "detent_count"
 CONF_DETENT_STRENGTH = "detent_strength"
 CONF_POSITION = "position"
 CONF_VALUE_CHANGE_MIN_INTERVAL = "value_change_min_interval"
+CONF_SPEED = "speed"
+CONF_DEFAULT_SPEED = "default_speed"
+CONF_SERIAL_NUMBER = "serial_number"
+CONF_FIRMWARE_VERSION = "firmware_version"
+CONF_SELF_CALIBRATION = "self_calibration"
+
+# Diagnostic text sensors the hub creates itself, so a bare fader_buddy block
+# reports what it is without any entity yaml. Each maps to (default name
+# suffix, icon). Set `internal: true` on one to keep it out of Home Assistant,
+# or `disabled_by_default: true` to have HA register it but leave it off.
+AUTO_TEXT_SENSORS = {
+    CONF_SERIAL_NUMBER: ("Serial Number", "mdi:identifier"),
+    CONF_FIRMWARE_VERSION: ("Firmware Version", "mdi:chip"),
+}
+
+# Buttons the hub creates itself, same deal. A press here moves the fader for
+# several seconds, so these are entity_category "config" rather than controls.
+AUTO_BUTTONS = {
+    CONF_SELF_CALIBRATION: ("Self Calibration", "mdi:tune-vertical"),
+}
+
+AUTO_ENTITIES = {**AUTO_TEXT_SENSORS, **AUTO_BUTTONS}
+
+
+def _default_entity_names(config):
+    """Give each auto-created text sensor a name before its schema validates.
+
+    The entity base schema rejects a sub-config carrying neither `name:` nor a
+    manual `id:`, and it runs while validating that sub-config - before any
+    validator on this schema could fill one in. So this has to be a
+    pre-validator, seeing the raw config.
+
+    The name is prefixed with the hub's id so several faders in one device don't
+    collide. A config with multiple hubs and no ids on them would; ESPHome's
+    auto-generated ids don't exist yet at this point.
+    """
+    if not isinstance(config, dict):
+        return config
+    hub_id = config.get(CONF_ID)
+    prefix = f"{hub_id} " if isinstance(hub_id, str) else ""
+    for key, (label, _icon) in AUTO_ENTITIES.items():
+        sub = config.setdefault(key, {})
+        if isinstance(sub, dict) and CONF_NAME not in sub:
+            sub[CONF_NAME] = f"{prefix}{label}"
+    return config
+
+
+def _claimed_by_legacy_platform(config, key):
+    """True if a `text_sensor: platform: fader_buddy` block already provides this.
+
+    The deprecated platform form calls the same setter, so without this check a
+    config using it would get two entities for one sensor - the hub's own, left
+    unpublished, and the platform's. Drop the hub's in that case, so migrating
+    is a pure deletion of the old block.
+    """
+    for entry in CORE.config.get("text_sensor", []):
+        if entry.get("platform") != "fader_buddy":
+            continue
+        if entry.get(CONF_FADER_BUDDY_ID) != config[CONF_ID]:
+            continue
+        if key in entry:
+            return True
+    return False
+
+# Unitless move speed: 255 is full speed, 0 the slowest smooth motion
+SPEED_FULL = 255
 
 # Schema for a single layer haptic configuration
 LAYER_HAPTIC_SCHEMA = cv.Schema({
@@ -54,11 +128,28 @@ LAYER_HAPTIC_SCHEMA = cv.Schema({
     cv.Optional(CONF_DETENT_COUNT, default=0): cv.int_range(min=0, max=15),
     cv.Optional(CONF_DETENT_STRENGTH, default=0): cv.int_range(min=0, max=7),
     cv.Optional(CONF_VALUE_CHANGE_MIN_INTERVAL, default="0ms"): cv.positive_time_period_milliseconds,
+    # Speed used for moves on this layer that don't name one. Kept host-side
+    # and sent with each move rather than stored on the fader.
+    cv.Optional(CONF_DEFAULT_SPEED, default=SPEED_FULL): cv.int_range(min=0, max=255),
 })
 
-CONFIG_SCHEMA = (
+CONFIG_SCHEMA = cv.All(
+    _default_entity_names,
     cv.Schema({
         cv.GenerateID(): cv.declare_id(FaderBuddy),
+        cv.Optional(CONF_SERIAL_NUMBER, default={}): core_text_sensor.text_sensor_schema(
+            entity_category="diagnostic",
+            icon=AUTO_TEXT_SENSORS[CONF_SERIAL_NUMBER][1],
+        ),
+        cv.Optional(CONF_FIRMWARE_VERSION, default={}): core_text_sensor.text_sensor_schema(
+            entity_category="diagnostic",
+            icon=AUTO_TEXT_SENSORS[CONF_FIRMWARE_VERSION][1],
+        ),
+        cv.Optional(CONF_SELF_CALIBRATION, default={}): button.button_schema(
+            SelfCalibrationButton,
+            entity_category="config",
+            icon=AUTO_BUTTONS[CONF_SELF_CALIBRATION][1],
+        ),
         cv.Optional(CONF_ON_MANUAL_MOVE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_RAW_POSITION_UPDATE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
@@ -67,7 +158,7 @@ CONFIG_SCHEMA = (
         cv.Optional(CONF_LAYER_HAPTICS): cv.ensure_list(LAYER_HAPTIC_SCHEMA),
     })
     .extend(cv.polling_component_schema("50ms"))
-    .extend(i2c.i2c_device_schema(0x20))  # default I2C address
+    .extend(i2c.i2c_device_schema(0x20)),  # default I2C address
 )
 
 async def to_code(config):
@@ -78,6 +169,16 @@ async def to_code(config):
     if CONF_INVERT in config:
         cg.add(var.set_invert(config[CONF_INVERT]))
 
+    if not _claimed_by_legacy_platform(config, CONF_SERIAL_NUMBER):
+        sens = await core_text_sensor.new_text_sensor(config[CONF_SERIAL_NUMBER])
+        cg.add(var.set_serial_text_sensor(sens))
+    if not _claimed_by_legacy_platform(config, CONF_FIRMWARE_VERSION):
+        sens = await core_text_sensor.new_text_sensor(config[CONF_FIRMWARE_VERSION])
+        cg.add(var.set_firmware_text_sensor(sens))
+
+    btn = await button.new_button(config[CONF_SELF_CALIBRATION])
+    await cg.register_parented(btn, config[CONF_ID])
+
     # Store initial layer haptic configurations (sent during setup)
     if CONF_LAYER_HAPTICS in config:
         for haptic_config in config[CONF_LAYER_HAPTICS]:
@@ -86,11 +187,13 @@ async def to_code(config):
             detent_count = haptic_config[CONF_DETENT_COUNT]
             detent_strength = haptic_config[CONF_DETENT_STRENGTH]
             min_interval = haptic_config[CONF_VALUE_CHANGE_MIN_INTERVAL]
+            default_speed = haptic_config[CONF_DEFAULT_SPEED]
 
             cg.add(var.store_initial_layer_haptic_config(
                 layer, mode, detent_count, detent_strength
             ))
             cg.add(var.set_layer_value_change_min_interval(layer, min_interval))
+            cg.add(var.set_layer_default_speed(layer, default_speed))
 
     if CONF_ON_MANUAL_MOVE in config:
         await automation.build_automation(
@@ -143,6 +246,11 @@ async def set_active_layer_action_to_code(config, action_id, template_arg, args)
         cv.Required(CONF_ID): cv.use_id(FaderBuddy),
         cv.Required(CONF_POSITION): cv.templatable(cv.int_range(min=0, max=255)),
         cv.Optional(CONF_LAYER, default=0): cv.templatable(cv.int_range(min=0, max=7)),
+        # Unitless move speed, 0 (slowest smooth motion) to 255 (full speed).
+        # This caps speed, it does not stretch the move to fill a duration, so
+        # a shorter move takes proportionally less time. Omit it to use the
+        # layer's default_speed.
+        cv.Optional(CONF_SPEED): cv.templatable(cv.int_range(min=0, max=255)),
     })
 )
 async def remote_move_to_action_to_code(config, action_id, template_arg, args):
@@ -152,6 +260,9 @@ async def remote_move_to_action_to_code(config, action_id, template_arg, args):
     cg.add(var.set_position(position))
     layer = await cg.templatable(config[CONF_LAYER], args, cg.uint8)
     cg.add(var.set_layer(layer))
+    if CONF_SPEED in config:
+        speed = await cg.templatable(config[CONF_SPEED], args, cg.uint8)
+        cg.add(var.set_speed(speed))
     return var
 
 

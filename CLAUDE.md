@@ -10,8 +10,17 @@ FaderBuddy is a bidirectional motor fader control system with integrated capacit
 
 - **electronics/** - KiCad PCB design files (schematic and board layout)
 - **firmware/** - ATtiny1616 firmware (PlatformIO project, Arduino framework)
-  - `src/main.cpp` - Main firmware logic with motor control loop and I2C peripheral
+  - `src/main.cpp` - Mode state machine, control law, haptics, touch, I2C peripheral
+  - `src/motor_control.h` - Motor drive primitives and the MOVE_* tuning constants,
+    shared between the control law and the characterisation. main.cpp owns every
+    definition declared here
+  - `src/motor_cal.{h,cpp}` - Self-calibration: the endpoint sweep and the per-unit
+    motor characterisation, plus the derivation of the live gains from it. Driven a
+    tick at a time by `motorcal_tick()`; the caller owns the mode and the EEPROM
   - `src/shared/i2c_data.h` - I2C protocol v5 definitions (shared across all components)
+  - `ABOUT_MOTOR_CONTROL.md` - **Read before touching the movement code.** Measured plant
+    model, why the control law is shaped as it is, and how the gains are centred for
+    hardware variance rather than tuned against one fader
 - **esphome/** - ESPHome custom component for Home Assistant integration
   - `components/fader_buddy/` - Core component for interfacing with FaderBuddy boards
   - `examples/multi-fader-display.yaml` - ESP32-S3 example with LVGL display
@@ -45,7 +54,15 @@ pio run --target monitor
 
 # Clean build
 pio run --target clean
+
+# System-identification build, adding the debug registers used to measure the
+# motor. Not for production - it lets a host drive the H-bridge directly.
+pio run -e fader_buddy_lab --target upload
 ```
+
+For measuring control-loop behaviour on the test jig, `production_tools/programAndTest`
+has an `env:lab` firmware providing a serial-driven measurement harness (step-response
+capture and runtime gain tuning). See `firmware/ABOUT_MOTOR_CONTROL.md`.
 
 The firmware uses UPDI programming via a USB-to-serial adapter. Upload port and monitor port can be configured in `platformio.ini`.
 
@@ -117,6 +134,10 @@ esphome run examples/multi-fader-display.yaml
 ```
 
 **Key Features:**
+- Self-creating entities - the hub declares them itself, so no platform blocks are
+  needed: diagnostic text sensors (serial number, firmware version) and a config
+  button (self calibration). The old `text_sensor: platform: fader_buddy` form is
+  deprecated and goes away in 0.5.0
 - Layer-aware automation triggers: `manual_move`, `touch_change`, `double_tap`
 - Per-layer haptic configuration (detent count, strength, mode)
 - Per-layer position restore on layer changes
@@ -151,6 +172,14 @@ npm run build
 - Layer switching and per-layer position control
 - Direct I2C register read/write
 
+## Versioning
+
+Hardware, fader firmware, and the ESPHome component version independently; `CHANGELOG.md`
+at the repo root holds the compatibility matrix and per-release notes. Update it when
+changing observable behaviour of any of the three, and bump `FW_VERSION_MINOR`
+(`firmware/src/shared/i2c_data.h`) or `FADER_BUDDY_COMPONENT_VERSION`
+(`esphome/components/fader_buddy/fader_buddy.h`) alongside.
+
 ## Architecture
 
 ### I2C Protocol
@@ -164,8 +193,31 @@ The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 
 - **8 layers per fader**: Each with independent target position and haptic configuration
 - **State register** (0x01): 32-bit packed register containing mode, layer, nonces, and touch state
 - **Position/haptic nonces**: Used to detect user input vs. remote command echo
+- **Optional move speed**: `LAYER_TARGET` (0x0E) accepts an optional 4th byte capping move
+  speed, as a unitless 0-255 value spanning the validated speed range (255 = full speed).
+  Three-byte writes behave exactly as before, so this is backwards compatible and did not
+  bump the protocol version. A host that uses the byte should send it on every move,
+  255 included - a 3-byte write leaves the layer's *stored* speed in place rather than
+  moving at full speed. Send 3 bytes only to firmware predating the byte, which ignores
+  a 4-byte write entirely
+- **Firmware version** (0x11): `REG_FW_VERSION`, a packed `(major << 8) | minor` u16, distinct
+  from the protocol version at 0x00. Hosts feature-detect on this; firmware predating it reads
+  back as 0xFFFF. The protocol version is only bumped when an existing register's wire format
+  changes, never for additive features. 0x10 is reserved for the I2C bootloader work
+- **Motor characterisation** (0x12): `REG_MOTOR_CAL`, 12 read-only bytes reporting what
+  self-calibration measured about this unit's motor (per-direction breakaway duty, speed/duty
+  slope, Stribeck jump) plus the derived velocity floor and deadband the control law is
+  actually running. Present in production builds, so a unit can be diagnosed with nothing but
+  an I2C host attached
+- **Debug registers** (0xF0-0xF2): open-loop drive, control-loop internals, and runtime gain
+  overrides. Compiled out unless `DEBUG_DRIVE` is defined, so they are absent from
+  production builds. They sit at the top of the address space deliberately, so new
+  production registers can keep growing from 0x10 without a hole
 
 Refer to `i2c_data.h` for complete register map and bit field definitions.
+
+When adding to the protocol, prefer optional trailing bytes over new register semantics -
+that keeps older controllers working and avoids a version bump.
 
 ### State Machine
 
@@ -173,10 +225,13 @@ The firmware implements a state machine to arbitrate between remote control and 
 
 1. **MODE_REMOTE_MOVEMENT_IN_PROGRESS** (0)
    - Motor actively moving to commanded target position
-   - Haptics disabled, simple PID movement
+   - Haptics disabled; PD control plus a friction feedforward, with a stall-escape
+     ramp and a backlash take-up ceiling (see `firmware/ABOUT_MOTOR_CONTROL.md`)
    - Transitions to INPUT_ACTIVE if touch detected for >50ms
    - Transitions to INPUT_IDLE when target reached and stable for >300ms
-   - Transitions to ERROR if movement timeout (8 seconds)
+   - Transitions to ERROR if movement timeout (8 seconds) AND the remaining error is
+     large; a small error at timeout means the fader arrived but kept dithering, so
+     it goes quietly idle instead of latching an error the host must clear
 
 2. **MODE_INPUT_ACTIVE** (1)
    - User is touching/moving the fader
