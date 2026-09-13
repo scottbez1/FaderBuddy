@@ -374,6 +374,61 @@ static inline void heartbeat_update(void) {
   }
 }
 
+/* ------------------------------------------------------ recovery strap pin */
+
+/*
+ * Forced-entry strap: TP5 (PB5), a spare pin broken out to a test point on the
+ * back of the board and connected to nothing else. Ground it while the board
+ * comes out of reset and the bootloader stays resident instead of starting the
+ * application.
+ *
+ * This is the recovery path for an application that is *present and passes
+ * app_is_valid(), but broken* -- a partially written image whose reset vector
+ * happens to be programmed, or an app that boots but wedges before it serves
+ * I2C. In both cases REG_ENTER_BOOTLOADER is unreachable, so without a strap the
+ * only way back is UPDI. It costs nothing at normal boot: the pin is sampled
+ * once and the pull-up is switched off again before the application starts.
+ *
+ * The strap only has to be held across reset, not for the whole update -- the
+ * sample happens once, before any jump to the application.
+ */
+#define STRAP_PORT      PORTB
+#define STRAP_VPORT     VPORTB
+#define STRAP_PIN_CTRL  PIN5CTRL
+#define STRAP_PIN_bm    PIN5_bm
+
+static bool strap_requests_bootloader(void) {
+  /* Drive the pin high through the internal pull-up, so an unconnected test
+   * point reads as "not requested" rather than floating. */
+  STRAP_PORT.DIRCLR = STRAP_PIN_bm;
+  STRAP_PORT.STRAP_PIN_CTRL = PORT_PULLUPEN_bm;
+
+  /* Sample repeatedly, with a gap between samples, and require every one to
+   * read low. The gap does double duty: the first one lets the pull-up charge
+   * the pin, trace and test pad (20-50k against a few tens of pF -- an RC well
+   * under a microsecond, so ~100us is a large margin), and the rest spread the
+   * samples out so this rejects noise rather than reading one instant eight
+   * times. ~20 cycles per iteration at 20 MHz puts the whole check under a
+   * millisecond, which is the budget it deserves on a pin whose net is one test
+   * pad and nothing else. A false positive looks like "the board stopped
+   * working", so the samples are worth having; eight milliseconds of them are
+   * not. */
+  bool requested = true;
+  for (uint8_t i = 0; i < 8; i++) {
+    for (volatile uint16_t d = 0; d < 100; d++) {
+    }
+    if (STRAP_VPORT.IN & STRAP_PIN_bm) {
+      requested = false;
+      break;
+    }
+  }
+
+  /* Leave the pin exactly as found, so the application sees its reset state and
+   * a permanently grounded test point burns no current through the pull-up. */
+  STRAP_PORT.STRAP_PIN_CTRL = 0;
+  return requested;
+}
+
 /* ------------------------------------------------------------------ entry */
 
 static void jump_to_app(void) __attribute__((noreturn));
@@ -400,6 +455,12 @@ int main(void) {
 
   bool app_ok = app_is_valid();
   bool entry_requested = (rstfr & RSTCTRL_SWRF_bm) && (token == BL_ENTRY_TOKEN_MAGIC);
+
+  /* Checked even when the application looks valid -- an app that passes
+   * app_is_valid() but is broken or wedged is exactly what the strap is for. */
+  if (!entry_requested && app_ok) {
+    entry_requested = strap_requests_bootloader();
+  }
 
   if (app_ok && !entry_requested) {
     jump_to_app();  /* normal boot */

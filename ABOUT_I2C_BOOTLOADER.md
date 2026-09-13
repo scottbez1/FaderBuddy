@@ -354,6 +354,38 @@ correctly falls through to the application.)
   stalled/abandoned update auto-recovers to the application instead of hanging on
   the shared bus.
 
+### Forced-entry strap (TP5 / PB5) — implemented
+
+`REG_ENTER_BOOTLOADER` only works if the application is running *and healthy
+enough to serve I2C*. Two failure modes escape it: an image that was partially
+written but whose reset vector happens to be programmed (so `app_is_valid()`
+accepts it), and an app that starts but wedges before it answers the bus. Both
+leave the fader looking dead with no software route back.
+
+**TP5 (PB5)** is the hardware escape. It is a spare pin whose net is the MCU pin
+and that one test pad on the back of the board — nothing else — so nothing but a
+deliberate short can pull it down. Ground it while the board comes out of reset
+and the bootloader stays resident instead of starting the application:
+
+1. Short TP5 to any ground (nearest are R2 / J4, ~4 mm away).
+2. Power-cycle or reset the board.
+3. Release the short — it only has to be held across reset, not for the whole
+   update. The bootloader is now resident and answers `BL_VERSION_MARKER` at
+   register `0x00`; update it normally, then `BL_CMD_RUN_APP`.
+
+Implementation (`firmware/src/bootloader/bootloader.c`,
+`strap_requests_bootloader()`): the internal pull-up is enabled, the pin is
+sampled eight times spread over a few hundred microseconds and every sample must
+read low, then the pull-up is switched back off so the application sees the pin
+in its reset state and a permanently grounded pad draws no current. Total cost
+62 bytes of boot section and well under a millisecond at every normal boot.
+
+Pin choice, for anyone revisiting it: PA3 (TP6) is TCA0 `WO3`, and PA4/PA5 are
+`WO4`/`WO5` — the motor outputs — under this part's default `PORTMUX.CTRLC`
+mapping, which is why the strap is not on PA3. PA7 (TP1) and PB4 (TP4) are the
+equivalent alternatives; PB5 was taken because the bootloader already drives
+PORTB for the heartbeat LED. TP2/TP3 are RX/TX and are left for serial debug.
+
 ## 10. Version identity & "no application" detection
 
 The host needs to reliably tell three states apart on the bus: **app running**,

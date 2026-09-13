@@ -13,7 +13,7 @@ hardware-validated. Read these three first for context:
 ## What already works (don't re-do)
 
 - Bootloader builds/installs (`env:fb_bootloader_only`, chip-erase + BOOTEND/APPEND fuses).
-- Offset app builds and runs at `0x800` (`env:fb_app_only`).
+- Offset app builds and runs at `0x600` (`env:fb_app_only`).
 - **Full I2C update cycle, end-to-end on hardware** via the jig
   (`production_tools/programAndTest`, `env:lilygo-t-display`): enter → `ERASE_APP`
   → stream 180 pages (per-frame CRC16) → whole-image CRC verify → `RUN_APP` → app
@@ -30,6 +30,12 @@ hardware-validated. Read these three first for context:
   `production_tools/programAndTest/src/main.cpp` (`testFwBootstrap()`,
   `testFwI2cUpdate()`), `production_tools/programAndTest/test_host.py`
   (`upload_firmware()`), `production_tools/programAndTest/factory_test_images/`.
+- **Forced-entry strap on TP5 (PB5)** — ground the test point across reset and the
+  bootloader stays resident even when the app is present and passes
+  `app_is_valid()`. The recovery path for a corrupt-but-plausible image or an app
+  that wedges before serving I2C, neither of which `REG_ENTER_BOOTLOADER` can
+  reach. `strap_requests_bootloader()` in `firmware/src/bootloader/bootloader.c`;
+  see ABOUT_I2C_BOOTLOADER.md section 9. **Not yet exercised on hardware.**
 - App-side entry registers/logic exist in `firmware/src/main.cpp`
   (`REG_ENTER_BOOTLOADER` + magic → set flag → write `.noinit` token + software
   reset; `REG_FW_VERSION` readable).
@@ -43,7 +49,7 @@ source ~/.platformio/penv/bin/activate      # required before any pio command
 pio run -e fb_bootloader_only -t upload     # install bootloader (chip-erase + fuses)
 pio run -e fb_app_only -t upload            # (re)flash just the app over UPDI
 cd production_tools/programAndTest && pio run -e lilygo-t-display -t upload   # jig
-pymcuprog read -d attiny1616 -t uart -u /dev/ttyUSB2 -m flash -o 0x800 -b 64 # ground truth
+pymcuprog read -d attiny1616 -t uart -u /dev/ttyUSB2 -m flash -o 0x600 -b 64 # ground truth
 ```
 
 The jig auto-runs an update on the held-pressed presence switch ~4 s after boot
@@ -105,6 +111,11 @@ These make a stuck/abandoned update non-fatal to the bus and its neighbors.
 
 ## P2 — Robust app-validity check (CRC footer, design §10)
 
+Still worth doing even with the TP5 strap in place: the strap is a manual,
+per-board recovery that needs physical access, whereas a CRC footer lets a board
+detect its own bad image and stay in the bootloader unattended.
+
+
 Today `app_is_valid()` only checks the reset vector isn't blank
 (`!= 0xFFFF`) — it does **not** catch a partially-written app (power lost
 mid-stream). Add a linker-placed CRC footer (image length + CRC16 at end of
@@ -115,15 +126,20 @@ leaves the reset vector blank → detected as no-app. Files:
 `firmware/src/bootloader/bootloader.c` (`app_is_valid`, `erase_app`), app linker
 config, `tools/generate_app_image.py`.
 
-## P2 — Shrink `BOOTEND`
+## P2 — Shrink `BOOTEND` — DONE
 
-Measured bootloader size is **1258 bytes**; `BOOTEND` is `0x08` (2048).
-`0x06` (1536) is a safe shrink with margin. Must change **three places in
-lockstep**: `BL_BOOTEND` in `firmware/src/shared/bootloader_protocol.h`,
-`board_build.text_section_start` in `platformio.ini` (the app link offset), and
-the `--bootend` fuse value in the `fb_bootloader_only`/`fb_app_and_bootloader` upload
-commands. Re-run a full factory flash + update to confirm. Low priority (frees
-512 bytes of app space; not currently needed — app is 11.5 KB of 16 KB).
+`BOOTEND` is `0x06` (1536) as of the development merge; the bootloader measures
+1366 bytes with the TP5 strap check, leaving ~170 bytes of boot section free. The
+shrink was forced rather than optional: the motor-control rewrite pushed the
+application past the 14336 bytes a 2048-byte boot section left it, and it does
+not link at `0x07` either. Six places move in lockstep — see the comment on
+`BL_BOOTEND` in `firmware/src/shared/bootloader_protocol.h` for the list.
+
+Note the app now has only ~130 bytes of headroom below the `.fw_meta` footer, and
+~1.1 KB of that image is avr-libc soft-float pulled in by the float-based control
+law in `motor_control.h`. Converting the control hot path to fixed point is the
+next real source of app flash if one is needed.
+
 
 ## P2 — Validate the combined factory env on a blank chip
 
@@ -151,6 +167,8 @@ handy as a regression guard if `twi_service()` is ever touched.
 - **`firmware/src/shared/i2c_data.h` is hand-synced across four copies** (firmware,
   `esphome/components/fader_buddy/`, the jig, the WebHID JS). Any protocol change
   must update all four. `bootloader_protocol.h` is likewise shared.
+  `ci/util/check_i2c_data_sync.py` enforces the C copies of *both* headers on every
+  push; the jig and WebHID copies are still on you.
 - Prefer **UPDI flash readback** as ground truth over the bootloader's own
   mapped-flash reads (stale-page-buffer hazard right after a write).
 - There is no CI hardware test — everything here is validated on the bench.
