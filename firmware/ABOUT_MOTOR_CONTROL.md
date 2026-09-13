@@ -1,8 +1,13 @@
 # About: motor control and closed-loop tuning
 
-Notes for whoever next touches the movement code in `src/main.cpp`. Covers the
-plant model, why the control law is shaped the way it is, what each constant
-does, and how to re-measure everything on hardware.
+Notes for whoever next touches the movement code. Covers the plant model, why
+the control law is shaped the way it is, what each constant does, and how to
+re-measure everything on hardware.
+
+Three files: `src/motor_control.h` holds the drive primitives and every `MOVE_*`
+constant; `src/main.cpp` runs the control law and owns the mode state machine;
+`src/motor_cal.cpp` measures the plant during self-calibration and re-derives
+the gains from it.
 
 ## Units
 
@@ -74,7 +79,7 @@ the feel. If you ever do switch them, those constants must be retuned together.
 
 ## The control law
 
-In `motor_update()`, `MODE_REMOTE_MOVEMENT_IN_PROGRESS`:
+In `main.cpp`'s `motor_update()`, `MODE_REMOTE_MOVEMENT_IN_PROGRESS`:
 
 ```
 error = target_adc - input_ewma
@@ -115,7 +120,7 @@ Two things follow from writing it out, and both were real bugs in the flat form:
   back off, which is what the old one-sided governor did. See "Optional speed
   limiting" below for why that misbehaved.
 
-Five ideas, each solving a specific measured problem:Five ideas, each solving a specific measured problem:
+Five ideas, each solving a specific measured problem:
 
 **Feedforward** is the plant model inverted: `breakaway + v_ref/k`. It supplies
 both the breakaway duty and the duty that produces the wanted speed, so the
@@ -152,10 +157,16 @@ uncharacterised case.
 **Take-up ceiling** addresses belt backlash. A direction-reversed move otherwise
 starts at full duty into slack: the rotor free-runs unloaded, then snaps taut
 with an audible click and a jerk. The drive ceiling therefore starts at
-`MOVE_TAKEUP_DUTY` at the beginning of every move and opens up to full over
-time at `MOVE_TAKEUP_RAMP_RATE`.
+`MOVE_TAKEUP_DUTY` and opens up to full over time at `MOVE_TAKEUP_RAMP_RATE`.
 
-Two things about this are easy to get wrong, and both were bugs during
+It is re-armed when a move is commanded in the opposite direction to the one in
+progress, not on every write to `LAYER_TARGET`. Slack is only taken up on a
+reversal, and a host that streams position updates - an LVGL slider being
+dragged, say - retargets many times a second; re-arming on each of those would
+hold the ceiling at the take-up duty for the whole gesture and cap the fader at
+roughly half speed.
+
+Three things about this are easy to get wrong, and all were bugs during
 development:
 
 - **It must be time-based, not gated on "are we moving yet".** While crossing
@@ -355,7 +366,7 @@ where the last ended, two passes per direction, averaged. Anything implausible
 discards the whole characterisation and keeps the compiled-in defaults - a
 half-measured fader is worse than an un-measured one.
 
-**What is derived** (`apply_motor_calibration`):
+**What is derived** (`apply_motor_calibration`, in `motor_cal.cpp`):
 
 ```
 breakaway, k  ->  straight into the feedforward, u_ff = bd + v_ref/k
@@ -458,13 +469,19 @@ requested speed directly instead of being pulled back down to it. **Re-measure
 that table** - it is the clearest single check that this change did what it was
 meant to.
 
-Beyond the slow end it still saturates: there is a hard floor below which the
-motor cannot sustain continuous rotation and creeps in stick-slip steps rather
-than moving smoothly. `move_vel_min` (1.25x the measured Stribeck jump, 560 ADC
-counts/sec by default) is the clamp for that, and it is now also the floor the
-velocity reference is held at even next to the target - which is what keeps the
-feedforward clear of breakaway for small errors. Slower smooth motion is not reachable by tuning - it needs a different
-drive scheme. Direction asymmetry is within about 7%.
+Beyond the slow end it saturates: there is a hard floor below which the motor
+cannot sustain continuous rotation and creeps in stick-slip steps rather than
+moving smoothly. Slower smooth motion is not reachable by tuning - it would need
+a different drive scheme.
+
+`move_vel_min` (1.25x the measured Stribeck jump, 560 ADC counts/sec by default)
+is the clamp for that floor. It is applied to the velocity reference in the
+control law, every tick, and nowhere else - not where the speed byte is decoded,
+which would freeze it against a `move_vel_min` that calibration can change
+afterwards. It is also the floor the reference is held at right next to the
+target, which is what keeps the feedforward clear of breakaway for small errors.
+
+Direction asymmetry is within about 7%.
 
 Treat this as a *limit*, not a precise speed control - it is realised through
 the friction-dependent plant, so exact velocity varies with the fader.

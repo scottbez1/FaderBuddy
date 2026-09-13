@@ -10,7 +10,13 @@ FaderBuddy is a bidirectional motor fader control system with integrated capacit
 
 - **electronics/** - KiCad PCB design files (schematic and board layout)
 - **firmware/** - ATtiny1616 firmware (PlatformIO project, Arduino framework)
-  - `src/main.cpp` - Main firmware logic with motor control loop and I2C peripheral
+  - `src/main.cpp` - Mode state machine, control law, haptics, touch, I2C peripheral
+  - `src/motor_control.h` - Motor drive primitives and the MOVE_* tuning constants,
+    shared between the control law and the characterisation. main.cpp owns every
+    definition declared here
+  - `src/motor_cal.{h,cpp}` - Self-calibration: the endpoint sweep and the per-unit
+    motor characterisation, plus the derivation of the live gains from it. Driven a
+    tick at a time by `motorcal_tick()`; the caller owns the mode and the EEPROM
   - `src/shared/i2c_data.h` - I2C protocol v5 definitions (shared across all components)
   - `ABOUT_MOTOR_CONTROL.md` - **Read before touching the movement code.** Measured plant
     model, why the control law is shaped as it is, and how the gains are centred for
@@ -192,6 +198,11 @@ The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 
   from the protocol version at 0x00. Hosts feature-detect on this; firmware predating it reads
   back as 0xFFFF. The protocol version is only bumped when an existing register's wire format
   changes, never for additive features. 0x10 is reserved for the I2C bootloader work
+- **Motor characterisation** (0x12): `REG_MOTOR_CAL`, 12 read-only bytes reporting what
+  self-calibration measured about this unit's motor (per-direction breakaway duty, speed/duty
+  slope, Stribeck jump) plus the derived velocity floor and deadband the control law is
+  actually running. Present in production builds, so a unit can be diagnosed with nothing but
+  an I2C host attached
 - **Debug registers** (0xF0-0xF2): open-loop drive, control-loop internals, and runtime gain
   overrides. Compiled out unless `DEBUG_DRIVE` is defined, so they are absent from
   production builds. They sit at the top of the address space deliberately, so new

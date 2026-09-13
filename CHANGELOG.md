@@ -60,6 +60,21 @@ for production purposes.
   diagnostic.
 - Calibration EEPROM format changed - the first boot after updating falls
   back to default endpoints until self-calibration is re-run.
+- Self-calibration now returns the fader to the active layer's position using
+  the newly measured endpoints. It previously re-used a target derived from the
+  bounds it had just replaced, so the fader settled slightly off.
+- The position nonce in `STATE` is now actually incremented on local input. It
+  had no producer, so a user move that ended on the same 8-bit position as it
+  started was invisible to the host.
+- The backlash take-up ceiling is re-armed on a direction reversal rather than
+  on every `LAYER_TARGET` write. A host streaming position updates previously
+  held the fader at the take-up duty - roughly half speed - for the whole
+  gesture.
+- Detent haptics no longer pull toward the top of travel when the fader is
+  below the calibrated minimum (reachable with a stale calibration).
+- Fixed the hysteresis window being half-width when a move ended at the very top
+  of travel, which made a fader parked there twice as likely to report spurious
+  user input.
 
 ### 1.1 - unreleased
 
