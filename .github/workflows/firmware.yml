@@ -1,0 +1,82 @@
+name: Firmware
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-firmware:
+    name: Build ATtiny1616 firmware
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+
+      - name: Build bootloader
+        run: pio run -e fb_bootloader_only
+
+      - name: Build application (standalone and offset)
+        run: pio run -e fb_legacy_no_bootloader -e fb_app_only
+
+      # Names the .bin after the FW_VERSION baked into it, and -- on a release tag --
+      # fails if that disagrees with the tag, so a mislabelled asset can't be published.
+      - name: Package release image
+        id: package
+        run: |
+          ./ci/firmware/package_release.py --no-build \
+            ${{ startsWith(github.ref, 'refs/tags/releases/firmware/') && format('--expect-version {0}', github.ref) || '' }}
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v4.6.0
+        if: always()
+        with:
+          name: firmware
+          path: |
+            firmware/build/*.bin
+            .pio/build/fb_app_only/firmware.hex
+            .pio/build/fb_bootloader_only/firmware.hex
+
+      # Tag `releases/firmware/v<major>.<minor>` (same scheme as the electronics
+      # artifacts) publishes the application image as a release asset. The ESPHome
+      # component resolves its download URL from the version alone; the sha256 printed
+      # by the packaging step above is what goes into KNOWN_FIRMWARE.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/releases/firmware/') && github.repository_owner == 'scottbez1'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Firmware v${{ steps.package.outputs.version }}
+          files: ${{ steps.package.outputs.asset_path }}
+          fail_on_unmatched_files: true
+          body: |
+            ATtiny1616 application image for I2C-bootloader updates.
+
+            | | |
+            |---|---|
+            | Version | `${{ steps.package.outputs.version }}` |
+            | Asset | `${{ steps.package.outputs.asset_name }}` |
+            | sha256 | `${{ steps.package.outputs.sha256 }}` |
+
+            Add to `KNOWN_FIRMWARE` in `esphome/components/fader_buddy/__init__.py`:
+
+            ```python
+            "${{ steps.package.outputs.version }}": "${{ steps.package.outputs.sha256 }}",
+            ```
+
+            Then in ESPHome:
+
+            ```yaml
+            fader_buddy:
+              - id: fader0
+                firmware: "${{ steps.package.outputs.version }}"
+            ```

@@ -133,6 +133,9 @@ For additional complete working examples, see the `esphome/examples/` directory:
   - **detent_strength** (optional, default: `0`): Detent force feedback strength (0-7, for detents mode only)
   - **default_speed** (optional, default: `255`, requires fader firmware 1.1+): Move speed for this layer, 0-255, used by `fader_buddy.remote_move_to` and by lambda calls to `remote_move_to()` that don't pass a speed of their own. `255` is full speed; see the `speed` parameter of `fader_buddy.remote_move_to` below. This one is tracked in ESPHome rather than on the fader — the component looks up the active layer's value and sends it with each move — so changing it costs no extra I2C traffic.
   - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices like zigbee lights. Set to `0ms` for no rate limiting. Keep as low as possible.
+- **firmware** (optional): Released fader firmware to package for I2C updates. See [Firmware updates](#firmware-updates) below. Mutually exclusive with `firmware_image`.
+- **firmware_image** (optional): Path to a locally built application image, for iterating on an unreleased build. Mutually exclusive with `firmware`.
+- **max_update_attempts** (optional, default: `3`): How many times a failed update is retried for a given target version before the component refuses to try again. The count persists across ESP32 reboots, so a fader that consistently fails to take an update stops being retried rather than looping forever.
 
 ### Triggers
 
@@ -276,6 +279,92 @@ button:
       - fader_buddy.run_self_calibration:
           id: my_fader
 ```
+
+## Firmware updates
+
+The fader's own ATtiny1616 firmware can be updated over I2C through its bootloader,
+without a UPDI programmer. The image is embedded in the ESP32 build and streamed to
+the fader when you call `fader_buddy.update_firmware`.
+
+### Referencing a released image
+
+Application images are published as assets on a GitHub release, tagged
+`releases/firmware/v<major>.<minor>` — the same tag scheme the electronics artifacts
+use. Naming the version is enough; the download URL follows from it:
+
+```yaml
+fader_buddy:
+  - id: my_fader
+    firmware: "1.3"
+```
+
+The image is downloaded at **compile time**, verified against the `sha256` recorded
+in `KNOWN_FIRMWARE` (in `esphome/components/fader_buddy/__init__.py`), cached by
+hash, and compiled into the ESP32 binary. Nothing is fetched at runtime.
+
+The hash is the point: it pins the exact bytes, so a re-uploaded or substituted
+release asset fails the build rather than being flashed onto a fader. A version with
+no `KNOWN_FIRMWARE` entry is an error unless you supply the hash yourself:
+
+```yaml
+    firmware:
+      version: "1.3"
+      url: https://example.com/fader_buddy_app_v1.3.bin   # optional, defaults to the release asset
+      sha256: 2d2e56fa...                                  # required if not in KNOWN_FIRMWARE
+```
+
+Two things are checked at config time, so problems surface from `esphome config`
+rather than partway through a compile or — worse — on the fader:
+
+- the image is the expected size and page-aligned, i.e. actually an app image and
+  not a truncated download or an Intel-hex;
+- the `FW_VERSION` baked into the image's last two bytes matches the version you
+  asked for, catching a mislabelled or wrongly attached release asset.
+
+### Using a locally built image
+
+For firmware you haven't released yet, build and point at the file directly:
+
+```bash
+source ~/.platformio/penv/bin/activate
+python3 firmware/tools/export_app_image.py --output fader_app.bin
+```
+
+```yaml
+fader_buddy:
+  - id: my_fader
+    firmware_image: fader_app.bin
+```
+
+The binaries are **not** checked into the repository — they are build artifacts,
+reproducible from any tagged commit.
+
+### Triggering an update
+
+```yaml
+button:
+  - platform: template
+    name: "Update Fader Firmware"
+    on_press:
+      - fader_buddy.update_firmware:
+          id: my_fader
+```
+
+Updates only ever happen when this action runs — there is no automatic update mode.
+The component refuses to start if the fader is being touched, if the target version
+is already installed, if `max_update_attempts` has been reached, or if the fader's
+firmware predates I2C bootloader entry (`FW_VERSION` below 1.3), which needs a
+one-time UPDI migration. The outcome is reported through `on_firmware_update_result`.
+
+### Cutting a release
+
+```bash
+git tag releases/firmware/v1.3 && git push origin releases/firmware/v1.3
+```
+
+CI builds the image, refuses to publish if the tag and the firmware's own
+`FW_VERSION` disagree, attaches `fader_buddy_app_v1.3.bin` to the release, and
+prints the `KNOWN_FIRMWARE` line to paste into the component.
 
 ## Text Sensors
 
