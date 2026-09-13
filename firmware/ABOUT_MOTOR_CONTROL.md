@@ -413,9 +413,13 @@ If a future change does not fit, measure before trimming: build, then
 
 `LAYER_TARGET` (0x0E) takes an optional 4th byte capping the speed of the move.
 Three-byte writes behave exactly as before, so this is backwards compatible and
-does not change the protocol version. Hosts should keep sending 3-byte writes
-for full-speed moves: firmware predating the byte ignores a 4-byte write
-entirely rather than moving.
+does not change the protocol version.
+
+A host that uses the byte should send it on every move, 255 included. The byte
+sets the layer's *stored* speed, and a 3-byte write leaves that alone - so
+falling back to 3 bytes for a full-speed move silently re-applies whatever limit
+the layer last held. Send 3 bytes only to firmware predating the byte, which
+ignores a 4-byte write entirely rather than moving.
 
 The byte is a **unitless 0-255 speed**: 255 (the default) is unlimited, and 0 is
 the slowest the mechanism moves smoothly. Values below 255 map linearly in

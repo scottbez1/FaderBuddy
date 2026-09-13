@@ -103,6 +103,10 @@ layer-addressed registers.
 
 ### 0.3.0 - unreleased
 
+- Fixed `remote_move_to` at speed 255 re-using the previous speed limit. Full
+  speed was sent as a 3-byte write, which leaves the layer's stored speed
+  alone, so a move after any slower one silently kept the old limit. The speed
+  byte is now sent on every move when the firmware supports it.
 - Reads `REG_MOTOR_CAL` at startup and logs what the fader measured about its
   motor, or a note that it hasn't been characterised yet. Diagnostic only.
 - Reports the fader's mode changes, which previously went unlogged entirely:

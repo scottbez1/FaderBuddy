@@ -393,11 +393,14 @@ void FaderBuddy::remote_move_to(uint8_t position, uint8_t layer, uint8_t speed) 
     speed = LAYER_SPEED_FULL;
   }
 
-  // Write to firmware using layer-addressed protocol. At full speed send the
-  // original 3-byte write: it is equivalent, and firmware predating the speed
-  // byte ignores a 4-byte write entirely rather than moving.
+  // Always send the speed when the firmware understands it, full speed
+  // included. A 3-byte write leaves the layer's STORED speed alone, so after
+  // any slower move it would silently re-apply that old limit - it is only
+  // equivalent to a full-speed move if the layer was already at full speed.
+  // Firmware predating the byte ignores a 4-byte write entirely, so that case
+  // (where speed has been forced to LAYER_SPEED_FULL above) still sends 3.
   uint8_t buffer[] = {REG_LAYER_TARGET, layer, hw_position, speed};
-  size_t len = (speed == LAYER_SPEED_FULL) ? 3 : 4;
+  size_t len = speed_supported_ ? 4 : 3;
   if (write_with_retry_(buffer, len)) {
     ESP_LOGD(TAG, "Set layer %d target to %d (user position) at speed %d", layer, position, speed);
   } else {

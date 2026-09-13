@@ -192,8 +192,10 @@ The FaderBuddy acts as an I2C peripheral with a configurable address (base 0x20 
 - **Optional move speed**: `LAYER_TARGET` (0x0E) accepts an optional 4th byte capping move
   speed, as a unitless 0-255 value spanning the validated speed range (255 = full speed).
   Three-byte writes behave exactly as before, so this is backwards compatible and did not
-  bump the protocol version; send full-speed moves as 3-byte writes, since firmware
-  predating the byte ignores a 4-byte write entirely
+  bump the protocol version. A host that uses the byte should send it on every move,
+  255 included - a 3-byte write leaves the layer's *stored* speed in place rather than
+  moving at full speed. Send 3 bytes only to firmware predating the byte, which ignores
+  a 4-byte write entirely
 - **Firmware version** (0x11): `REG_FW_VERSION`, a packed `(major << 8) | minor` u16, distinct
   from the protocol version at 0x00. Hosts feature-detect on this; firmware predating it reads
   back as 0xFFFF. The protocol version is only bumped when an existing register's wire format

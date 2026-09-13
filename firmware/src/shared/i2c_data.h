@@ -208,8 +208,11 @@
  *
  * A 3-byte write leaves the layer's stored speed alone, and layers power up at
  * LAYER_SPEED_FULL, so a host that never sends the byte moves at full speed.
- * Send full-speed moves as 3-byte writes: firmware predating this byte ignores
- * a 4-byte write entirely rather than moving.
+ *
+ * A host that DOES use the byte should send it on every move, LAYER_SPEED_FULL
+ * included: dropping back to a 3-byte write re-applies whatever limit the layer
+ * last stored, rather than moving at full speed. Send 3 bytes only when talking
+ * to firmware that predates the byte, which ignores a 4-byte write entirely.
  */
 #define LAYER_SPEED_SLOWEST (0)
 #define LAYER_SPEED_FULL (255)
