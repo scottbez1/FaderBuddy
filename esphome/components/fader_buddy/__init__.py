@@ -14,7 +14,7 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import i2c
+from esphome.components import button, i2c
 
 # Aliased: importing the sibling `text_sensor.py` platform module binds it as an
 # attribute of this package, which would shadow a plain `text_sensor` name here.
@@ -24,10 +24,13 @@ from esphome.core import CORE
 
 MULTI_CONF = True
 DEPENDENCIES = ["i2c"]
-AUTO_LOAD = ["text_sensor"]
+AUTO_LOAD = ["button", "text_sensor"]
 
 fader_buddy_ns = cg.esphome_ns.namespace("fader_buddy")
 FaderBuddy = fader_buddy_ns.class_("FaderBuddy", cg.PollingComponent, i2c.I2CDevice)
+SelfCalibrationButton = fader_buddy_ns.class_(
+    "SelfCalibrationButton", button.Button, cg.Parented.template(FaderBuddy)
+)
 
 # Used by platform files (e.g. text_sensor) to reference the parent hub
 CONF_FADER_BUDDY_ID = "fader_buddy_id"
@@ -55,6 +58,7 @@ CONF_SPEED = "speed"
 CONF_DEFAULT_SPEED = "default_speed"
 CONF_SERIAL_NUMBER = "serial_number"
 CONF_FIRMWARE_VERSION = "firmware_version"
+CONF_SELF_CALIBRATION = "self_calibration"
 
 # Diagnostic text sensors the hub creates itself, so a bare fader_buddy block
 # reports what it is without any entity yaml. Each maps to (default name
@@ -64,6 +68,14 @@ AUTO_TEXT_SENSORS = {
     CONF_SERIAL_NUMBER: ("Serial Number", "mdi:identifier"),
     CONF_FIRMWARE_VERSION: ("Firmware Version", "mdi:chip"),
 }
+
+# Buttons the hub creates itself, same deal. A press here moves the fader for
+# several seconds, so these are entity_category "config" rather than controls.
+AUTO_BUTTONS = {
+    CONF_SELF_CALIBRATION: ("Self Calibration", "mdi:tune-vertical"),
+}
+
+AUTO_ENTITIES = {**AUTO_TEXT_SENSORS, **AUTO_BUTTONS}
 
 
 def _default_entity_names(config):
@@ -82,7 +94,7 @@ def _default_entity_names(config):
         return config
     hub_id = config.get(CONF_ID)
     prefix = f"{hub_id} " if isinstance(hub_id, str) else ""
-    for key, (label, _icon) in AUTO_TEXT_SENSORS.items():
+    for key, (label, _icon) in AUTO_ENTITIES.items():
         sub = config.setdefault(key, {})
         if isinstance(sub, dict) and CONF_NAME not in sub:
             sub[CONF_NAME] = f"{prefix}{label}"
@@ -133,6 +145,11 @@ CONFIG_SCHEMA = cv.All(
             entity_category="diagnostic",
             icon=AUTO_TEXT_SENSORS[CONF_FIRMWARE_VERSION][1],
         ),
+        cv.Optional(CONF_SELF_CALIBRATION, default={}): button.button_schema(
+            SelfCalibrationButton,
+            entity_category="config",
+            icon=AUTO_BUTTONS[CONF_SELF_CALIBRATION][1],
+        ),
         cv.Optional(CONF_ON_MANUAL_MOVE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_RAW_POSITION_UPDATE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
@@ -158,6 +175,9 @@ async def to_code(config):
     if not _claimed_by_legacy_platform(config, CONF_FIRMWARE_VERSION):
         sens = await core_text_sensor.new_text_sensor(config[CONF_FIRMWARE_VERSION])
         cg.add(var.set_firmware_text_sensor(sens))
+
+    btn = await button.new_button(config[CONF_SELF_CALIBRATION])
+    await cg.register_parented(btn, config[CONF_ID])
 
     # Store initial layer haptic configurations (sent during setup)
     if CONF_LAYER_HAPTICS in config:

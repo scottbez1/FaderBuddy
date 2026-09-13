@@ -16,9 +16,11 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/components/button/button.h"
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/optional.h"
 
 #include "i2c_data.h"
@@ -149,6 +151,15 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
 };
 
 // Action classes for automation
+// A press runs the same thing as the fader_buddy.run_self_calibration action.
+// The fader sweeps to both ends and characterises its motor, which takes a few
+// seconds and moves the carriage - hence entity_category "config", so Home
+// Assistant files it with the device's settings rather than its controls.
+class SelfCalibrationButton : public button::Button, public Parented<FaderBuddy> {
+ protected:
+  void press_action() override { this->parent_->run_self_calibration(); }
+};
+
 template<typename... Ts> class SetActiveLayerAction : public Action<Ts...> {
  public:
   SetActiveLayerAction(FaderBuddy *parent) : parent_(parent) {}

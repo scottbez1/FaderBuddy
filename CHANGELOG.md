@@ -110,6 +110,12 @@ layer-addressed registers.
   `disabled_by_default: true`, on the hub's `serial_number:` /
   `firmware_version:` key. Firmware version had no sensor before, only a log
   line.
+- The hub also creates a **Self Calibration** button, so a fader can be
+  recalibrated from Home Assistant without writing an automation around the
+  `fader_buddy.run_self_calibration` action. `entity_category: config`, since
+  pressing it drives the carriage to both ends for several seconds - HA files
+  it with the device's settings rather than its controls. Rename it with
+  `self_calibration: {name: ...}`, or hide it with `internal: true`.
 - **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
   It still works and still wins over the hub's own serial number sensor, so
   there are never two, but it now logs a deprecation warning. To migrate,
