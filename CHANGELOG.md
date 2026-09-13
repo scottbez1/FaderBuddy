@@ -105,6 +105,11 @@ layer-addressed registers.
 
 - Reads `REG_MOTOR_CAL` at startup and logs what the fader measured about its
   motor, or a note that it hasn't been characterised yet. Diagnostic only.
+- Reports the fader's mode changes, which previously went unlogged entirely:
+  self-calibration starting and finishing (re-reading `REG_MOTOR_CAL` on
+  completion, so the run's own measurements are logged rather than the ones
+  read at startup), and a warning whenever the fader latches `MODE_ERROR` -
+  including a failed endpoint sweep, which was silent.
 
 ### 0.2.0 - unreleased
 

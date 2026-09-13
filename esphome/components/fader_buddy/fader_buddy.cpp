@@ -249,6 +249,33 @@ bool FaderBuddy::read_sensor_data_() {
   uint8_t double_tap_nonce = (state & STATE_DOUBLE_TAP_NONCE_bm) >> STATE_DOUBLE_TAP_NONCE_bp;
   uint8_t active_layer = (state & STATE_ACTIVE_LAYER_bm) >> STATE_ACTIVE_LAYER_bp;
 
+  // The fader's mode changes on its own - self-calibration finishing, a move
+  // timing out into MODE_ERROR - and nothing else here reports that.
+  if (mode != this->last_mode_) {
+    Mode previous = this->last_mode_;
+    this->last_mode_ = mode;
+
+    if (mode == MODE_SELF_CALIBRATION) {
+      ESP_LOGI(TAG, "Self-calibration started");
+    } else if (previous == MODE_SELF_CALIBRATION) {
+      if (mode == MODE_ERROR) {
+        ESP_LOGE(TAG, "Self-calibration failed: the endpoint sweep found no usable travel. "
+                      "Check the motor and potentiometer wiring. The fader ignores position "
+                      "commands until the error is cleared.");
+      } else {
+        // Re-read what it measured. The startup log ran before this, so these
+        // are the only numbers that reflect the run that just finished.
+        ESP_LOGI(TAG, "Self-calibration complete");
+        this->read_motor_calibration_();
+      }
+    } else if (mode == MODE_ERROR) {
+      ESP_LOGW(TAG, "Fader latched MODE_ERROR (a move did not reach its target). "
+                    "Position commands are ignored until the error is cleared.");
+    } else {
+      ESP_LOGD(TAG, "Mode %d -> %d", previous, mode);
+    }
+  }
+
   if (state != last_state_) {
     last_state_ = state;
     // ESP_LOGD(TAG, "State: %08x -- Current position: %03d, position_nonce: %d, touch: %01d, mode: %d, adc: %d, double_tap_nonce: %d\n", (unsigned int) state, hw_position, position_nonce, touch, mode, raw_adc, double_tap_nonce);

@@ -109,6 +109,10 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
 
         // State variables
         uint32_t last_state_{0};
+        // Faders normally come up idle, so this doesn't log a phantom
+        // transition at startup - but a fader that boots into MODE_ERROR does
+        // get reported, which is what we want.
+        Mode last_mode_{MODE_INPUT_IDLE};
         std::string serial_number_;
         text_sensor::TextSensor *serial_text_sensor_{nullptr};
         HighFrequencyLoopRequester high_freq_;
