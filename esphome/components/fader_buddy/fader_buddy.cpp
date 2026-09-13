@@ -15,6 +15,8 @@
 
 #include "fader_buddy.h"
 
+#include <cstdio>
+
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
@@ -114,6 +116,7 @@ void FaderBuddy::dump_config() {
     ESP_LOGCONFIG(TAG, "  Serial Number: %s", this->serial_number_.c_str());
   }
   LOG_TEXT_SENSOR("  ", "Serial Number", this->serial_text_sensor_);
+  LOG_TEXT_SENSOR("  ", "Firmware Version", this->firmware_text_sensor_);
 
   LOG_UPDATE_INTERVAL(this);
 }
@@ -156,12 +159,21 @@ void FaderBuddy::read_firmware_version_() {
     this->firmware_version_ = ((uint16_t) buffer[0] << 8) | buffer[1];
   }
 
+  char version[16];
   if (this->firmware_version_ == FW_VERSION_NONE || this->firmware_version_ == 0) {
     this->firmware_version_ = FW_VERSION_NONE;
-    ESP_LOGCONFIG(TAG, "Fader firmware: 1.0 or older (no version register)");
+    // Pre-1.1 firmware has no version register, so this is the most specific
+    // thing that can be said about it.
+    snprintf(version, sizeof(version), "1.0 or older");
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s (no version register)", version);
   } else {
-    ESP_LOGCONFIG(TAG, "Fader firmware: %d.%d", this->firmware_version_ >> 8,
-                  this->firmware_version_ & 0xFF);
+    snprintf(version, sizeof(version), "%d.%d", this->firmware_version_ >> 8,
+             this->firmware_version_ & 0xFF);
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s", version);
+  }
+
+  if (this->firmware_text_sensor_ != nullptr) {
+    this->firmware_text_sensor_->publish_state(version);
   }
 
   this->speed_supported_ = this->firmware_version_ != FW_VERSION_NONE &&

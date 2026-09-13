@@ -15,7 +15,12 @@ from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import i2c
-from esphome.const import CONF_ID, CONF_MODE
+
+# Aliased: importing the sibling `text_sensor.py` platform module binds it as an
+# attribute of this package, which would shadow a plain `text_sensor` name here.
+from esphome.components import text_sensor as core_text_sensor
+from esphome.const import CONF_ID, CONF_MODE, CONF_NAME
+from esphome.core import CORE
 
 MULTI_CONF = True
 DEPENDENCIES = ["i2c"]
@@ -48,6 +53,58 @@ CONF_POSITION = "position"
 CONF_VALUE_CHANGE_MIN_INTERVAL = "value_change_min_interval"
 CONF_SPEED = "speed"
 CONF_DEFAULT_SPEED = "default_speed"
+CONF_SERIAL_NUMBER = "serial_number"
+CONF_FIRMWARE_VERSION = "firmware_version"
+
+# Diagnostic text sensors the hub creates itself, so a bare fader_buddy block
+# reports what it is without any entity yaml. Each maps to (default name
+# suffix, icon). Set `internal: true` on one to keep it out of Home Assistant,
+# or `disabled_by_default: true` to have HA register it but leave it off.
+AUTO_TEXT_SENSORS = {
+    CONF_SERIAL_NUMBER: ("Serial Number", "mdi:identifier"),
+    CONF_FIRMWARE_VERSION: ("Firmware Version", "mdi:chip"),
+}
+
+
+def _default_entity_names(config):
+    """Give each auto-created text sensor a name before its schema validates.
+
+    The entity base schema rejects a sub-config carrying neither `name:` nor a
+    manual `id:`, and it runs while validating that sub-config - before any
+    validator on this schema could fill one in. So this has to be a
+    pre-validator, seeing the raw config.
+
+    The name is prefixed with the hub's id so several faders in one device don't
+    collide. A config with multiple hubs and no ids on them would; ESPHome's
+    auto-generated ids don't exist yet at this point.
+    """
+    if not isinstance(config, dict):
+        return config
+    hub_id = config.get(CONF_ID)
+    prefix = f"{hub_id} " if isinstance(hub_id, str) else ""
+    for key, (label, _icon) in AUTO_TEXT_SENSORS.items():
+        sub = config.setdefault(key, {})
+        if isinstance(sub, dict) and CONF_NAME not in sub:
+            sub[CONF_NAME] = f"{prefix}{label}"
+    return config
+
+
+def _claimed_by_legacy_platform(config, key):
+    """True if a `text_sensor: platform: fader_buddy` block already provides this.
+
+    The deprecated platform form calls the same setter, so without this check a
+    config using it would get two entities for one sensor - the hub's own, left
+    unpublished, and the platform's. Drop the hub's in that case, so migrating
+    is a pure deletion of the old block.
+    """
+    for entry in CORE.config.get("text_sensor", []):
+        if entry.get("platform") != "fader_buddy":
+            continue
+        if entry.get(CONF_FADER_BUDDY_ID) != config[CONF_ID]:
+            continue
+        if key in entry:
+            return True
+    return False
 
 # Unitless move speed: 255 is full speed, 0 the slowest smooth motion
 SPEED_FULL = 255
@@ -64,9 +121,18 @@ LAYER_HAPTIC_SCHEMA = cv.Schema({
     cv.Optional(CONF_DEFAULT_SPEED, default=SPEED_FULL): cv.int_range(min=0, max=255),
 })
 
-CONFIG_SCHEMA = (
+CONFIG_SCHEMA = cv.All(
+    _default_entity_names,
     cv.Schema({
         cv.GenerateID(): cv.declare_id(FaderBuddy),
+        cv.Optional(CONF_SERIAL_NUMBER, default={}): core_text_sensor.text_sensor_schema(
+            entity_category="diagnostic",
+            icon=AUTO_TEXT_SENSORS[CONF_SERIAL_NUMBER][1],
+        ),
+        cv.Optional(CONF_FIRMWARE_VERSION, default={}): core_text_sensor.text_sensor_schema(
+            entity_category="diagnostic",
+            icon=AUTO_TEXT_SENSORS[CONF_FIRMWARE_VERSION][1],
+        ),
         cv.Optional(CONF_ON_MANUAL_MOVE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_RAW_POSITION_UPDATE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
@@ -75,7 +141,7 @@ CONFIG_SCHEMA = (
         cv.Optional(CONF_LAYER_HAPTICS): cv.ensure_list(LAYER_HAPTIC_SCHEMA),
     })
     .extend(cv.polling_component_schema("50ms"))
-    .extend(i2c.i2c_device_schema(0x20))  # default I2C address
+    .extend(i2c.i2c_device_schema(0x20)),  # default I2C address
 )
 
 async def to_code(config):
@@ -85,6 +151,13 @@ async def to_code(config):
 
     if CONF_INVERT in config:
         cg.add(var.set_invert(config[CONF_INVERT]))
+
+    if not _claimed_by_legacy_platform(config, CONF_SERIAL_NUMBER):
+        sens = await core_text_sensor.new_text_sensor(config[CONF_SERIAL_NUMBER])
+        cg.add(var.set_serial_text_sensor(sens))
+    if not _claimed_by_legacy_platform(config, CONF_FIRMWARE_VERSION):
+        sens = await core_text_sensor.new_text_sensor(config[CONF_FIRMWARE_VERSION])
+        cg.add(var.set_firmware_text_sensor(sens))
 
     # Store initial layer haptic configurations (sent during setup)
     if CONF_LAYER_HAPTICS in config:

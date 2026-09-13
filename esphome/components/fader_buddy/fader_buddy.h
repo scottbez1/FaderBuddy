@@ -83,6 +83,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // uppercase hex string (e.g. "AABBCCDDEEFF00112233"), or "" if not yet read.
     std::string get_serial_number() const { return serial_number_; }
     void set_serial_text_sensor(text_sensor::TextSensor *s) { serial_text_sensor_ = s; }
+    void set_firmware_text_sensor(text_sensor::TextSensor *s) { firmware_text_sensor_ = s; }
 
     // Called only from codegen to store initial haptic configs
     void store_initial_layer_haptic_config(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
@@ -115,6 +116,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         Mode last_mode_{MODE_INPUT_IDLE};
         std::string serial_number_;
         text_sensor::TextSensor *serial_text_sensor_{nullptr};
+        text_sensor::TextSensor *firmware_text_sensor_{nullptr};
         HighFrequencyLoopRequester high_freq_;
         bool invert_{false};
         bool last_touch_{false};

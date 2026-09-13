@@ -103,6 +103,18 @@ layer-addressed registers.
 
 ### 0.3.0 - unreleased
 
+- The hub now creates its own diagnostic text sensors - serial number and
+  firmware version - so a bare `fader_buddy:` block reports what it is with no
+  entity yaml at all. Names default to `<hub id> Serial Number` / `<hub id>
+  Firmware Version`; override `name:`, or set `internal: true` /
+  `disabled_by_default: true`, on the hub's `serial_number:` /
+  `firmware_version:` key. Firmware version had no sensor before, only a log
+  line.
+- **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
+  It still works and still wins over the hub's own serial number sensor, so
+  there are never two, but it now logs a deprecation warning. To migrate,
+  delete the `text_sensor:` block and move any `name:`/`icon:` onto the hub's
+  `serial_number:` key.
 - Fixed `remote_move_to` at speed 255 re-using the previous speed limit. Full
   speed was sent as a 3-byte write, which leaves the layer's stored speed
   alone, so a move after any slower one silently kept the old limit. The speed

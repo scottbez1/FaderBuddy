@@ -134,6 +134,9 @@ esphome run examples/multi-fader-display.yaml
 ```
 
 **Key Features:**
+- Self-creating diagnostic text sensors (serial number, firmware version) - the hub
+  declares them itself, so no `text_sensor:` platform block is needed. The old
+  `text_sensor: platform: fader_buddy` form is deprecated and goes away in 0.5.0
 - Layer-aware automation triggers: `manual_move`, `touch_change`, `double_tap`
 - Per-layer haptic configuration (detent count, strength, mode)
 - Per-layer position restore on layer changes
