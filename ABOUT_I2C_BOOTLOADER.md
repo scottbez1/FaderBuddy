@@ -294,9 +294,11 @@ To let the host *ask* a running fader to drop into the bootloader:
   [`firmware/src/shared/i2c_data.h`](firmware/src/shared/i2c_data.h):
   `REG_ENTER_BOOTLOADER` (takes a **magic payload** so a stray write can't trigger
   it) and `REG_FW_VERSION` (the application build/semantic version — see
-  [§10](#10-version-identity--no-application-detection)). **Bump
-  `I2C_PROTOCOL_VERSION`**, which also serves as the host's "this firmware supports
-  bootloader entry" capability signal.
+  [§10](#10-version-identity--no-application-detection)). Do **not** bump
+  `I2C_PROTOCOL_VERSION`: both registers are purely additive, and a host that
+  validates the protocol version strictly would break on a bump it has no reason
+  to care about. The capability signal is `FW_VERSION_BOOTLOADER_ENTRY` — the
+  minimum `REG_FW_VERSION` that honours `REG_ENTER_BOOTLOADER`.
   > ⚠️ Per [CLAUDE.md](CLAUDE.md), `i2c_data.h` is **hand-synced across four
   > copies**: the firmware source, `esphome/components/fader_buddy/i2c_data.h`,
   > the production-jig header, and the WebHID JS constants. All four must be
@@ -407,10 +409,17 @@ executed, and the device advertises that it needs one.
 Boards still running the current, pre-bootloader firmware answer `0x00` with a
 normal protocol version but have **no bootloader** behind them. The host must not
 send them `REG_ENTER_BOOTLOADER` expecting an I2C update. It distinguishes them by
-the bumped `I2C_PROTOCOL_VERSION` (the capability signal from
-[§8](#8-application-side-changes-specified-not-implemented)): a version below the
-bootloader-aware threshold means "UPDI migration required, one time." This is the
-only remaining case that still needs a physical programmer.
+`REG_FW_VERSION` against `FW_VERSION_BOOTLOADER_ENTRY` (the capability signal from
+[§8](#8-application-side-changes-specified-not-implemented)): a firmware version
+below that threshold — `FW_VERSION_NONE` included — means "UPDI migration
+required, one time." This is the only remaining case that still needs a physical
+programmer.
+
+Note this is a floor, not a guarantee: `FW_VERSION` describes the *application*,
+and the application cannot read the boot section's contents, so a board whose
+bootloader was somehow never installed would still report a bootloader-aware
+version. In practice the two are installed together by the factory flash, and the
+host's `BL_VERSION_MARKER` probe catches the mismatch before any app is erased.
 
 ## 11. Host-side firmware packaging & update policy (ESPHome)
 

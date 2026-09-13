@@ -38,14 +38,25 @@
  * Boot section size, in 256-byte units == FUSE.BOOTEND. The application is
  * linked to start at BL_APP_START (== BOOTEND * 256) and the same value is
  * written to the BOOTEND fuse. This is the single source of truth for the
- * boot/app split -- keep the app's linker offset, the fuse, and this constant
- * in lockstep (see platformio.ini and firmware/tools/merge_factory_hex.py).
+ * boot/app split -- keep this constant, the app's linker offset, the fuse, and
+ * the host-side image extractors in lockstep. All of them:
+ *   - platformio.ini: board_build.text_section_start, and --bootend in the
+ *     fb_bootloader_only / fb_app_and_bootloader upload commands
+ *   - firmware/tools/export_app_image.py: FLASH_START
+ *   - production_tools/programAndTest/tools/generate_app_image.py: FLASH_START
+ *   - production_tools/programAndTest/test_host.py: the --bootend argument
+ *   - production_tools/programAndTest/factory_test_images/ (rebuild the image)
  *
- * NOTE: sized generously for initial bring-up. Shrink toward the measured
- * bootloader size once the build settles (see ABOUT_I2C_BOOTLOADER.md section 2).
+ * Sized to the measured bootloader: 1304 bytes as built, so 0x06 (1536) is the
+ * smallest 256-byte-granular section that holds it, leaving ~230 bytes of
+ * bootloader headroom. The app needs the rest -- at 0x07 it no longer links.
+ *
+ * Changing this is a UPDI-only operation (fuse write), and the boot section is
+ * unwritable by the CPU in any case, so a board in the field cannot be moved to
+ * a different split over I2C. See ABOUT_I2C_BOOTLOADER.md sections 2 and 3.
  */
-#define BL_BOOTEND             (0x08)
-#define BL_APP_START           ((uint16_t)(BL_BOOTEND) * 256U)          /* 0x0800 */
+#define BL_BOOTEND             (0x06)
+#define BL_APP_START           ((uint16_t)(BL_BOOTEND) * 256U)          /* 0x0600 */
 #define BL_APP_SIZE            (BL_FLASH_SIZE - BL_APP_START)
 #define BL_APP_END             (BL_FLASH_SIZE - 1U)                     /* last app byte */
 #define BL_APPEND              (0x00)  /* FUSE.APPEND: app section runs to end of flash */

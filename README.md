@@ -25,6 +25,14 @@ STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to 
 <img width="435" height="245" alt="FaderBuddySimpleTopDown" src="https://github.com/user-attachments/assets/8a98dc1c-cbcf-4585-8ef0-39cc0e5eeb9b" />
 </p>
 
+The [FaderBuddy community Discord server](https://discord.gg/xZXQAp5cue) is the best place to keep up with the latest changes or ask questions about the project!
+
+<p align="center">
+<a href="https://www.youtube.com/shorts/l-DIM_kQ8EY" target="_blank">
+<img height="400" alt="thumbnailPlayButton" src="https://github.com/user-attachments/assets/7b81f69e-3ac5-4cb1-9d12-3880ea6b603f" />
+</a>
+</p>
+
 Learn more about the project and how to build your own below, or purchase a FaderBuddy from the [Bezek Labs Etsy store](https://bezeklabs.etsy.com/listing/4506790932/) (US-only).
 
 ---
@@ -62,6 +70,9 @@ fader_buddy:
 and to move the fader from a lambda:
 ```cpp
 id(my_fader).remote_move_to(position, layer);
+
+// optionally cap the speed - 0-255, where 255 is full speed
+id(my_fader).remote_move_to(position, layer, 128);
 ```
 
 That's pretty much all there is to it!

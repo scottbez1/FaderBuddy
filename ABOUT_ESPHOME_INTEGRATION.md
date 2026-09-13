@@ -74,6 +74,47 @@ fader_buddy:
     update_interval: 10ms
 ```
 
+## Complete Example: Light Brightness Control
+
+This example shows bidirectional control - a single fader controlling a Home Assistant light's brightness and responding to remote changes to that light's brightness:
+
+```yaml
+fader_buddy:
+  - id: brightness_fader
+    address: 0x20
+    update_interval: 10ms
+    layer_haptics:
+      - layer: 0
+        mode: smooth
+        default_speed: 120  # move deliberately rather than instantly
+
+    # User moves fader → update light brightness
+    on_manual_move:
+      then:
+        - homeassistant.action:
+            action: light.turn_on
+            data:
+              entity_id: light.living_room
+              brightness: !lambda 'return x;'
+              transition: "0"
+
+# Light brightness changes in Home Assistant → move fader
+sensor:
+  - platform: homeassistant
+    id: living_room_brightness
+    entity_id: light.living_room
+    attribute: brightness
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(brightness_fader).remote_move_to(isnan(x) ? 0 : x);
+```
+
+For additional complete working examples, see the `esphome/examples/` directory:
+
+- **multi-fader-display.yaml** - Three faders with an LVGL display, showing haptic configuration, layer setup, and Home Assistant integration
+
 ## Configuration Options
 
 ### Component Configuration
@@ -90,7 +131,8 @@ fader_buddy:
     - `detents`: Creates distinct "notches" along the fader's travel (requires `detent_count`)
   - **detent_count** (optional, default: `0`): Number of detents (1-15, for detents mode only)
   - **detent_strength** (optional, default: `0`): Detent force feedback strength (0-7, for detents mode only)
-  - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices. Set to `0ms` for no rate limiting.
+  - **default_speed** (optional, default: `255`, requires fader firmware 1.1+): Move speed for this layer, 0-255, used by `fader_buddy.remote_move_to` and by lambda calls to `remote_move_to()` that don't pass a speed of their own. `255` is full speed; see the `speed` parameter of `fader_buddy.remote_move_to` below. This one is tracked in ESPHome rather than on the fader — the component looks up the active layer's value and sends it with each move — so changing it costs no extra I2C traffic.
+  - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices like zigbee lights. Set to `0ms` for no rate limiting. Keep as low as possible.
 
 ### Triggers
 
@@ -168,11 +210,29 @@ Command the fader to move to a specific position.
     id: my_fader
     position: 128
     layer: 0  # Optional, defaults to layer 0
+
+# Example: move gently rather than at full speed
+- fader_buddy.remote_move_to:
+    id: my_fader
+    position: 200
+    speed: 80
 ```
 
 **Position:** 0-255 (0 = bottom, 255 = top, unless inverted)
 
 **Layer:** Optional layer index (0-7). If the specified layer is not currently active, the position is stored and will be restored when that layer becomes active.
+
+**speed:** Optional. How fast to move, as a unitless **0-255** value: `255` is full speed, `0` is the slowest the fader moves smoothly. Omit it to use the layer's `default_speed`.
+
+Requires fader firmware **1.1 or newer**. On older firmware the component logs a warning once and moves at full speed instead; it checks the firmware version at startup, so a `default_speed` that cannot be honoured is reported then rather than on the first move.
+
+The scale is linear in velocity, and both ends are usable — `0` is the slowest speed the mechanism sustains without creeping in stick-slip steps (roughly 700ms for full travel), and `255` removes the limit entirely. There is nothing outside the range worth reaching for.
+
+This caps the fader's speed rather than scheduling the move, so a shorter move takes proportionally less time — at a given speed, a half-scale move takes about half as long as a full-scale one. Slowing moves down is mostly useful when several faders move at once, or when you want motion to read as deliberate rather than instant.
+
+Treat it as a limit rather than a precise speed. It is realised through a friction-dependent mechanism, so actual velocity lands within about 15% of nominal, with around 7% difference between moving up and moving down.
+
+Moving a layer that is not currently active also stores the speed, so it applies when that layer is restored later.
 
 ### fader_buddy.set_active_layer
 
@@ -217,6 +277,23 @@ button:
           id: my_fader
 ```
 
+## Text Sensors
+
+### serial_number
+
+You can expose the microcontroller's serial number as a text sensor, which is handy for identifying a specific board for diagnostics. The serial is read once at startup and published as an uppercase hex string.
+
+
+```yaml
+text_sensor:
+  - platform: fader_buddy
+    fader_buddy_id: my_fader
+    serial_number:
+      name: "Fader Serial Number"
+```
+
+The `serial_number` block accepts the standard ESPHome text sensor options (e.g. `name`, `id`, `icon`). It defaults to the `diagnostic` entity category.
+
 ## C++ API (for Lambdas)
 
 When writing lambda expressions, you can call these methods directly on the component:
@@ -235,49 +312,10 @@ id(my_fader).set_layer_haptic_config(layer, mode, detent_count, detent_strength)
 
 // Calibration
 id(my_fader).run_self_calibration();
+
+// Serial number (empty until read at startup)
+std::string serial = id(my_fader).get_serial_number();
 ```
-
-## Complete Example: Light Brightness Control
-
-This example shows a single fader controlling a Home Assistant light's brightness:
-
-```yaml
-fader_buddy:
-  - id: brightness_fader
-    address: 0x20
-    update_interval: 10ms
-    layer_haptics:
-      - layer: 0
-        mode: smooth
-        value_change_min_interval: 100ms  # Limit updates to 10/second
-
-    # User moves fader → update light brightness
-    on_manual_move:
-      then:
-        - homeassistant.action:
-            action: light.turn_on
-            data:
-              entity_id: light.living_room
-              brightness: !lambda 'return x;'
-              transition: 0
-
-# Light brightness changes in Home Assistant → move fader
-sensor:
-  - platform: homeassistant
-    entity_id: light.living_room
-    attribute: brightness
-    internal: true
-    on_value:
-      then:
-        - lambda: |-
-            id(brightness_fader).remote_move_to(isnan(x) ? 0 : x);
-```
-
-## Examples
-
-For complete working examples, see the `esphome/examples/` directory:
-
-- **multi-fader-display.yaml** - Three faders with an LVGL display, showing haptic configuration, layer setup, and Home Assistant integration
 
 ## Troubleshooting
 

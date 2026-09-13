@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 # firmware/src/shared/bootloader_protocol.h constants (kept trivially in sync).
-FLASH_START = 0x0800   # BL_APP_START (BOOTEND 0x08 * 256)
+FLASH_START = 0x0600   # BL_APP_START (BOOTEND 0x06 * 256)
 FLASH_SIZE = 16384     # BL_FLASH_SIZE
 PAGE_SIZE = 64         # BL_PAGE_SIZE
 

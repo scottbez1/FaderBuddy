@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 
 # firmware/src/shared/bootloader_protocol.h constants (kept trivially in sync).
-FLASH_START = 0x0800   # BL_APP_START (BOOTEND 0x08 * 256)
+FLASH_START = 0x0600   # BL_APP_START (BOOTEND 0x06 * 256)
 FLASH_SIZE = 16384     # BL_FLASH_SIZE
 PAGE_SIZE = 64         # BL_PAGE_SIZE
 
@@ -61,6 +61,13 @@ def parse_define(path, name):
     if not m:
         raise RuntimeError("could not find %s in %s" % (name, path))
     return int(m.group(1), 0)
+
+
+def parse_fw_version(path):
+    """FW_VERSION is the packed u16 (major << 8) | minor, so read the halves."""
+    major = parse_define(path, "FW_VERSION_MAJOR")
+    minor = parse_define(path, "FW_VERSION_MINOR")
+    return (major << 8) | minor
 
 
 def build_offset_app():
@@ -123,7 +130,7 @@ def main():
     if not OFFSET_HEX.exists():
         raise SystemExit("offset app hex not found: %s (build fb_app_only first)" % OFFSET_HEX)
 
-    fw_version = parse_define(SHARED_I2C_DATA, "FW_VERSION")
+    fw_version = parse_fw_version(SHARED_I2C_DATA)
     image = load_app_image()
     emit_header(args.output, image, fw_version)
 

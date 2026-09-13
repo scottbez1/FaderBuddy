@@ -1,7 +1,7 @@
 # `old_firmware_fw0.hex`
 
 A **fixed, checked-in** snapshot of a full ATtiny1616 flash image (I2C
-bootloader at `0x0000` + offset application at `0x0800`) built with
+bootloader at `0x0000` + offset application at `0x0600`) built with
 `FW_VERSION` forced to `0` -- i.e. a stand-in for "a board already in the
 field, running an old application, that already has the bootloader
 installed." It's also built with its heartbeat LED blink period doubled
@@ -22,6 +22,12 @@ Only rebuild/replace this file if you deliberately want to change the fixed
 breaks compatibility with old app images). Ordinary application changes
 should NOT touch this file -- the whole point is that it stays fixed so the
 test keeps exercising a real old-to-new transition.
+
+**A `BL_BOOTEND` change is one of the cases that does force a rebuild**: the app
+half of this image is linked at `BL_APP_START`, so a boot/app split change leaves
+the old image linked at an address the new bootloader will not jump to. Rebuild it
+and update the `--bootend` argument in `test_host.py` at the same time. Last
+regenerated for `BOOTEND = 0x06`.
 
 ## How it was generated
 
@@ -58,6 +64,7 @@ current version. The jig firmware's `OLD_FW_VERSION_FOR_TEST` constant
 used here.
 
 Flashed via `firmware/tools/flash_with_fuses.py` (same tool the
-`fb_app_and_bootloader` PlatformIO env uses) with `--erase --bootend 0x08
+`fb_app_and_bootloader` PlatformIO env uses) with `--erase --bootend 0x06
 --append 0x00`, invoked directly by `test_host.py` rather than through a
-PlatformIO environment.
+PlatformIO environment. That `--bootend` value must match `BL_BOOTEND` and the
+offset this image was linked at.
