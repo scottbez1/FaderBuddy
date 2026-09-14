@@ -254,6 +254,9 @@ FaderBuddy = fader_buddy_ns.class_("FaderBuddy", cg.PollingComponent, i2c.I2CDev
 SelfCalibrationButton = fader_buddy_ns.class_(
     "SelfCalibrationButton", button.Button, cg.Parented.template(FaderBuddy)
 )
+FirmwareUpdateButton = fader_buddy_ns.class_(
+    "FirmwareUpdateButton", button.Button, cg.Parented.template(FaderBuddy)
+)
 
 # Used by platform files (e.g. text_sensor) to reference the parent hub
 CONF_FADER_BUDDY_ID = "fader_buddy_id"
@@ -303,6 +306,7 @@ CONF_DEFAULT_SPEED = "default_speed"
 CONF_SERIAL_NUMBER = "serial_number"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_SELF_CALIBRATION = "self_calibration"
+CONF_FIRMWARE_UPDATE = "firmware_update"
 
 # Diagnostic text sensors the hub creates itself, so a bare fader_buddy block
 # reports what it is without any entity yaml. Each maps to (default name
@@ -313,10 +317,12 @@ AUTO_TEXT_SENSORS = {
     CONF_FIRMWARE_VERSION: ("Firmware Version", "mdi:chip"),
 }
 
-# Buttons the hub creates itself, same deal. A press here moves the fader for
-# several seconds, so these are entity_category "config" rather than controls.
+# Buttons the hub creates itself, same deal. A press here ties the fader up for
+# seconds - sweeping the carriage, or rewriting its flash - so these are
+# entity_category "config" rather than controls.
 AUTO_BUTTONS = {
     CONF_SELF_CALIBRATION: ("Self Calibration", "mdi:tune-vertical"),
+    CONF_FIRMWARE_UPDATE: ("Firmware Update", "mdi:package-down"),
 }
 
 AUTO_ENTITIES = {**AUTO_TEXT_SENSORS, **AUTO_BUTTONS}
@@ -394,6 +400,14 @@ CONFIG_SCHEMA = cv.All(
             entity_category="config",
             icon=AUTO_BUTTONS[CONF_SELF_CALIBRATION][1],
         ),
+        # Always created, even with no firmware configured - a press just gets
+        # rejected then (see FaderBuddy::request_firmware_update). Whether an
+        # update is pending is runtime state, not something the yaml knows.
+        cv.Optional(CONF_FIRMWARE_UPDATE, default={}): button.button_schema(
+            FirmwareUpdateButton,
+            entity_category="config",
+            icon=AUTO_BUTTONS[CONF_FIRMWARE_UPDATE][1],
+        ),
         cv.Optional(CONF_ON_MANUAL_MOVE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_RAW_POSITION_UPDATE): automation.validate_automation(single=True),
         cv.Optional(CONF_ON_TOUCH_CHANGE): automation.validate_automation(single=True),
@@ -432,8 +446,9 @@ async def to_code(config):
         sens = await core_text_sensor.new_text_sensor(config[CONF_FIRMWARE_VERSION])
         cg.add(var.set_firmware_text_sensor(sens))
 
-    btn = await button.new_button(config[CONF_SELF_CALIBRATION])
-    await cg.register_parented(btn, config[CONF_ID])
+    for key in AUTO_BUTTONS:
+        btn = await button.new_button(config[key])
+        await cg.register_parented(btn, config[CONF_ID])
 
     # Store initial layer haptic configurations (sent during setup)
     if CONF_LAYER_HAPTICS in config:

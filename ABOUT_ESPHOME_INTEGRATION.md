@@ -341,6 +341,28 @@ reproducible from any tagged commit.
 
 ### Triggering an update
 
+Every fader gets a **Firmware Update** button automatically, so there is nothing to
+write for the common case — it shows up in Home Assistant under the device's
+settings (`entity_category: config`). Rename or hide it on the hub:
+
+```yaml
+fader_buddy:
+  - id: my_fader
+    firmware: "1.3"
+    firmware_update:
+      name: "Update Fader Firmware"
+      # internal: true          # to keep it out of Home Assistant entirely
+```
+
+A press is ignored unless there is genuinely something to install — no
+`firmware:`/`firmware_image:` configured, the fader already running the packaged
+version, or firmware too old to reach its bootloader all just log a line and do
+nothing, rather than tying up the I2C bus for tens of seconds to reach the same
+answer. The button is always created, since whether an update is pending is
+runtime state rather than something the yaml knows.
+
+The equivalent action, for driving an update from an automation:
+
 ```yaml
 button:
   - platform: template
@@ -350,11 +372,17 @@ button:
           id: my_fader
 ```
 
-Updates only ever happen when this action runs — there is no automatic update mode.
-The component refuses to start if the fader is being touched, if the target version
-is already installed, if `max_update_attempts` has been reached, or if the fader's
-firmware predates I2C bootloader entry (`FW_VERSION` below 1.3), which needs a
-one-time UPDI migration. The outcome is reported through `on_firmware_update_result`.
+Updates only ever happen when the button is pressed or the action runs — there is
+no automatic update mode. The component refuses to start if the fader is being
+touched, if the target version is already installed, if `max_update_attempts` has
+been reached, or if the fader's firmware predates I2C bootloader entry
+(`FW_VERSION` below 1.3), which needs a one-time UPDI migration. The outcome is
+reported through `on_firmware_update_result`.
+
+One case is updatable even though no version can be read: a fader sitting in its
+bootloader with no working app image (see the forced-entry strap in
+`ABOUT_I2C_BOOTLOADER.md`). The component notices that at startup, logs it, and
+keeps the button live so the fader can be recovered.
 
 ### Cutting a release
 

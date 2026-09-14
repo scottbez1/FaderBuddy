@@ -511,9 +511,12 @@ fader_buddy:
 ### The update flow
 
 Registered as a **manual action** `fader_buddy.update_firmware` (`fader_buddy.h`'s
-`UpdateFirmwareAction`, driving `FaderBuddy::update_firmware()`), the only way an
-update ever runs — **there is no autoupdate mode**; a human always triggers it
-explicitly. The sequence, ported from the jig's reference implementation
+`UpdateFirmwareAction`, driving `FaderBuddy::update_firmware()`) and as the
+auto-created **Firmware Update** button (`FirmwareUpdateButton`, driving
+`FaderBuddy::request_firmware_update()` — the same thing behind a cheap
+`firmware_update_available()` pre-check, so a speculative press with nothing to
+install costs no bus traffic). Those are the only ways an update ever runs —
+**there is no autoupdate mode**; a human always triggers it explicitly. The sequence, ported from the jig's reference implementation
 (`production_tools/programAndTest/src/fader_buddy_bootloader.cpp`): probe register
 `0x00` (app version or bootloader marker) → (if not already resident)
 `REG_ENTER_BOOTLOADER` → wait for the bootloader marker → `ERASE_APP` → stream pages

@@ -116,6 +116,18 @@ layer-addressed registers.
   pressing it drives the carriage to both ends for several seconds - HA files
   it with the device's settings rather than its controls. Rename it with
   `self_calibration: {name: ...}`, or hide it with `internal: true`.
+- The hub creates a **Firmware Update** button too, alongside the
+  `fader_buddy.update_firmware` action. A press only does something when there
+  is actually an update to install: with no `firmware:`/`firmware_image:` in
+  the config, with the fader already running the packaged version, or with
+  firmware too old to reach its bootloader over I2C, the press is logged and
+  ignored rather than taking the bus for tens of seconds to reach the same
+  conclusion. The exception is a fader sitting in its bootloader with no
+  working app - that is always updatable, and is now flagged at startup.
+  `entity_category: config`; rename with `firmware_update: {name: ...}` or
+  hide with `internal: true`.
+- The firmware version text sensor is re-read after a successful update, so it
+  reports the newly installed version without a host reboot.
 - **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
   It still works and still wins over the hub's own serial number sensor, so
   there are never two, but it now logs a deprecation warning. To migrate,

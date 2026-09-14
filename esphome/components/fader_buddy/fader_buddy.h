@@ -104,6 +104,16 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // whether or not the fader is already at the packaged version (no-ops if so).
     // Never triggered automatically -- only ever runs when this is called.
     void update_firmware();
+    // Whether an update would actually do anything: an image is configured, the
+    // fader isn't already running it, and there is a route to the bootloader.
+    // Decided from state cached at setup, so it costs no bus traffic and can be
+    // polled from a lambda; update_firmware() re-checks over the wire before
+    // committing, so this is a cheap pre-filter, not the authority.
+    bool firmware_update_available() const;
+    // What the firmware update button presses. Same thing as update_firmware(),
+    // except a press with nothing to install is rejected outright rather than
+    // taking the bus to find that out.
+    void request_firmware_update();
 
     Trigger<uint8_t, uint8_t> *get_on_manual_move_trigger() const { return on_manual_move_; }
     Trigger<uint8_t, uint8_t> *get_on_raw_position_update_trigger() const { return on_raw_position_update_; }
@@ -141,6 +151,10 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         bool last_touch_{false};
         uint8_t last_double_tap_nonce_{0};
         uint16_t firmware_version_{FW_VERSION_NONE};
+        // Set when the version probe at setup saw the bootloader's marker rather
+        // than a protocol version, i.e. the fader has no working app image. The
+        // one case where an update is viable despite no readable app version.
+        bool bootloader_resident_{false};
         bool speed_supported_{false};
         bool warned_speed_unsupported_{false};  // warn once, not once per move
 
@@ -210,6 +224,15 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
 class SelfCalibrationButton : public button::Button, public Parented<FaderBuddy> {
  protected:
   void press_action() override { this->parent_->run_self_calibration(); }
+};
+
+// A press runs the fader_buddy.update_firmware action, but only when there is
+// actually something to install -- see firmware_update_available().
+// Writing flash takes tens of seconds and the fader is unusable meanwhile, so
+// this is entity_category "config" as well.
+class FirmwareUpdateButton : public button::Button, public Parented<FaderBuddy> {
+ protected:
+  void press_action() override { this->parent_->request_firmware_update(); }
 };
 
 template<typename... Ts> class SetActiveLayerAction : public Action<Ts...> {

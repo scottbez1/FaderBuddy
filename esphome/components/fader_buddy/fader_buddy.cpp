@@ -48,6 +48,16 @@ void FaderBuddy::setup() {
     return;
   }
 
+  // A resident bootloader answers the version probe with its own marker instead
+  // of a protocol version. Nothing else here works against it, but noting it
+  // means the firmware update button stays usable, which is the whole point of
+  // being able to reach the bootloader over I2C.
+  if (buffer == BL_VERSION_MARKER) {
+    this->bootloader_resident_ = true;
+    ESP_LOGW(TAG, "Init: fader is sitting in its bootloader (no working app image). "
+                  "Press the firmware update button, or run fader_buddy.update_firmware, to recover it.");
+  }
+
   // Older protocols really are incompatible - the register layout differs - but
   // a NEWER one is not, because bumps are only made for changes a host can
   // ignore. Failing on those would brick this host on a fader that merely got
@@ -58,7 +68,7 @@ void FaderBuddy::setup() {
     this->mark_failed();
     return;
   }
-  if (buffer > I2C_PROTOCOL_VERSION) {
+  if (buffer > I2C_PROTOCOL_VERSION && !this->bootloader_resident_) {
     ESP_LOGW(TAG, "Fader reports protocol v%d, newer than the v%d this component was built against. "
                   "Continuing, but consider updating the component.", buffer, I2C_PROTOCOL_VERSION);
   }
@@ -577,6 +587,43 @@ void FaderBuddy::set_firmware_image(const uint8_t *image, uint32_t length, uint1
 
 uint8_t FaderBuddy::get_last_mode_() const { return (last_state_ & STATE_MODE_bm) >> STATE_MODE_bp; }
 
+// Cheap, bus-free answer to "would an update do anything?", from what setup
+// cached. Deliberately conservative in the same way update_firmware() is, so a
+// button press that this rejects would have been rejected over the wire too.
+bool FaderBuddy::firmware_update_available() const {
+  if (firmware_image_ == nullptr) {
+    return false;  // nothing packaged for this fader
+  }
+  if (bootloader_resident_) {
+    return true;  // no app to compare against, and recovery is exactly the point
+  }
+  if (firmware_version_ == FW_VERSION_NONE || firmware_version_ < FW_VERSION_BOOTLOADER_ENTRY) {
+    return false;  // no I2C route to the bootloader; UPDI migration required
+  }
+  return firmware_version_ != firmware_fw_version_;
+}
+
+// Entry point for the firmware update button. update_firmware() would reach the
+// same conclusion, but only after taking the bus and, in the already-up-to-date
+// case, waiting out a touch-idle poll first. A button in Home Assistant gets
+// pressed speculatively, so decide the common no-op case from cached state.
+void FaderBuddy::request_firmware_update() {
+  if (!firmware_update_available()) {
+    if (firmware_image_ == nullptr) {
+      ESP_LOGW(TAG, "Firmware update: no firmware configured for this fader, ignoring press");
+    } else if (firmware_version_ == FW_VERSION_NONE || firmware_version_ < FW_VERSION_BOOTLOADER_ENTRY) {
+      ESP_LOGW(TAG, "Firmware update: this fader's firmware predates I2C bootloader entry "
+                    "(needs >= v%u.%u); a one-time UPDI migration is required. Ignoring press",
+               FW_VERSION_BOOTLOADER_ENTRY >> 8, FW_VERSION_BOOTLOADER_ENTRY & 0xFF);
+    } else {
+      ESP_LOGI(TAG, "Firmware update: already at v%u.%u, nothing to install. Ignoring press",
+               firmware_version_ >> 8, firmware_version_ & 0xFF);
+    }
+    return;
+  }
+  update_firmware();
+}
+
 void FaderBuddy::update_firmware() {
   if (firmware_image_ == nullptr) {
     ESP_LOGE(TAG, "update_firmware: no firmware_image configured");
@@ -663,6 +710,10 @@ void FaderBuddy::update_firmware() {
     ESP_LOGI(TAG, "update_firmware: success, now at v%u", firmware_fw_version_);
     uint8_t zero = 0;
     update_attempts_pref_.save(&zero);
+    // Re-read rather than assume: this refreshes the version text sensor and
+    // makes firmware_update_available() report false without needing a reboot.
+    bootloader_resident_ = false;
+    read_firmware_version_();
     on_firmware_update_result_->trigger(true, "");
   } else {
     attempts++;
