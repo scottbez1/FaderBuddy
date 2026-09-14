@@ -126,8 +126,25 @@ layer-addressed registers.
   working app - that is always updatable, and is now flagged at startup.
   `entity_category: config`; rename with `firmware_update: {name: ...}` or
   hide with `internal: true`.
-- The firmware version text sensor is re-read after a successful update, so it
-  reports the newly installed version without a host reboot.
+- Firmware updates no longer block the main loop. The transfer runs a slice at a
+  time from `loop()`, so the device stays responsive for the seconds it takes, and
+  `fader_buddy.update_firmware` now returns immediately — the outcome still arrives
+  on `on_firmware_update_result`. Page streaming is time-budgeted per loop
+  iteration, and the two long stalls (erase, whole-image CRC) are polled rather
+  than waited out inline.
+- The firmware version text sensor doubles as the update's status field, since a
+  fader mid-update has no version to report: `erasing`, `writing 40%`,
+  `verifying`, then the new version, or `1.3 (update failed)` on a failure. How
+  much of the progress Home Assistant renders depends on `api: batch_delay:`
+  (states are batched and deduplicated per entity); the log shows every step, and
+  the terminal states always get through.
+- The firmware version sensor reads `bootloader (no app)` for a fader sitting in
+  its bootloader, rather than whatever `REG_FW_VERSION` happened to return, and is
+  re-read after a successful update so it reports the newly installed version
+  without a host reboot.
+- The serial number is re-read after a successful update. A fader that booted into
+  its bootloader could never report one - `REG_SERIAL` is an app register - so the
+  sensor stayed empty until the host rebooted.
 - **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
   It still works and still wins over the hub's own serial number sensor, so
   there are never two, but it now logs a deprecation warning. To migrate,

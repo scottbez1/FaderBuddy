@@ -50,6 +50,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
      // Standard component functions to override
      void setup() override;
      void update() override;
+     void loop() override;
      void dump_config() override;
      float get_setup_priority() const override;
 
@@ -100,10 +101,15 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // see BL_APP_META_ADDR in bootloader_protocol.h).
     void set_firmware_image(const uint8_t *image, uint32_t length, uint16_t image_crc16, uint16_t fw_version);
     void set_max_update_attempts(uint8_t max_attempts) { max_update_attempts_ = max_attempts; }
-    // Manual update action: blocks until the update finishes or fails. Safe to call
-    // whether or not the fader is already at the packaged version (no-ops if so).
-    // Never triggered automatically -- only ever runs when this is called.
+    // Manual update action: starts an update and returns immediately. The transfer
+    // then runs a slice at a time from loop(), so the device stays responsive and
+    // coarse progress reaches the firmware version text sensor as it goes. The
+    // outcome arrives on the on_firmware_update_result trigger, not from here.
+    // Safe to call whether or not the fader is already at the packaged version
+    // (no-ops if so). Never triggered automatically -- only when this is called.
     void update_firmware();
+    // True between update_firmware() and the result trigger.
+    bool firmware_update_in_progress() const { return update_stage_ != UPDATE_IDLE; }
     // Whether an update would actually do anything: an image is configured, the
     // fader isn't already running it, and there is a route to the bootloader.
     // Decided from state cached at setup, so it costs no bus traffic and can be
@@ -135,6 +141,12 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     private:
         void read_serial_number_();
         void read_firmware_version_();
+        // How the firmware version text sensor renders the fader's current
+        // state: "1.5", "1.0 or older", or "bootloader (no app)".
+        std::string firmware_version_text_() const;
+        // Push an arbitrary string to that sensor. Used to report update
+        // status there, since a fader mid-update has no version to report.
+        void publish_firmware_text_(const std::string &text);
         void read_motor_calibration_();
 
         // State variables
@@ -188,14 +200,47 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         uint8_t max_update_attempts_{3};
         ESPPreferenceObject update_attempts_pref_;
 
-        // Guards against two faders updating the shared I2C bus at once; a single
-        // update() call blocks for the whole sequence, so this only matters across
-        // instances (e.g. concurrent HA service calls landing on different tasks).
+        // Guards against two faders updating the shared I2C bus at once. Held for
+        // the whole multi-tick sequence, so unlike the per-instance update_stage_
+        // this also stops a second fader starting one while the first is mid-flight.
         static bool s_update_in_progress;
 
-        uint8_t get_last_mode_() const;
+        // --- Update state machine (driven by update_tick_() from loop()) ---
+        // The transfer is sliced across loop iterations rather than run inline:
+        // it takes seconds end to end, and blocking that long starves the API,
+        // WiFi and every other component - and makes progress reporting
+        // impossible, since queued entity states only go out from the loop.
+        enum UpdateStage : uint8_t {
+            UPDATE_IDLE = 0,
+            UPDATE_WAIT_TOUCH_IDLE,  // bounded wait for the user to let go
+            UPDATE_PROBE,            // app or bootloader? and the go/no-go checks
+            UPDATE_WAIT_MARKER,      // after REG_ENTER_BOOTLOADER
+            UPDATE_ERASE,            // status check, then issue the erase
+            UPDATE_ERASE_WAIT,       // target is stalled in NVM, poll it back
+            UPDATE_WRITE,            // stream pages, budgeted per tick
+            UPDATE_WRITE_CHECK,      // post-write NVM status, then ask for the CRC
+            UPDATE_CRC_WAIT,         // poll for the whole-image CRC
+            UPDATE_WAIT_APP,         // after RUN_APP
+            UPDATE_CONFIRM,          // REG_FW_VERSION matches the packaged image
+        };
+        // How long one tick may spend streaming pages before yielding. Long
+        // enough to get several 64-byte pages out per loop iteration, short
+        // enough that nothing else notices.
+        static constexpr uint32_t UPDATE_WRITE_BUDGET_MS = 20;
 
-        bool perform_firmware_update_(std::string &error_out);
+        UpdateStage update_stage_{UPDATE_IDLE};
+        uint32_t update_deadline_{0};   // millis deadline for the polling stages
+        uint32_t update_page_{0};       // next page to write
+        uint8_t update_attempts_{0};    // loaded from the pref when the run starts
+        uint8_t update_progress_pct_{0xFF};  // last published step; 0xFF = none yet
+
+        void update_tick_();
+        void enter_update_stage_(UpdateStage stage, uint32_t timeout_ms = 0);
+        void publish_update_progress_(const char *label, uint8_t pct);
+        void log_update_starting_();
+        void finish_update_(bool ok, const std::string &error);
+
+        uint8_t get_last_mode_() const;
 
         // Bootloader wire-protocol primitives -- port of the jig's reference
         // implementation, see production_tools/programAndTest/src/fader_buddy_bootloader.cpp.
@@ -205,13 +250,16 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         bool bl_read_bare_retry_(uint8_t *out, size_t len, uint8_t attempts, uint32_t retry_delay_ms);
         bool bl_read_version_byte_(uint8_t &version);
         bool bl_enter_bootloader_();
-        bool bl_wait_for_marker_(uint32_t timeout_ms);
-        bool bl_wait_for_app_(uint32_t timeout_ms, uint8_t &version);
         bool bl_get_status_(uint8_t &bl_version, uint8_t &status, uint8_t &last_error);
-        bool bl_erase_app_();
+        // Erase and whole-image CRC are each split into "ask" and "poll for the
+        // answer": both stall the target long enough that waiting inline would
+        // be the one thing still blocking the loop. See UPDATE_ERASE_WAIT and
+        // UPDATE_CRC_WAIT in update_tick_().
+        bool bl_request_erase_app_();
         bool bl_set_page_addr_(uint16_t addr);
         bool bl_send_frame_(const uint8_t *data16);
-        bool bl_get_image_crc16_(uint16_t addr, uint16_t len, uint16_t &crc);
+        bool bl_request_image_crc16_(uint16_t addr, uint16_t len);
+        bool bl_poll_image_crc16_(uint16_t &crc);
         bool bl_run_app_();
         bool read_fw_version_(uint16_t &version);
 };

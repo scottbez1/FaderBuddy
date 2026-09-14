@@ -147,6 +147,14 @@ void FaderBuddy::dump_config() {
 // Read the 10-byte chip serial number and cache it as an uppercase hex string.
 // The serial is a static factory ID, so this only needs to run once at setup.
 void FaderBuddy::read_serial_number_() {
+  // REG_SERIAL is an app register, so there is nothing to read while the
+  // bootloader is resident. read it again once an update puts an app back --
+  // see the end of update_firmware().
+  if (this->bootloader_resident_) {
+    ESP_LOGW(TAG, "Serial number unavailable: fader is in its bootloader");
+    return;
+  }
+
   uint8_t reg = REG_SERIAL;
   uint8_t serial[10];
   auto read_result = this->write_read(&reg, 1, serial, sizeof(serial));
@@ -172,6 +180,16 @@ void FaderBuddy::read_serial_number_() {
 // succeeds and returns 0xFFFF rather than failing - hence checking the value,
 // not just the error code.
 void FaderBuddy::read_firmware_version_() {
+  // REG_FW_VERSION is an app register; the bootloader neither implements it nor
+  // is meaningfully "a firmware version", so don't read garbage and report it.
+  if (this->bootloader_resident_) {
+    this->firmware_version_ = FW_VERSION_NONE;
+    this->speed_supported_ = false;
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s", firmware_version_text_().c_str());
+    publish_firmware_text_(firmware_version_text_());
+    return;
+  }
+
   uint8_t reg = REG_FW_VERSION;
   uint8_t buffer[2] = {0xFF, 0xFF};
   auto read_result = this->write_read(&reg, 1, buffer, sizeof(buffer));
@@ -181,26 +199,40 @@ void FaderBuddy::read_firmware_version_() {
   } else {
     this->firmware_version_ = ((uint16_t) buffer[0] << 8) | buffer[1];
   }
-
-  char version[16];
-  if (this->firmware_version_ == FW_VERSION_NONE || this->firmware_version_ == 0) {
+  if (this->firmware_version_ == 0) {
     this->firmware_version_ = FW_VERSION_NONE;
-    // Pre-1.1 firmware has no version register, so this is the most specific
-    // thing that can be said about it.
-    snprintf(version, sizeof(version), "1.0 or older");
-    ESP_LOGCONFIG(TAG, "Fader firmware: %s (no version register)", version);
-  } else {
-    snprintf(version, sizeof(version), "%d.%d", this->firmware_version_ >> 8,
-             this->firmware_version_ & 0xFF);
-    ESP_LOGCONFIG(TAG, "Fader firmware: %s", version);
   }
 
-  if (this->firmware_text_sensor_ != nullptr) {
-    this->firmware_text_sensor_->publish_state(version);
+  std::string version = firmware_version_text_();
+  if (this->firmware_version_ == FW_VERSION_NONE) {
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s (no version register)", version.c_str());
+  } else {
+    ESP_LOGCONFIG(TAG, "Fader firmware: %s", version.c_str());
   }
+  publish_firmware_text_(version);
 
   this->speed_supported_ = this->firmware_version_ != FW_VERSION_NONE &&
                            this->firmware_version_ >= FW_VERSION_MOVE_SPEED;
+}
+
+std::string FaderBuddy::firmware_version_text_() const {
+  if (this->bootloader_resident_) {
+    return "bootloader (no app)";
+  }
+  if (this->firmware_version_ == FW_VERSION_NONE) {
+    // Pre-1.1 firmware has no version register, so this is the most specific
+    // thing that can be said about it.
+    return "1.0 or older";
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d.%d", this->firmware_version_ >> 8, this->firmware_version_ & 0xFF);
+  return buf;
+}
+
+void FaderBuddy::publish_firmware_text_(const std::string &text) {
+  if (this->firmware_text_sensor_ != nullptr) {
+    this->firmware_text_sensor_->publish_state(text);
+  }
 }
 
 // Log what self-calibration measured about this fader's motor, and the
@@ -240,7 +272,21 @@ void FaderBuddy::read_motor_calibration_() {
 
 float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }
 
+// PollingComponent drives update() from the scheduler, not from here, so this
+// override costs nothing when no update is running.
+void FaderBuddy::loop() {
+  if (update_stage_ != UPDATE_IDLE) {
+    update_tick_();
+  }
+}
+
 void FaderBuddy::update() {
+  // An update owns the bus and has the fader in its bootloader, where REG_STATE
+  // means nothing. Skip the poll entirely until it finishes.
+  if (update_stage_ != UPDATE_IDLE) {
+    return;
+  }
+
   // Check all layers for deferred triggers to fire
   for (uint8_t layer = 0; layer < 8; layer++) {
     if (layer_states_[layer].has_deferred_value && layer_states_[layer].value_change_min_interval > 0) {
@@ -624,10 +670,18 @@ void FaderBuddy::request_firmware_update() {
   update_firmware();
 }
 
+// Starting an update is just a state transition -- the transfer itself runs a
+// slice at a time from loop(), see update_tick_(). Everything here is decided
+// up front, so a rejected request costs nothing and reports immediately.
 void FaderBuddy::update_firmware() {
   if (firmware_image_ == nullptr) {
     ESP_LOGE(TAG, "update_firmware: no firmware_image configured");
     on_firmware_update_result_->trigger(false, "no firmware_image configured");
+    return;
+  }
+  if (update_stage_ != UPDATE_IDLE) {
+    ESP_LOGW(TAG, "update_firmware: this fader is already updating, skipping");
+    on_firmware_update_result_->trigger(false, "update already in progress");
     return;
   }
   if (s_update_in_progress) {
@@ -636,189 +690,327 @@ void FaderBuddy::update_firmware() {
     return;
   }
 
-  // Don't interrupt the user: wait (bounded) for the fader to go idle before taking the bus.
-  uint32_t wait_start = millis();
-  while (get_last_mode_() == MODE_INPUT_ACTIVE && millis() - wait_start < 5000) {
-    delay(50);
-    read_sensor_data_();
-  }
-  if (get_last_mode_() == MODE_INPUT_ACTIVE) {
-    ESP_LOGW(TAG, "update_firmware: fader still in use, deferring");
-    on_firmware_update_result_->trigger(false, "fader in use");
-    return;
-  }
-
-  // Register 0x00 is the universal "who are you" probe: a valid protocol version
-  // means the app is running (and REG_FW_VERSION is meaningful); BL_VERSION_MARKER
-  // means the bootloader is already resident. Probe that first -- REG_FW_VERSION
-  // (0x11) is app-only and undefined in the bootloader, so trying it blind first
-  // risks misreading garbage as a version.
-  uint8_t probe;
-  bool responded = bl_read_version_byte_(probe);
-  if (!responded) {
-    ESP_LOGE(TAG, "update_firmware: device not responding");
-    on_firmware_update_result_->trigger(false, "device not responding");
-    return;
-  }
-  bool bootloader_resident = probe == BL_VERSION_MARKER;
-  uint16_t current_version = 0;
-  bool have_version = !bootloader_resident && read_fw_version_(current_version);
-
-  if (have_version && current_version == firmware_fw_version_) {
-    ESP_LOGI(TAG, "update_firmware: already at v%u, nothing to do", current_version);
-    uint8_t zero = 0;
-    update_attempts_pref_.save(&zero);
-    on_firmware_update_result_->trigger(true, "");
-    return;
-  }
-
-  // Firmware predating FW_VERSION_BOOTLOADER_ENTRY ignores REG_ENTER_BOOTLOADER,
-  // so there is no way to reach the bootloader over I2C -- and no bootloader
-  // behind it to reach. Installing one is a fuse write, hence UPDI-only. Refuse
-  // here rather than writing the magic and timing out waiting for a marker that
-  // will never appear.
-  // FW_VERSION_NONE (0xFFFF) is what unversioned firmware reads back as, and
-  // numerically exceeds the threshold -- it has to be excluded explicitly.
-  if (have_version && (current_version == FW_VERSION_NONE ||
-                       current_version < FW_VERSION_BOOTLOADER_ENTRY)) {
-    ESP_LOGE(TAG, "update_firmware: firmware v%u.%u predates I2C bootloader entry "
-                  "(needs >= v%u.%u); one-time UPDI migration required",
-             current_version >> 8, current_version & 0xFF,
-             FW_VERSION_BOOTLOADER_ENTRY >> 8, FW_VERSION_BOOTLOADER_ENTRY & 0xFF);
-    on_firmware_update_result_->trigger(false, "firmware predates bootloader entry");
-    return;
-  }
-
-  uint8_t attempts = 0;
-  update_attempts_pref_.load(&attempts);
-  if (attempts >= max_update_attempts_) {
+  update_attempts_pref_.load(&update_attempts_);
+  if (update_attempts_ >= max_update_attempts_) {
     ESP_LOGE(TAG, "update_firmware: max attempts (%u) already reached for target v%u, refusing",
              max_update_attempts_, firmware_fw_version_);
     on_firmware_update_result_->trigger(false, "max update attempts reached");
     return;
   }
 
-  ESP_LOGI(TAG, "update_firmware: updating to v%u (attempt %u/%u)", firmware_fw_version_, attempts + 1,
-           max_update_attempts_);
-
+  // Claim the bus for this fader before the first tick, so a second request
+  // landing later in the same loop iteration is refused rather than interleaved.
   s_update_in_progress = true;
-  std::string error;
-  bool ok = perform_firmware_update_(error);
+  update_page_ = 0;
+  update_progress_pct_ = 0xFF;
+  // Don't interrupt the user: the first stage waits (bounded) for the fader to
+  // go idle. Polling that from loop() instead of a delay() loop means a fader
+  // that is being touched no longer freezes the whole device for 5 seconds.
+  enter_update_stage_(UPDATE_WAIT_TOUCH_IDLE, 5000);
+  publish_firmware_text_("waiting for fader");
+}
+
+// Move to `stage`, arming its deadline. timeout_ms of 0 means the stage does its
+// work in one tick and sets the next stage itself.
+void FaderBuddy::enter_update_stage_(UpdateStage stage, uint32_t timeout_ms) {
+  update_stage_ = stage;
+  update_deadline_ = millis() + timeout_ms;
+}
+
+// Publish coarse progress to the firmware version text sensor. Steps of 5% keep
+// the churn down; a fader mid-update has no version to report anyway, so the
+// field is free to say what it is doing instead.
+//
+// Whether Home Assistant sees each step depends on `api: batch_delay:`. States
+// are batched per entity and deduplicated, so with the default 100ms delay HA
+// sees only the steps that happen to straddle a flush. The log always shows all
+// of them, and the terminal states (the new version, or "<version> (update
+// failed)") always get through.
+void FaderBuddy::publish_update_progress_(const char *label, uint8_t pct) {
+  if (pct == update_progress_pct_) {
+    return;
+  }
+  if (update_progress_pct_ != 0xFF && pct < update_progress_pct_ + 5 && pct != 100) {
+    return;
+  }
+  update_progress_pct_ = pct;
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%s %u%%", label, pct);
+  ESP_LOGD(TAG, "update_firmware: %s", buf);
+  publish_firmware_text_(buf);
+}
+
+void FaderBuddy::log_update_starting_() {
+  ESP_LOGI(TAG, "update_firmware: updating to v%u.%u (attempt %u/%u)", firmware_fw_version_ >> 8,
+           firmware_fw_version_ & 0xFF, update_attempts_ + 1, max_update_attempts_);
+}
+
+void FaderBuddy::finish_update_(bool ok, const std::string &error) {
+  update_stage_ = UPDATE_IDLE;
   s_update_in_progress = false;
 
   if (ok) {
-    ESP_LOGI(TAG, "update_firmware: success, now at v%u", firmware_fw_version_);
+    ESP_LOGI(TAG, "update_firmware: success, now at v%u.%u", firmware_fw_version_ >> 8,
+             firmware_fw_version_ & 0xFF);
     uint8_t zero = 0;
     update_attempts_pref_.save(&zero);
-    // Re-read rather than assume: this refreshes the version text sensor and
-    // makes firmware_update_available() report false without needing a reboot.
+    // Re-read rather than assume: refreshes the version text sensor and makes
+    // firmware_update_available() report false without needing a reboot.
     bootloader_resident_ = false;
     read_firmware_version_();
+    // A fader that was sitting in its bootloader at startup never got its serial
+    // read - REG_SERIAL is an app register. Now there's an app again, so this is
+    // the first chance to fill that sensor in.
+    read_serial_number_();
     on_firmware_update_result_->trigger(true, "");
-  } else {
-    attempts++;
-    update_attempts_pref_.save(&attempts);
-    ESP_LOGE(TAG, "update_firmware: failed (attempt %u/%u): %s", attempts, max_update_attempts_, error.c_str());
-    on_firmware_update_result_->trigger(false, error);
+    return;
   }
+
+  update_attempts_++;
+  update_attempts_pref_.save(&update_attempts_);
+  ESP_LOGE(TAG, "update_firmware: failed (attempt %u/%u): %s", update_attempts_, max_update_attempts_,
+           error.c_str());
+  // Where the fader ended up depends on where it failed: still running the old
+  // app, or stranded in the bootloader with the app erased. Re-probe rather than
+  // guess, so the version sensor ends on the truth with the failure appended,
+  // instead of a stale "writing 60%".
+  uint8_t probe;
+  bootloader_resident_ = bl_read_version_byte_(probe) && probe == BL_VERSION_MARKER;
+  read_firmware_version_();
+  publish_firmware_text_(firmware_version_text_() + " (update failed)");
+  on_firmware_update_result_->trigger(false, error);
 }
 
-// Port of the jig's reference sequence, see
+// One slice of the update, run from loop(). Each stage either completes in this
+// tick and advances, keeps polling until its deadline, or fails the whole run.
+// The only stage that can take meaningful time is UPDATE_WRITE, and it is capped
+// at UPDATE_WRITE_BUDGET_MS so the loop keeps running throughout.
+//
+// Ported from the jig's reference sequence, see
 // production_tools/programAndTest/src/fader_buddy_bootloader.cpp (updateFirmware()).
-bool FaderBuddy::perform_firmware_update_(std::string &error_out) {
-  App.feed_wdt();
+void FaderBuddy::update_tick_() {
+  bool timed_out = (int32_t) (millis() - update_deadline_) >= 0;
 
-  uint8_t ver;
-  if (!bl_read_version_byte_(ver)) {
-    error_out = "no I2C response";
-    return false;
-  }
-  if (ver != BL_VERSION_MARKER) {
-    if (!bl_enter_bootloader_()) {
-      error_out = "enter bootloader cmd failed";
-      return false;
-    }
-    if (!bl_wait_for_marker_(2000)) {
-      error_out = "no bootloader marker";
-      return false;
-    }
-  }
+  switch (update_stage_) {
+    case UPDATE_IDLE:
+      return;
 
-  uint8_t bl_ver, status, last_err;
-  if (!bl_get_status_(bl_ver, status, last_err)) {
-    error_out = "no bootloader status";
-    return false;
-  }
-
-  ESP_LOGD(TAG, "update_firmware: erasing application section");
-  if (!bl_erase_app_()) {
-    error_out = "erase failed";
-    return false;
-  }
-
-  uint32_t pages = firmware_image_length_ / BL_PAGE_SIZE;
-  for (uint32_t p = 0; p < pages; p++) {
-    uint16_t page_addr = BL_APP_START + (uint16_t) (p * BL_PAGE_SIZE);
-    if (!bl_set_page_addr_(page_addr)) {
-      error_out = "set page addr failed";
-      return false;
-    }
-    for (uint8_t f = 0; f < BL_FRAMES_PER_PAGE; f++) {
-      const uint8_t *chunk = firmware_image_ + (p * BL_PAGE_SIZE) + (f * BL_FRAME_DATA_LEN);
-      if (!bl_send_frame_(chunk)) {
-        error_out = "send frame failed";
-        return false;
+    case UPDATE_WAIT_TOUCH_IDLE: {
+      read_sensor_data_();
+      if (get_last_mode_() == MODE_INPUT_ACTIVE) {
+        if (timed_out) {
+          finish_update_(false, "fader in use");
+        }
+        return;
       }
+      enter_update_stage_(UPDATE_PROBE);
+      return;
     }
-    if (p % 16 == 0) {
-      App.feed_wdt();
-      ESP_LOGD(TAG, "update_firmware: writing page %u/%u", (unsigned) (p + 1), (unsigned) pages);
+
+    case UPDATE_PROBE: {
+      // Register 0x00 is the universal "who are you" probe: a valid protocol
+      // version means the app is running (and REG_FW_VERSION is meaningful);
+      // BL_VERSION_MARKER means the bootloader is already resident. Probe that
+      // first -- REG_FW_VERSION (0x11) is app-only and undefined in the
+      // bootloader, so trying it blind first risks misreading garbage.
+      uint8_t probe;
+      if (!bl_read_version_byte_(probe)) {
+        finish_update_(false, "device not responding");
+        return;
+      }
+      if (probe == BL_VERSION_MARKER) {
+        bootloader_resident_ = true;
+        log_update_starting_();
+        enter_update_stage_(UPDATE_ERASE);
+        return;
+      }
+
+      uint16_t current_version = 0;
+      bool have_version = read_fw_version_(current_version);
+      if (have_version && current_version == firmware_fw_version_) {
+        // Not a failure: the fader is where the config wants it. Reported as
+        // success so an "ensure up to date" automation doesn't see an error.
+        ESP_LOGI(TAG, "update_firmware: already at v%u.%u, nothing to do", current_version >> 8,
+                 current_version & 0xFF);
+        update_stage_ = UPDATE_IDLE;
+        s_update_in_progress = false;
+        uint8_t zero = 0;
+        update_attempts_pref_.save(&zero);
+        read_firmware_version_();
+        on_firmware_update_result_->trigger(true, "");
+        return;
+      }
+
+      // Firmware predating FW_VERSION_BOOTLOADER_ENTRY ignores
+      // REG_ENTER_BOOTLOADER, so there is no way to reach the bootloader over
+      // I2C -- and no bootloader behind it to reach. Installing one is a fuse
+      // write, hence UPDI-only. Refuse here rather than writing the magic and
+      // timing out waiting for a marker that will never appear.
+      // FW_VERSION_NONE (0xFFFF) is what unversioned firmware reads back as, and
+      // numerically exceeds the threshold -- it has to be excluded explicitly.
+      if (have_version &&
+          (current_version == FW_VERSION_NONE || current_version < FW_VERSION_BOOTLOADER_ENTRY)) {
+        ESP_LOGE(TAG,
+                 "update_firmware: firmware v%u.%u predates I2C bootloader entry "
+                 "(needs >= v%u.%u); one-time UPDI migration required",
+                 current_version >> 8, current_version & 0xFF, FW_VERSION_BOOTLOADER_ENTRY >> 8,
+                 FW_VERSION_BOOTLOADER_ENTRY & 0xFF);
+        finish_update_(false, "firmware predates bootloader entry");
+        return;
+      }
+
+      log_update_starting_();
+      if (!bl_enter_bootloader_()) {
+        finish_update_(false, "enter bootloader cmd failed");
+        return;
+      }
+      publish_firmware_text_("entering bootloader");
+      enter_update_stage_(UPDATE_WAIT_MARKER, 2000);
+      return;
+    }
+
+    case UPDATE_WAIT_MARKER: {
+      uint8_t v;
+      if (bl_read_version_byte_(v) && v == BL_VERSION_MARKER) {
+        bootloader_resident_ = true;
+        enter_update_stage_(UPDATE_ERASE);
+        return;
+      }
+      if (timed_out) {
+        finish_update_(false, "no bootloader marker");
+      }
+      return;
+    }
+
+    case UPDATE_ERASE: {
+      uint8_t bl_ver, status, last_err;
+      if (!bl_get_status_(bl_ver, status, last_err)) {
+        finish_update_(false, "no bootloader status");
+        return;
+      }
+      publish_firmware_text_("erasing");
+      if (!bl_request_erase_app_()) {
+        finish_update_(false, "erase cmd failed");
+        return;
+      }
+      // The erase stalls the target CPU for hundreds of ms; it simply stops
+      // answering until it's done.
+      enter_update_stage_(UPDATE_ERASE_WAIT, 3000);
+      return;
+    }
+
+    case UPDATE_ERASE_WAIT: {
+      uint8_t v, st, e;
+      if (bl_get_status_(v, st, e)) {
+        if (e != BL_ERR_NONE) {
+          finish_update_(false, "nvm err=" + std::to_string(e) + " after erase");
+          return;
+        }
+        update_page_ = 0;
+        enter_update_stage_(UPDATE_WRITE);
+        return;
+      }
+      if (timed_out) {
+        finish_update_(false, "erase timed out");
+      }
+      return;
+    }
+
+    case UPDATE_WRITE: {
+      uint32_t pages = firmware_image_length_ / BL_PAGE_SIZE;
+      uint32_t slice_start = millis();
+      // Stream pages until the time budget for this tick is used up, then yield
+      // so the rest of the device (API, WiFi, the other faders) keeps running.
+      while (update_page_ < pages && millis() - slice_start < UPDATE_WRITE_BUDGET_MS) {
+        uint16_t page_addr = BL_APP_START + (uint16_t) (update_page_ * BL_PAGE_SIZE);
+        if (!bl_set_page_addr_(page_addr)) {
+          finish_update_(false, "set page addr failed");
+          return;
+        }
+        for (uint8_t f = 0; f < BL_FRAMES_PER_PAGE; f++) {
+          const uint8_t *chunk = firmware_image_ + (update_page_ * BL_PAGE_SIZE) + (f * BL_FRAME_DATA_LEN);
+          if (!bl_send_frame_(chunk)) {
+            finish_update_(false, "send frame failed");
+            return;
+          }
+        }
+        update_page_++;
+      }
+      publish_update_progress_("writing", (uint8_t) (update_page_ * 100 / pages));
+      if (update_page_ >= pages) {
+        enter_update_stage_(UPDATE_WRITE_CHECK);
+      }
+      return;
+    }
+
+    case UPDATE_WRITE_CHECK: {
+      uint8_t bv, st, le;
+      if (bl_get_status_(bv, st, le) && le != BL_ERR_NONE) {
+        finish_update_(false, "nvm err=" + std::to_string(le) + " after write");
+        return;
+      }
+      publish_firmware_text_("verifying");
+      if (!bl_request_image_crc16_(BL_APP_START, (uint16_t) firmware_image_length_)) {
+        finish_update_(false, "crc request failed");
+        return;
+      }
+      // The bootloader computes the CRC over the whole range after releasing the
+      // bus (it can't clock-stretch the whole computation), then NAKs reads
+      // until it's done.
+      enter_update_stage_(UPDATE_CRC_WAIT, 1000);
+      return;
+    }
+
+    case UPDATE_CRC_WAIT: {
+      uint16_t crc;
+      if (bl_poll_image_crc16_(crc)) {
+        if (crc != firmware_image_crc16_) {
+          char buf[48];
+          snprintf(buf, sizeof(buf), "CRC mismatch got=0x%04X exp=0x%04X", crc, firmware_image_crc16_);
+          finish_update_(false, buf);
+          return;
+        }
+        if (!bl_run_app_()) {
+          finish_update_(false, "run app cmd failed");
+          return;
+        }
+        publish_firmware_text_("starting app");
+        enter_update_stage_(UPDATE_WAIT_APP, 2000);
+        return;
+      }
+      if (timed_out) {
+        finish_update_(false, "crc read failed");
+      }
+      return;
+    }
+
+    case UPDATE_WAIT_APP: {
+      uint8_t v;
+      if (bl_read_version_byte_(v) && v != BL_VERSION_MARKER && v != 0xFF && v != 0x00) {
+        bootloader_resident_ = false;
+        enter_update_stage_(UPDATE_CONFIRM);
+        return;
+      }
+      if (timed_out) {
+        finish_update_(false, "app did not start");
+      }
+      return;
+    }
+
+    case UPDATE_CONFIRM: {
+      uint16_t fw;
+      if (!read_fw_version_(fw)) {
+        finish_update_(false, "no fw version after update");
+        return;
+      }
+      if (fw != firmware_fw_version_) {
+        finish_update_(false, "fw version mismatch after update");
+        return;
+      }
+      finish_update_(true, "");
+      return;
     }
   }
-
-  {
-    uint8_t bv, st, le;
-    if (bl_get_status_(bv, st, le) && le != BL_ERR_NONE) {
-      error_out = "nvm err=" + std::to_string(le) + " after write";
-      return false;
-    }
-  }
-
-  App.feed_wdt();
-  ESP_LOGD(TAG, "update_firmware: verifying");
-  uint16_t crc;
-  if (!bl_get_image_crc16_(BL_APP_START, (uint16_t) firmware_image_length_, crc)) {
-    error_out = "crc read failed";
-    return false;
-  }
-  if (crc != firmware_image_crc16_) {
-    char buf[48];
-    snprintf(buf, sizeof(buf), "CRC mismatch got=0x%04X exp=0x%04X", crc, firmware_image_crc16_);
-    error_out = buf;
-    return false;
-  }
-
-  if (!bl_run_app_()) {
-    error_out = "run app cmd failed";
-    return false;
-  }
-  uint8_t app_ver;
-  if (!bl_wait_for_app_(2000, app_ver)) {
-    error_out = "app did not start";
-    return false;
-  }
-
-  uint16_t fw;
-  if (!read_fw_version_(fw)) {
-    error_out = "no fw version after update";
-    return false;
-  }
-  if (fw != firmware_fw_version_) {
-    error_out = "fw version mismatch after update";
-    return false;
-  }
-
-  return true;
 }
 
 // --- Bootloader wire-protocol primitives ---
@@ -867,30 +1059,6 @@ bool FaderBuddy::bl_enter_bootloader_() {
   return bl_write_retry_(buf, sizeof(buf), 3, 5);
 }
 
-bool FaderBuddy::bl_wait_for_marker_(uint32_t timeout_ms) {
-  uint32_t start = millis();
-  while (millis() - start < timeout_ms) {
-    uint8_t v;
-    if (bl_read_version_byte_(v) && v == BL_VERSION_MARKER)
-      return true;
-    delay(5);
-  }
-  return false;
-}
-
-bool FaderBuddy::bl_wait_for_app_(uint32_t timeout_ms, uint8_t &version) {
-  uint32_t start = millis();
-  while (millis() - start < timeout_ms) {
-    uint8_t v;
-    if (bl_read_version_byte_(v) && v != BL_VERSION_MARKER && v != 0xFF && v != 0x00) {
-      version = v;
-      return true;
-    }
-    delay(5);
-  }
-  return false;
-}
-
 bool FaderBuddy::bl_get_status_(uint8_t &bl_version, uint8_t &status, uint8_t &last_error) {
   uint8_t reg = BL_CMD_GET_STATUS;
   uint8_t out[3];
@@ -902,19 +1070,11 @@ bool FaderBuddy::bl_get_status_(uint8_t &bl_version, uint8_t &status, uint8_t &l
   return true;
 }
 
-bool FaderBuddy::bl_erase_app_() {
+// Issue the erase only. The target stops answering for a few hundred ms while
+// it runs; UPDATE_ERASE_WAIT polls bl_get_status_ until it comes back.
+bool FaderBuddy::bl_request_erase_app_() {
   uint8_t reg = BL_CMD_ERASE_APP;
-  if (!bl_write_retry_(&reg, 1, 3, 5))
-    return false;
-  // The erase stalls the target CPU (~hundreds of ms); wait for it to answer,
-  // then confirm no NVM error was recorded.
-  uint8_t v, s, e;
-  for (uint8_t a = 0; a < 200; a++) {
-    if (bl_get_status_(v, s, e))
-      return e == BL_ERR_NONE;
-    delay(10);
-  }
-  return false;
+  return bl_write_retry_(&reg, 1, 3, 5);
 }
 
 bool FaderBuddy::bl_set_page_addr_(uint16_t addr) {
@@ -935,16 +1095,18 @@ bool FaderBuddy::bl_send_frame_(const uint8_t *data16) {
   return bl_write_retry_(buf, sizeof(buf));
 }
 
-bool FaderBuddy::bl_get_image_crc16_(uint16_t addr, uint16_t len, uint16_t &crc) {
+// Ask for a whole-image CRC. Split from the read because the bootloader computes
+// it after releasing the bus (it can't clock-stretch for that long) and NAKs
+// reads until it's done -- UPDATE_CRC_WAIT polls bl_poll_image_crc16_ meanwhile.
+bool FaderBuddy::bl_request_image_crc16_(uint16_t addr, uint16_t len) {
   uint8_t buf[5] = {BL_CMD_GET_VERSION_CRC16, (uint8_t) (addr >> 8), (uint8_t) (addr & 0xFF), (uint8_t) (len >> 8),
                     (uint8_t) (len & 0xFF)};
-  // The bootloader computes the CRC over the whole range after releasing the bus
-  // (it can't clock-stretch the whole computation), then NAKs reads until done.
-  if (!bl_write_retry_(buf, sizeof(buf), 3, 5))
-    return false;
-  delay(40);  // typical whole-image compute time; the read retries cover the rest
+  return bl_write_retry_(buf, sizeof(buf), 3, 5);
+}
+
+bool FaderBuddy::bl_poll_image_crc16_(uint16_t &crc) {
   uint8_t out[3];
-  if (!bl_read_bare_retry_(out, 3, 80, 5))
+  if (!bl_read_bare_retry_(out, 3, 1, 0))
     return false;
   crc = ((uint16_t) out[1] << 8) | out[2];
   return true;

@@ -376,8 +376,31 @@ Updates only ever happen when the button is pressed or the action runs — there
 no automatic update mode. The component refuses to start if the fader is being
 touched, if the target version is already installed, if `max_update_attempts` has
 been reached, or if the fader's firmware predates I2C bootloader entry
-(`FW_VERSION` below 1.3), which needs a one-time UPDI migration. The outcome is
-reported through `on_firmware_update_result`.
+(`FW_VERSION` below 1.3), which needs a one-time UPDI migration.
+
+The action **returns immediately** — the transfer then runs a slice at a time from
+the main loop, so the device stays responsive throughout. The outcome arrives on
+`on_firmware_update_result`, not when the action returns.
+
+### Watching an update
+
+The **Firmware Version** text sensor doubles as the update's status field — a fader
+mid-update has no version to report, so it says what it is doing instead:
+`waiting for fader` → `entering bootloader` → `erasing` → `writing 25%` … →
+`verifying` → `starting app`, then the new version (e.g. `1.5`). A failed update
+ends on the fader's real state with the reason appended, e.g. `1.3 (update failed)`
+or `bootloader (no app) (update failed)` if it was stranded mid-write. A fader that
+is sitting in its bootloader at startup reads `bootloader (no app)` from the outset.
+
+How much of the progress Home Assistant actually renders depends on `api:
+batch_delay:`. Entity states are batched and deduplicated per entity, so at the
+default 100ms HA sees the steps that happen to straddle a flush rather than all of
+them. Set `batch_delay: 0ms` to see each one. The ESPHome log always shows every
+step, and the terminal states always get through either way.
+
+The serial number sensor is re-read after a successful update too — a fader that
+booted into its bootloader could never report one, since `REG_SERIAL` is an app
+register.
 
 One case is updatable even though no version can be read: a fader sitting in its
 bootloader with no working app image (see the forced-entry strap in

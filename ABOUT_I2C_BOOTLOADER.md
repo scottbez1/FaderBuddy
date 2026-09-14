@@ -521,11 +521,28 @@ install costs no bus traffic). Those are the only ways an update ever runs —
 `0x00` (app version or bootloader marker) → (if not already resident)
 `REG_ENTER_BOOTLOADER` → wait for the bootloader marker → `ERASE_APP` → stream pages
 (`SET_PAGE_ADDR` + 4× `SEND_FRAME` with per-frame CRC16) → `GET_VERSION_CRC16`
-whole-image verify → `RUN_APP` → re-read `REG_FW_VERSION` to confirm. Runs
-synchronously (blocks the ESPHome loop for the whole transfer, feeding the watchdog
-via `App.feed_wdt()` periodically) rather than as a coroutine — this mirrors the
-jig's blocking style and keeps the bus-serialization guarantee below trivial to
-reason about.
+whole-image verify → `RUN_APP` → re-read `REG_FW_VERSION` to confirm.
+
+Unlike the jig, which can block, the component runs this **a slice at a time from
+`loop()`** — `update_tick_()` walking the `UpdateStage` enum, one stage per call.
+`update_firmware()` only arms the state machine and returns; the outcome arrives on
+`on_firmware_update_result`. The transfer takes seconds end to end, and blocking
+that long would starve the API, WiFi and every other component — and would make
+progress reporting impossible, because queued entity states are only flushed from
+the loop. Three details make the slicing work:
+
+- **Page streaming is time-budgeted**, not one-page-per-tick:
+  `UPDATE_WRITE` keeps writing until `UPDATE_WRITE_BUDGET_MS` (20ms) is spent, then
+  yields. At one page per tick the ~230-page image would take ~4s of pure latency.
+- **The two long stalls are split into "ask" and "poll"** — `bl_request_erase_app_()`
+  / `UPDATE_ERASE_WAIT` and `bl_request_image_crc16_()` / `UPDATE_CRC_WAIT`. Both
+  leave the target unable to answer for hundreds of ms; waiting inline for them
+  would have been the one thing still blocking the loop.
+- **Every polling stage carries a deadline** (`update_deadline_`, compared
+  wraparound-safe), replacing the old `delay()`-based `bl_wait_for_*` helpers.
+
+`update()` early-returns while a run is in flight: the fader is in its bootloader,
+where `REG_STATE` means nothing.
 
 ### Guard rails (as implemented)
 
@@ -540,11 +557,15 @@ reason about.
   no explicit reset logic needed. Result (success/failure + reason) is surfaced via
   the `on_firmware_update_result` trigger for the user to wire to whatever
   sensor/notification they want.
-- **Don't interrupt the user** — `update_firmware()` waits (bounded, 5s) for the
-  fader to leave `MODE_INPUT_ACTIVE` before taking the bus; gives up and reports
-  failure if it's still in use.
+- **Don't interrupt the user** — `UPDATE_WAIT_TOUCH_IDLE` waits (bounded, 5s) for
+  the fader to leave `MODE_INPUT_ACTIVE` before taking the bus; gives up and reports
+  failure if it's still in use. Polled from `loop()` like every other stage, so a
+  fader being touched no longer freezes the device for those 5 seconds.
 - **One fader at a time** — a class-static `s_update_in_progress` flag refuses a
-  second concurrent update across all `FaderBuddy` instances (relevant if two update
+  second concurrent update across all `FaderBuddy` instances. It is claimed before
+  the first tick and held for the whole multi-tick run, which matters more now that
+  the sequence is interruptible: without it a second fader could start a run in a
+  gap between the first one's slices. (Also relevant if two update
   actions are triggered from different tasks, e.g. concurrent HA service calls; the
   single-threaded ESPHome main loop already serializes same-task calls).
 
