@@ -478,10 +478,12 @@ usable answer. The boot log says which of the two cases it was:
 
 - `Init: no response from the fader at 0xNN after 5 attempts` - it NAKed, or
   isn't there. With a `firmware:`/`firmware_image:` configured, the component
-  stays alive and re-probes every update interval, so a fader that turns up
-  late initializes itself; the firmware version sensor reads `not responding`
-  in the meantime, and the **Firmware Update** button stays pressable in case
-  the fader is wedged rather than absent. With no image configured there is
+  stays alive and re-probes on a doubling backoff — at roughly 1, 3, 7, 15 and
+  31 seconds after boot — so a fader that turns up late initializes itself.
+  After that it is left alone rather than tying up the bus on every poll. The
+  firmware version sensor reads `not responding`, and the **Firmware Update**
+  button stays pressable in case the fader is wedged rather than absent;
+  pressing it is also how to retry once the backoff has run out. With no image configured there is
   nothing to recover with, so the component is marked failed until reboot.
 - `Init: Incompatible I2C protocol version ... got N` - it answered, with a
   protocol older than v5. That firmware also predates I2C bootloader entry

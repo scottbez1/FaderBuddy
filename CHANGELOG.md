@@ -55,6 +55,13 @@ for production purposes.
   programmer before they can be updated in-band. See ABOUT_I2C_BOOTLOADER.md.
 - Grounding test point TP5 across a reset holds the board in its bootloader,
   recovering a board whose application does not run or does not answer the bus.
+- Fixed the bootloader decoding the three I2C address jumpers in the reverse
+  order from the application. The board nets are `PC0 = A2`, `PC1 = A1`,
+  `PC2 = A0`, so reversing them swaps address offsets 1<->4 and 3<->6 while
+  leaving 0, 2, 5 and 7 correct. A board on one of the affected settings
+  answered on a different address the moment it dropped into its bootloader,
+  so a host would find nothing at the configured address and could not update
+  it. Bootloaders already flashed keep the old decode - see below.
 - The bootloader runs the main clock at its full 20 MHz. It had been leaving
   the reset default in place - OSC20M divided by 6, so 3.33 MHz - which put the
   TWI slave's 10x f_CLK_PER/f_SCL requirement at a 333 kHz ceiling. A host on a
@@ -166,9 +173,12 @@ layer-addressed registers.
   whole boot: both text sensors stayed Unknown and, because ESPHome runs
   neither `loop()` nor `update()` on a failed component, the firmware update
   that could have recovered it was refused and could not have run anyway. Such
-  a fader is now re-probed every update interval and initializes itself
-  whenever it turns up, and the **Firmware Update** button stays available for
-  one that is wedged rather than absent. A fader reporting a protocol older
+  a fader is now re-probed on a doubling backoff - about 1, 3, 7, 15 and 31
+  seconds after boot - and initializes itself whenever it turns up, and the
+  **Firmware Update** button stays available for one that is wedged rather than
+  absent. The backoff is bounded deliberately: a fader still silent after half
+  a minute is absent rather than slow, and probing it once per poll forever
+  would take the bus away from the faders that are working. A fader reporting a protocol older
   than v5 still fails the component: that firmware predates I2C bootloader
   entry (firmware 1.3), so UPDI really is the only way back, and the log now
   says so.

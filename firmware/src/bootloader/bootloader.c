@@ -249,18 +249,26 @@ static void process_command(void) {
 /* ------------------------------------------------------------------ TWI0 */
 
 static void twi_slave_init(void) {
-  /* Hardware I2C address from PC2/PC1/PC0 with pull-ups (matches the app). */
+  /* Hardware I2C address from the three jumpers on PC0/PC1/PC2, with pull-ups.
+   *
+   * The address bits run the OPPOSITE way round from the port bits: the board
+   * nets are PC0 = A2, PC1 = A1, PC2 = A0 (schematic pads 15/16/17), so the
+   * three bits are reversed, not copied. Getting this backwards swaps the
+   * addresses of every board whose A0 and A2 jumpers differ -- offsets 1<->4
+   * and 3<->6 -- which makes a fader vanish from its configured address the
+   * moment it drops into the bootloader, i.e. exactly when a host needs it.
+   * This must stay identical to setup_i2c() in firmware/src/main.cpp. */
   PORTC.PIN0CTRL |= PORT_PULLUPEN_bm;
   PORTC.PIN1CTRL |= PORT_PULLUPEN_bm;
   PORTC.PIN2CTRL |= PORT_PULLUPEN_bm;
   for (volatile uint16_t i = 0; i < 1000; i++) {
     /* let the pull-ups settle before sampling */
   }
-  uint8_t pc = PORTC.IN;  /* jumper installed pulls the pin low -> address bit set */
+  uint8_t fitted = (uint8_t)(~PORTC.IN) & 0x07;  /* bit n set = jumper on PCn */
   uint8_t addr = BL_I2C_BASE_ADDRESS
-    + (((pc & (1 << 2)) ? 0 : 1) << 2)   /* PC2 */
-    + (((pc & (1 << 1)) ? 0 : 1) << 1)   /* PC1 */
-    + (((pc & (1 << 0)) ? 0 : 1) << 0);  /* PC0 */
+    + (uint8_t)((fitted & (1 << 0)) << 2)   /* PC0 -> A2 */
+    + (uint8_t)((fitted & (1 << 1)))        /* PC1 -> A1 */
+    + (uint8_t)((fitted & (1 << 2)) >> 2);  /* PC2 -> A0 */
 
   /* TWI0 default pins are PB0 (SCL) / PB1 (SDA). tinyAVR 1-series errata: their
    * PORTB.OUT bits must be 0. External bus pull-ups are provided by the board. */

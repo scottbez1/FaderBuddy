@@ -142,6 +142,8 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         // decides whether to fail the component) from the periodic retry driven
         // by update() while awaiting_device_ is set.
         void probe_and_init_(bool first_attempt);
+        // Drives the bounded re-probe backoff while awaiting_device_ is set.
+        void retry_probe_();
         void read_serial_number_();
         void read_firmware_version_();
         // How the firmware version text sensor renders the fader's current
@@ -177,6 +179,11 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         // mark_failed() would foreclose both - ESPHome calls neither loop() nor
         // update() on a failed component.
         bool awaiting_device_{false};
+        // Bounded, doubling backoff for those re-probes; once it runs out the
+        // fader is left alone rather than tying up the bus on every poll.
+        uint32_t retry_probe_at_{0};
+        uint32_t retry_probe_backoff_ms_{0};
+        uint8_t retry_probes_left_{0};
         bool speed_supported_{false};
         bool warned_speed_unsupported_{false};  // warn once, not once per move
 

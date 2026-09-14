@@ -433,6 +433,16 @@ Everything below is absent from the current implementation, not broken in it.
 Details that are not obvious from the code, and that are likely to trip up the
 next person working in this area.
 
+**The address jumpers decode backwards from the port bits.** The board nets are
+`PC0 = A2`, `PC1 = A1`, `PC2 = A0`, and a fitted jumper pulls its pin low, so a
+fitted jumper *sets* its address bit. The bootloader and the application must
+decode this identically — `twi_slave_init()` here and `setup_i2c()` in
+`firmware/src/main.cpp` — because a mismatch does not fail loudly: the fader
+simply answers on a different address once it enters the bootloader, and only
+for some jumper settings. Reversing the three bits swaps offsets 1↔4 and 3↔6
+and leaves 0, 2, 5 and 7 looking perfectly fine, so half a bench of boards works
+and the rest vanish exactly when a host tries to update them.
+
 **The bootloader must raise the main clock itself.** The reset default is
 OSC20M divided by 6 — `CLKCTRL.MCLKCTRLB` comes up with `PDIV` = 6X and `PEN`
 set — so CLK_PER is 3.33 MHz, not the 20 MHz the application runs at. That is

@@ -47,8 +47,8 @@
  *   - production_tools/programAndTest/test_host.py: the --bootend argument
  *   - production_tools/programAndTest/factory_test_images/ (rebuild the image)
  *
- * Sized to the measured bootloader: 1396 bytes as built, so 0x06 (1536) is the
- * smallest 256-byte-granular section that holds it, leaving ~140 bytes of
+ * Sized to the measured bootloader: 1402 bytes as built, so 0x06 (1536) is the
+ * smallest 256-byte-granular section that holds it, leaving ~134 bytes of
  * bootloader headroom. The app needs the rest -- at 0x07 it no longer links.
  *
  * Changing this is a UPDI-only operation (fuse write), and the boot section is
@@ -80,8 +80,14 @@
  * I2C addressing
  *
  * The bootloader answers on the same address as the application: base 0x20 plus
- * the 3-bit hardware address from pins PC2/PC1/PC0, so a fader keeps its bus
- * identity in bootloader mode.
+ * the 3-bit hardware address from the jumpers, so a fader keeps its bus identity
+ * in bootloader mode.
+ *
+ * The port bits are REVERSED relative to the address bits -- the board nets are
+ * PC0 = A2, PC1 = A1, PC2 = A0 -- and a jumper pulls its pin low, so a fitted
+ * jumper sets its bit. Both the application (setup_i2c() in
+ * firmware/src/main.cpp) and the bootloader (twi_slave_init()) must decode it
+ * the same way, or a fader changes address when it enters the bootloader.
  * ------------------------------------------------------------------------- */
 #define BL_I2C_BASE_ADDRESS    (0x20)
 

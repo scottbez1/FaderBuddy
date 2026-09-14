@@ -46,6 +46,17 @@ FaderBuddy::FaderBuddy() : PollingComponent(), i2c::I2CDevice() {
 static const uint8_t SETUP_PROBE_ATTEMPTS = 5;
 static const uint32_t SETUP_PROBE_RETRY_MS = 20;
 
+// A fader that misses its setup probe is re-probed a handful of times on a
+// doubling backoff -- 1s, 2s, 4s, 8s, 16s -- and then left alone. The point is
+// to catch a fader that was merely slow (a lazy power ramp, a connector seated
+// just after boot), and that is settled inside the first half minute. Probing
+// forever past that buys nothing: it takes the bus away from the faders that
+// *are* working, once per poll, and fills the log while doing it. After the
+// backoff runs out the fader is simply reported as not responding, and the
+// firmware update button is the way back.
+static const uint8_t RETRY_PROBE_COUNT = 5;
+static const uint32_t RETRY_PROBE_FIRST_MS = 1000;
+
 void FaderBuddy::setup() {
   ESP_LOGCONFIG(TAG, "Setting up FaderBuddy...");
 
@@ -82,11 +93,14 @@ void FaderBuddy::probe_and_init_(bool first_attempt) {
     // image configured has nothing to recover with, and failing it is the
     // clearer signal.
     if (firmware_image_ != nullptr) {
-      ESP_LOGW(TAG, "Init: no response from the fader at 0x%02X after %d attempts. Retrying every "
-                    "update interval; the firmware update button stays available in case it is "
-                    "wedged rather than absent.",
-               this->get_i2c_address(), SETUP_PROBE_ATTEMPTS);
+      ESP_LOGW(TAG, "Init: no response from the fader at 0x%02X after %d attempts. Re-probing %d "
+                    "more times over the next ~30s; the firmware update button stays available "
+                    "either way, in case it is wedged rather than absent.",
+               this->get_i2c_address(), SETUP_PROBE_ATTEMPTS, RETRY_PROBE_COUNT);
       awaiting_device_ = true;
+      retry_probe_backoff_ms_ = RETRY_PROBE_FIRST_MS;
+      retry_probe_at_ = millis() + RETRY_PROBE_FIRST_MS;
+      retry_probes_left_ = RETRY_PROBE_COUNT;
       publish_firmware_text_("not responding");
       return;
     }
@@ -169,6 +183,27 @@ void FaderBuddy::probe_and_init_(bool first_attempt) {
   set_active_layer(0);
 }
 
+// Re-probe an unresponsive fader on a doubling backoff, then stop. Driven from
+// update(), which runs far more often than a probe should - the millis() gate,
+// not the poll rate, is what sets the cadence.
+void FaderBuddy::retry_probe_() {
+  if (retry_probes_left_ == 0 || (int32_t) (millis() - retry_probe_at_) < 0) {
+    return;
+  }
+
+  retry_probes_left_--;
+  retry_probe_backoff_ms_ *= 2;
+  retry_probe_at_ = millis() + retry_probe_backoff_ms_;
+
+  probe_and_init_(false);
+
+  if (awaiting_device_ && retry_probes_left_ == 0) {
+    ESP_LOGW(TAG, "Fader at 0x%02X never answered; giving up on re-probing. Press the firmware "
+                  "update button to try to recover it, or reboot to start over.",
+             this->get_i2c_address());
+  }
+}
+
 void FaderBuddy::dump_config() {
   LOG_I2C_DEVICE(this);
   if (this->is_failed()) {
@@ -177,7 +212,7 @@ void FaderBuddy::dump_config() {
 
   ESP_LOGCONFIG(TAG, "  Component Version: %s", FADER_BUDDY_COMPONENT_VERSION);
   if (this->awaiting_device_) {
-    ESP_LOGW(TAG, "  Not responding - re-probing every update interval");
+    ESP_LOGW(TAG, "  Not responding - %u re-probes remaining", this->retry_probes_left_);
   }
   if (this->firmware_version_ == FW_VERSION_NONE) {
     ESP_LOGCONFIG(TAG, "  Firmware Version: 1.0 or older (does not report a version)");
@@ -339,9 +374,9 @@ void FaderBuddy::update() {
   }
 
   // Never got a usable answer at setup. Nothing below can work, so spend the
-  // poll on the probe instead - the fader may yet turn up.
+  // poll on the backoff probe instead - the fader may yet turn up.
   if (awaiting_device_) {
-    probe_and_init_(false);
+    retry_probe_();
     return;
   }
 
