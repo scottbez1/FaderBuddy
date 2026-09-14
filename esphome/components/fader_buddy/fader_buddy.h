@@ -24,7 +24,6 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/optional.h"
-#include "esphome/core/preferences.h"
 
 #include "i2c_data.h"
 
@@ -100,7 +99,6 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // exact page-aligned APPCODE bytes, fw_version is read from its last 2 bytes --
     // see BL_APP_META_ADDR in bootloader_protocol.h).
     void set_firmware_image(const uint8_t *image, uint32_t length, uint16_t image_crc16, uint16_t fw_version);
-    void set_max_update_attempts(uint8_t max_attempts) { max_update_attempts_ = max_attempts; }
     // Manual update action: starts an update and returns immediately. The transfer
     // then runs a slice at a time from loop(), so the device stays responsive and
     // coarse progress reaches the firmware version text sensor as it goes. The
@@ -139,6 +137,11 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         Trigger<bool, std::string> *on_firmware_update_result_{new Trigger<bool, std::string>()};
 
     private:
+        // Probe REG_VERSION and, if the answer is usable, finish initializing.
+        // first_attempt distinguishes the call from setup() (retries hard, and
+        // decides whether to fail the component) from the periodic retry driven
+        // by update() while awaiting_device_ is set.
+        void probe_and_init_(bool first_attempt);
         void read_serial_number_();
         void read_firmware_version_();
         // How the firmware version text sensor renders the fader's current
@@ -167,6 +170,13 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         // than a protocol version, i.e. the fader has no working app image. The
         // one case where an update is viable despite no readable app version.
         bool bootloader_resident_{false};
+        // The fader never answered the setup version probe, but a firmware_image
+        // is configured, so the component stays alive rather than being failed:
+        // update() keeps re-probing, and the firmware update button stays
+        // available to recover a fader that is wedged rather than absent.
+        // mark_failed() would foreclose both - ESPHome calls neither loop() nor
+        // update() on a failed component.
+        bool awaiting_device_{false};
         bool speed_supported_{false};
         bool warned_speed_unsupported_{false};  // warn once, not once per move
 
@@ -197,8 +207,6 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         uint32_t firmware_image_length_{0};
         uint16_t firmware_image_crc16_{0};
         uint16_t firmware_fw_version_{0};
-        uint8_t max_update_attempts_{3};
-        ESPPreferenceObject update_attempts_pref_;
 
         // Guards against two faders updating the shared I2C bus at once. Held for
         // the whole multi-tick sequence, so unlike the per-instance update_stage_
@@ -231,7 +239,6 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         UpdateStage update_stage_{UPDATE_IDLE};
         uint32_t update_deadline_{0};   // millis deadline for the polling stages
         uint32_t update_page_{0};       // next page to write
-        uint8_t update_attempts_{0};    // loaded from the pref when the run starts
         uint8_t update_progress_pct_{0xFF};  // last published step; 0xFF = none yet
 
         void update_tick_();

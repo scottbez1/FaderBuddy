@@ -57,6 +57,10 @@ static uint8_t  s_rx[24];
 static uint8_t  s_rxlen;
 static bool     s_cmd_pending;       /* bytes received, not yet processed */
 
+/* CLKCTRL.MCLKCTRLB as found at reset, restored before jumping to the
+ * application -- see run_at_full_speed(). */
+static uint8_t  s_mclkctrlb_reset;
+
 /* Response bytes for the current/next master-read. */
 static uint8_t  s_tx[16];
 static uint8_t  s_txlen;
@@ -268,8 +272,8 @@ static void twi_slave_init(void) {
    * commands (SET_PAGE_ADDR/SEND_FRAME/ERASE_APP, which are processed at STOP)
    * are silently dropped while still being byte-ACKed. No interrupts are used
    * (global I flag stays clear), so DIEN/APIEN are unnecessary; the DIF and
-   * address-match APIF flags are set regardless. The main clock (20 MHz) is far
-   * more than the required 4x SCL. */
+   * address-match APIF flags are set regardless. run_at_full_speed() has already
+   * put CLK_PER at 20 MHz, well past the 10x SCL the slave needs. */
   TWI0.SCTRLA  = TWI_PIEN_bm | TWI_ENABLE_bm;  /* polled slave, STOP flag on */
 }
 
@@ -369,7 +373,9 @@ static void heartbeat_init(void) {
    * written explicitly for clarity) / DIV32 prescaler = 1024 Hz counter
    * ticks. Toggling on bit 7 of RTC.CNT (128 ticks = 125 ms) yields a ~4 Hz
    * square wave. No interrupts, no PER/CMP setup -- just a free-running count
-   * to poll each main-loop iteration. */
+   * to poll each main-loop iteration. Being on the RTC's own oscillator rather
+   * than CLK_PER, the rate is independent of the main clock prescaler -- see
+   * run_at_full_speed(). */
   RTC.CLKSEL = RTC_CLKSEL_INT32K_gc;
   RTC.CTRLA  = RTC_PRESCALER_DIV32_gc | RTC_RTCEN_bm;
 }
@@ -437,6 +443,39 @@ static bool strap_requests_bootloader(void) {
   return requested;
 }
 
+/* --------------------------------------------------------------- main clock */
+
+/*
+ * Run the bootloader at the full 20 MHz.
+ *
+ * The reset default is OSC20M divided by 6 (CLKCTRL.MCLKCTRLB = PDIV 6X, PEN
+ * set), i.e. 3.33 MHz -- the application raises it in its own startup, but the
+ * bootloader never did, so every bootloader-mode I2C transaction ran six times
+ * slower than the code here assumed.
+ *
+ * That matters because the TWI slave is not asynchronous: the datasheet
+ * requires f_CLK_PER of at least 10x f_SCL for the slave to keep up (26.3.2.1).
+ * At 3.33 MHz that caps the bus at 333 kHz -- so a host running the common
+ * 400 kHz was out of spec whenever a fader was in its bootloader, which shows
+ * up as intermittent NAKs and dropped frames on exactly the boards that need a
+ * firmware update. At 20 MHz the same limit is 2 MHz, comfortably clear of any
+ * bus this is used on.
+ *
+ * Done before anything else so the polled service loop, the flash writes and
+ * the delay loops below all run at the speed their comments claim.
+ *
+ * What this does and does not move: the two busy-wait loops (the pull-up settle
+ * in twi_slave_init() and the strap sampling) get 6x shorter, which is fine --
+ * the strap comment was already written against 20 MHz, and 1000 iterations of
+ * settle is ~0.35 ms against a pull-up RC well under a microsecond. The LED
+ * heartbeat does not move at all: it is timed off the RTC's own 32.768 kHz
+ * oscillator, not CLK_PER, so it stays at ~4 Hz.
+ */
+static void run_at_full_speed(void) {
+  s_mclkctrlb_reset = CLKCTRL.MCLKCTRLB;
+  _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, 0);  /* PEN cleared: no prescaler */
+}
+
 /* ------------------------------------------------------------------ entry */
 
 static void jump_to_app(void) __attribute__((noreturn));
@@ -446,6 +485,10 @@ static void jump_to_app(void) {
   TWI0.SCTRLA = 0;
   TWI0.SADDR  = 0;
   RTC.CTRLA   = 0;
+  /* Including the main clock: the application configures its own (megaTinyCore
+   * sets 20 MHz in init()), but handing it the state it would have seen after a
+   * plain reset costs three instructions and keeps this jump equivalent to one. */
+  _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, s_mclkctrlb_reset);
   /* AVR function pointers are word addresses; the app's reset vector lives at
    * byte address BL_APP_START. Jumping there runs the app's own crt0, which
    * re-initializes the stack, .data and .bss. */
@@ -454,6 +497,8 @@ static void jump_to_app(void) {
 }
 
 int main(void) {
+  run_at_full_speed();
+
   /* Read the reset cause and warm-reset entry token *before* touching RAM much.
    * Then clear both so a later unrelated reset can't re-trigger the bootloader. */
   uint8_t  rstfr = RSTCTRL.RSTFR;

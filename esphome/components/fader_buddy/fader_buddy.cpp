@@ -35,18 +35,72 @@ FaderBuddy::FaderBuddy() : PollingComponent(), i2c::I2CDevice() {
   // Protocol v5: No layer state initialization needed - firmware manages layers
 }
 
+// The boot-time version probe is the one read that decides whether this fader
+// is usable at all, and it runs at the worst possible moment: the fader may
+// still be coming out of reset, and the bus is settling behind however many
+// other faders are chained on it. A single NAK used to mark the component
+// failed for the whole boot -- and ESPHome calls neither loop() nor update() on
+// a failed component, so that also removed the firmware-update path that could
+// have recovered the fader. Retry here, and see probe_and_init_() for what
+// happens when the retries still come up empty.
+static const uint8_t SETUP_PROBE_ATTEMPTS = 5;
+static const uint32_t SETUP_PROBE_RETRY_MS = 20;
+
 void FaderBuddy::setup() {
   ESP_LOGCONFIG(TAG, "Setting up FaderBuddy...");
 
-  // Check protocol version
+  // Done before the probe, not after, so it still happens for a fader that
+  // doesn't answer yet: the loop rate is a property of this config, not of the
+  // fader.
+  if (this->get_update_interval() < App.get_loop_interval()) {
+    high_freq_.start();
+  }
+
+  probe_and_init_(true);
+}
+
+// Probe REG_VERSION and, if the fader answers something we can work with, run
+// the rest of the initialization. Called at setup and, while the fader is still
+// unresponsive, again from each update() -- so a fader that shows up late (a
+// slow power ramp, a cable seated after boot, a firmware update that just
+// finished) initializes itself instead of staying dead until the ESP32 reboots.
+void FaderBuddy::probe_and_init_(bool first_attempt) {
   uint8_t reg = REG_VERSION;
   uint8_t buffer = 0;
-  auto read_result = this->write_read(&reg, 1, &buffer, 1);
-  if (read_result != esphome::i2c::ErrorCode::NO_ERROR) {
-    ESP_LOGE(TAG, "Init: failed to read VERSION register: %d", read_result);
+  // Retry hard once, at setup, where a few tens of milliseconds buy a fader
+  // that is merely slow to boot. The periodic re-probe is single-shot: it
+  // already repeats every update interval, and blocking the loop for 100ms a
+  // time on an absent fader would cost far more than it could win.
+  uint8_t attempts = first_attempt ? SETUP_PROBE_ATTEMPTS : 1;
+  if (!bl_read_retry_(&reg, 1, &buffer, 1, attempts, SETUP_PROBE_RETRY_MS)) {
+    if (!first_attempt) {
+      ESP_LOGD(TAG, "Fader at 0x%02X still not answering the version probe", this->get_i2c_address());
+      return;
+    }
+    // A configured firmware_image means there is a recovery path -- but only if
+    // this component keeps running, so don't mark_failed(). A fader with no
+    // image configured has nothing to recover with, and failing it is the
+    // clearer signal.
+    if (firmware_image_ != nullptr) {
+      ESP_LOGW(TAG, "Init: no response from the fader at 0x%02X after %d attempts. Retrying every "
+                    "update interval; the firmware update button stays available in case it is "
+                    "wedged rather than absent.",
+               this->get_i2c_address(), SETUP_PROBE_ATTEMPTS);
+      awaiting_device_ = true;
+      publish_firmware_text_("not responding");
+      return;
+    }
+    ESP_LOGE(TAG, "Init: no response from the fader at 0x%02X after %d attempts",
+             this->get_i2c_address(), SETUP_PROBE_ATTEMPTS);
     this->mark_failed();
     return;
   }
+
+  if (!first_attempt) {
+    ESP_LOGI(TAG, "Fader at 0x%02X is answering now; completing initialization",
+             this->get_i2c_address());
+  }
+  awaiting_device_ = false;
 
   // A resident bootloader answers the version probe with its own marker instead
   // of a protocol version. Nothing else here works against it, but noting it
@@ -62,8 +116,15 @@ void FaderBuddy::setup() {
   // a NEWER one is not, because bumps are only made for changes a host can
   // ignore. Failing on those would brick this host on a fader that merely got
   // updated, so warn and carry on instead.
+  //
+  // There is no recovery path to offer here either, image configured or not:
+  // I2C bootloader entry arrived in firmware 1.3, long after protocol v5, so
+  // anything reporting less than v5 also predates REG_ENTER_BOOTLOADER and can
+  // only be migrated over UPDI.
   if (buffer < I2C_PROTOCOL_VERSION) {
-    ESP_LOGE(TAG, "Init: Incompatible I2C protocol version. Expected at least %d but got %d",
+    ESP_LOGE(TAG, "Init: Incompatible I2C protocol version. Expected at least %d but got %d. "
+                  "This firmware also predates I2C bootloader entry, so it needs a one-time "
+                  "UPDI reflash - no update over I2C is possible.",
              I2C_PROTOCOL_VERSION, buffer);
     this->mark_failed();
     return;
@@ -106,19 +167,6 @@ void FaderBuddy::setup() {
     }
   }
   set_active_layer(0);
-
-  if (firmware_image_ != nullptr) {
-    // Keyed by address + target version: switching to a differently-versioned
-    // packaged image naturally starts a fresh (zero) attempt count for the new
-    // key, with no explicit reset needed.
-    uint32_t hash = fnv1_hash("fader_buddy_update_attempts_" + std::to_string(this->get_i2c_address()) +
-                              "_v" + std::to_string(firmware_fw_version_));
-    update_attempts_pref_ = global_preferences->make_preference<uint8_t>(hash, true);
-  }
-
-  if (this->get_update_interval() < App.get_loop_interval()) {
-    high_freq_.start();
-  }
 }
 
 void FaderBuddy::dump_config() {
@@ -128,6 +176,9 @@ void FaderBuddy::dump_config() {
   }
 
   ESP_LOGCONFIG(TAG, "  Component Version: %s", FADER_BUDDY_COMPONENT_VERSION);
+  if (this->awaiting_device_) {
+    ESP_LOGW(TAG, "  Not responding - re-probing every update interval");
+  }
   if (this->firmware_version_ == FW_VERSION_NONE) {
     ESP_LOGCONFIG(TAG, "  Firmware Version: 1.0 or older (does not report a version)");
   } else {
@@ -284,6 +335,13 @@ void FaderBuddy::update() {
   // An update owns the bus and has the fader in its bootloader, where REG_STATE
   // means nothing. Skip the poll entirely until it finishes.
   if (update_stage_ != UPDATE_IDLE) {
+    return;
+  }
+
+  // Never got a usable answer at setup. Nothing below can work, so spend the
+  // poll on the probe instead - the fader may yet turn up.
+  if (awaiting_device_) {
+    probe_and_init_(false);
     return;
   }
 
@@ -640,6 +698,13 @@ bool FaderBuddy::firmware_update_available() const {
   if (firmware_image_ == nullptr) {
     return false;  // nothing packaged for this fader
   }
+  if (awaiting_device_) {
+    // The fader never answered, so there is no version to compare - but a fader
+    // that is wedged or stranded mid-flash is exactly what an update recovers,
+    // and refusing here would leave UPDI as the only way back. update_tick_()'s
+    // own probe reports honestly if it really is absent.
+    return true;
+  }
   if (bootloader_resident_) {
     return true;  // no app to compare against, and recovery is exactly the point
   }
@@ -690,14 +755,6 @@ void FaderBuddy::update_firmware() {
     return;
   }
 
-  update_attempts_pref_.load(&update_attempts_);
-  if (update_attempts_ >= max_update_attempts_) {
-    ESP_LOGE(TAG, "update_firmware: max attempts (%u) already reached for target v%u, refusing",
-             max_update_attempts_, firmware_fw_version_);
-    on_firmware_update_result_->trigger(false, "max update attempts reached");
-    return;
-  }
-
   // Claim the bus for this fader before the first tick, so a second request
   // landing later in the same loop iteration is refused rather than interleaved.
   s_update_in_progress = true;
@@ -741,8 +798,8 @@ void FaderBuddy::publish_update_progress_(const char *label, uint8_t pct) {
 }
 
 void FaderBuddy::log_update_starting_() {
-  ESP_LOGI(TAG, "update_firmware: updating to v%u.%u (attempt %u/%u)", firmware_fw_version_ >> 8,
-           firmware_fw_version_ & 0xFF, update_attempts_ + 1, max_update_attempts_);
+  ESP_LOGI(TAG, "update_firmware: updating to v%u.%u", firmware_fw_version_ >> 8,
+           firmware_fw_version_ & 0xFF);
 }
 
 void FaderBuddy::finish_update_(bool ok, const std::string &error) {
@@ -752,8 +809,6 @@ void FaderBuddy::finish_update_(bool ok, const std::string &error) {
   if (ok) {
     ESP_LOGI(TAG, "update_firmware: success, now at v%u.%u", firmware_fw_version_ >> 8,
              firmware_fw_version_ & 0xFF);
-    uint8_t zero = 0;
-    update_attempts_pref_.save(&zero);
     // Re-read rather than assume: refreshes the version text sensor and makes
     // firmware_update_available() report false without needing a reboot.
     bootloader_resident_ = false;
@@ -766,16 +821,23 @@ void FaderBuddy::finish_update_(bool ok, const std::string &error) {
     return;
   }
 
-  update_attempts_++;
-  update_attempts_pref_.save(&update_attempts_);
-  ESP_LOGE(TAG, "update_firmware: failed (attempt %u/%u): %s", update_attempts_, max_update_attempts_,
-           error.c_str());
+  ESP_LOGE(TAG, "update_firmware: failed: %s", error.c_str());
   // Where the fader ended up depends on where it failed: still running the old
   // app, or stranded in the bootloader with the app erased. Re-probe rather than
   // guess, so the version sensor ends on the truth with the failure appended,
   // instead of a stale "writing 60%".
   uint8_t probe;
-  bootloader_resident_ = bl_read_version_byte_(probe) && probe == BL_VERSION_MARKER;
+  uint8_t probe_reg = REG_VERSION;
+  if (!bl_read_retry_(&probe_reg, 1, &probe, 1, SETUP_PROBE_ATTEMPTS, SETUP_PROBE_RETRY_MS)) {
+    // Still silent. Report that rather than a version read off a bus that isn't
+    // answering, and go back to re-probing from update().
+    bootloader_resident_ = false;
+    awaiting_device_ = true;
+    publish_firmware_text_("not responding (update failed)");
+    on_firmware_update_result_->trigger(false, error);
+    return;
+  }
+  bootloader_resident_ = (probe == BL_VERSION_MARKER);
   read_firmware_version_();
   publish_firmware_text_(firmware_version_text_() + " (update failed)");
   on_firmware_update_result_->trigger(false, error);
@@ -813,8 +875,12 @@ void FaderBuddy::update_tick_() {
       // BL_VERSION_MARKER means the bootloader is already resident. Probe that
       // first -- REG_FW_VERSION (0x11) is app-only and undefined in the
       // bootloader, so trying it blind first risks misreading garbage.
+      // Retried, unlike the polling probes elsewhere: a fader that failed its
+      // setup probe is allowed to reach this stage, and one NAK is not enough
+      // to call it absent when this is the run that would recover it.
       uint8_t probe;
-      if (!bl_read_version_byte_(probe)) {
+      uint8_t probe_reg = REG_VERSION;
+      if (!bl_read_retry_(&probe_reg, 1, &probe, 1, SETUP_PROBE_ATTEMPTS, SETUP_PROBE_RETRY_MS)) {
         finish_update_(false, "device not responding");
         return;
       }
@@ -834,8 +900,6 @@ void FaderBuddy::update_tick_() {
                  current_version & 0xFF);
         update_stage_ = UPDATE_IDLE;
         s_update_in_progress = false;
-        uint8_t zero = 0;
-        update_attempts_pref_.save(&zero);
         read_firmware_version_();
         on_firmware_update_result_->trigger(true, "");
         return;

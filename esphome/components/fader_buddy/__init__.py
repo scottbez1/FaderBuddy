@@ -285,7 +285,6 @@ CONF_FIRMWARE = "firmware"
 CONF_VERSION = "version"
 CONF_URL = "url"
 CONF_SHA256 = "sha256"
-CONF_MAX_UPDATE_ATTEMPTS = "max_update_attempts"
 
 # `firmware: "1.3"` is shorthand for `firmware: {version: "1.3"}`; url and sha256
 # default from the release tag scheme and KNOWN_FIRMWARE respectively.
@@ -429,7 +428,6 @@ CONFIG_SCHEMA = cv.All(
         # Mutually exclusive with firmware_image, which is the local-file escape
         # hatch for iterating on an unreleased build.
         cv.Optional(CONF_FIRMWARE): FIRMWARE_SCHEMA,
-        cv.Optional(CONF_MAX_UPDATE_ATTEMPTS, default=3): cv.int_range(min=1, max=20),
     })
     .extend(cv.polling_component_schema("50ms"))
     .extend(i2c.i2c_device_schema(0x20)),  # default I2C address
@@ -513,7 +511,6 @@ async def to_code(config):
     if image is not None:
         symbol, length, crc16, fw_version = image
         cg.add(var.set_firmware_image(cg.RawExpression(symbol), length, crc16, fw_version))
-        cg.add(var.set_max_update_attempts(config[CONF_MAX_UPDATE_ATTEMPTS]))
 
 
 # Actions

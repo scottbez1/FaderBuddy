@@ -362,11 +362,10 @@ bootloader has no `REG_STATE` to read.
 
 - **Only on a version mismatch.** A fader already running the packaged version
   is a no-op, reported as success.
-- **An attempt cap in persistent storage.** `ESPPreferences`, keyed by a hash of
-  the I2C address and the target version, incremented on failure. Once
-  `max_update_attempts` is reached for that version, further attempts are
-  refused without touching the bus. Because the key includes the version,
-  packaging a different image starts a fresh counter with no explicit reset.
+- **No attempt cap, and no retry.** A failed update is reported and forgotten;
+  nothing retries it and no counter persists. That only needs revisiting if
+  updates ever become automatic — a loop that retries by itself needs a stop,
+  but a human pressing a button already is one.
 - **Never interrupt the user.** The run waits, bounded, for the fader to leave
   `MODE_INPUT_ACTIVE` before taking the bus, and reports failure if it is still
   in use.
@@ -433,6 +432,23 @@ Everything below is absent from the current implementation, not broken in it.
 
 Details that are not obvious from the code, and that are likely to trip up the
 next person working in this area.
+
+**The bootloader must raise the main clock itself.** The reset default is
+OSC20M divided by 6 — `CLKCTRL.MCLKCTRLB` comes up with `PDIV` = 6X and `PEN`
+set — so CLK_PER is 3.33 MHz, not the 20 MHz the application runs at. That is
+not just slow: the TWI slave is synchronous, and §26.3.2.1 requires
+f_CLK_PER ≥ 10 × f_SCL, capping the bus at 333 kHz. A host on the common
+400 kHz was out of spec for the whole time a fader sat in its bootloader, which
+looks like intermittent NAKs and dropped frames during precisely the operation
+that has to work. `run_at_full_speed()` clears the prescaler as the first thing
+`main()` does, and `jump_to_app()` restores the reset value on the way out.
+Note that the LED heartbeat is *not* affected either way — it runs off the RTC's
+own 32.768 kHz oscillator rather than CLK_PER — but the two busy-wait loops
+(pull-up settle, strap sampling) are, and were written against 20 MHz.
+
+Bootloaders already on boards keep the old behaviour, since the boot section is
+not field-updatable. If updates over I2C are flaky on such a board, drop the
+host bus to 100 kHz or reflash the bootloader over UPDI.
 
 **`PIEN` must be set on the TWI slave.** `TWI0.SCTRLA` needs
 `TWI_PIEN_bm | TWI_ENABLE_bm`. Per datasheet §26.5.9, `PIEN` gates whether

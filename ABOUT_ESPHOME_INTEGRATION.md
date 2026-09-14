@@ -135,7 +135,6 @@ For additional complete working examples, see the `esphome/examples/` directory:
   - **value_change_min_interval** (optional, default: `0ms`): Rate limiting for `on_manual_move` trigger on this layer. Useful to reduce traffic when controlling networked devices like zigbee lights. Set to `0ms` for no rate limiting. Keep as low as possible.
 - **firmware** (optional): Released fader firmware to package for I2C updates. See [Firmware updates](#firmware-updates) below. Mutually exclusive with `firmware_image`.
 - **firmware_image** (optional): Path to a locally built application image, for iterating on an unreleased build. Mutually exclusive with `firmware`.
-- **max_update_attempts** (optional, default: `3`): How many times a failed update is retried for a given target version before the component refuses to try again. The count persists across ESP32 reboots, so a fader that consistently fails to take an update stops being retried rather than looping forever.
 
 ### Triggers
 
@@ -376,9 +375,10 @@ button:
 
 Updates only ever happen when the button is pressed or the action runs — there is
 no automatic update mode. The component refuses to start if the fader is being
-touched, if the target version is already installed, if `max_update_attempts` has
-been reached, or if the fader's firmware predates I2C bootloader entry
-(`FW_VERSION` below 1.3), which needs a one-time UPDI migration.
+touched, if the target version is already installed, or if the fader's firmware
+predates I2C bootloader entry (`FW_VERSION` below 1.3), which needs a one-time
+UPDI migration. A failed update is not retried on its own and not counted
+anywhere: press the button again.
 
 The action **returns immediately** — the transfer then runs a slice at a time from
 the main loop, so the device stays responsive throughout. The outcome arrives on
@@ -465,6 +465,32 @@ std::string serial = id(my_fader).get_serial_number();
 - Check I2C wiring (SDA, SCL, GND, Vio, Vmot)
 - Verify I2C address matches your hardware configuration
 - Enable `scan: true` in the I2C config to see detected addresses in logs
+- Two faders strapped to the same address look like this on a chain: the
+  duplicated address returns garbage, and the address nobody is using goes
+  silent. The boot scan is the quickest way to rule it out - count the
+  addresses, not the faders
+
+**A fader's serial number and firmware version both read Unknown:**
+
+Both sensors are published during initialization, which only runs once the
+fader answers a probe of `REG_VERSION`, so Unknown means that probe never got a
+usable answer. The boot log says which of the two cases it was:
+
+- `Init: no response from the fader at 0xNN after 5 attempts` - it NAKed, or
+  isn't there. With a `firmware:`/`firmware_image:` configured, the component
+  stays alive and re-probes every update interval, so a fader that turns up
+  late initializes itself; the firmware version sensor reads `not responding`
+  in the meantime, and the **Firmware Update** button stays pressable in case
+  the fader is wedged rather than absent. With no image configured there is
+  nothing to recover with, so the component is marked failed until reboot.
+- `Init: Incompatible I2C protocol version ... got N` - it answered, with a
+  protocol older than v5. That firmware also predates I2C bootloader entry
+  (firmware 1.3), so it needs a one-time UPDI reflash; no update over I2C can
+  reach it. The component is marked failed.
+
+A fader sitting in its bootloader with no application is *neither* of these -
+it answers the probe with its own marker, reports `bootloader (no app)` as its
+firmware version, and is recovered by pressing **Firmware Update**.
 
 **Fader moves in wrong direction:**
 - Set `invert: true` in the component configuration

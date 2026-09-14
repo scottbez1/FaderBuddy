@@ -55,6 +55,14 @@ for production purposes.
   programmer before they can be updated in-band. See ABOUT_I2C_BOOTLOADER.md.
 - Grounding test point TP5 across a reset holds the board in its bootloader,
   recovering a board whose application does not run or does not answer the bus.
+- The bootloader runs the main clock at its full 20 MHz. It had been leaving
+  the reset default in place - OSC20M divided by 6, so 3.33 MHz - which put the
+  TWI slave's 10x f_CLK_PER/f_SCL requirement at a 333 kHz ceiling. A host on a
+  400 kHz bus was therefore out of spec whenever a fader was in its bootloader,
+  showing up as intermittent NAKs and dropped frames during exactly the
+  operation that needed to work. Since the bootloader is not field-updatable,
+  boards already carrying one keep the old behaviour; run them at 100 kHz (or
+  reflash the bootloader over UPDI) if updates over I2C prove flaky.
 
 ### 1.2 - unreleased
 
@@ -151,6 +159,24 @@ layer-addressed registers.
   completion, so the run's own measurements are logged rather than the ones
   read at startup), and a warning whenever the fader latches `MODE_ERROR` -
   including a failed endpoint sweep, which was silent.
+- The startup version probe is retried before giving up, and a fader with a
+  configured firmware image that still doesn't answer no longer fails the
+  component. Previously one NAK at boot - a fader still coming out of reset, a
+  bus still settling behind a chain of them - marked the hub failed for the
+  whole boot: both text sensors stayed Unknown and, because ESPHome runs
+  neither `loop()` nor `update()` on a failed component, the firmware update
+  that could have recovered it was refused and could not have run anyway. Such
+  a fader is now re-probed every update interval and initializes itself
+  whenever it turns up, and the **Firmware Update** button stays available for
+  one that is wedged rather than absent. A fader reporting a protocol older
+  than v5 still fails the component: that firmware predates I2C bootloader
+  entry (firmware 1.3), so UPDI really is the only way back, and the log now
+  says so.
+- Dropped the persistent failed-update attempt counter and its
+  `max_update_attempts:` option. It existed to stop an automatic updater
+  looping on a fader that never takes the image, and updates are manual only -
+  a human pressing a button is already the stop. A failed update is reported
+  and forgotten; press the button again to retry.
 
 ### 0.2.0 - unreleased
 

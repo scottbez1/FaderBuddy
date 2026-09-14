@@ -47,8 +47,8 @@
  *   - production_tools/programAndTest/test_host.py: the --bootend argument
  *   - production_tools/programAndTest/factory_test_images/ (rebuild the image)
  *
- * Sized to the measured bootloader: 1304 bytes as built, so 0x06 (1536) is the
- * smallest 256-byte-granular section that holds it, leaving ~230 bytes of
+ * Sized to the measured bootloader: 1396 bytes as built, so 0x06 (1536) is the
+ * smallest 256-byte-granular section that holds it, leaving ~140 bytes of
  * bootloader headroom. The app needs the rest -- at 0x07 it no longer links.
  *
  * Changing this is a UPDI-only operation (fuse write), and the boot section is
