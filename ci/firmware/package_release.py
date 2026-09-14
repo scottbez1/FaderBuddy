@@ -17,8 +17,7 @@ Builds the offset application (via firmware/tools/export_app_image.py), names th
 resulting .bin after the FW_VERSION baked into it, and reports its sha256 -- the
 value that goes into KNOWN_FIRMWARE in the ESPHome component.
 
-Release assets are attached to a tag following the same scheme as the electronics
-artifacts (see ci/util/rev_info.py): `releases/firmware/v<major>.<minor>`. Pass
+Release assets are attached to the tag `releases/firmware/v<major>.<minor>`. Pass
 --expect-version to assert the tag and the firmware's own FW_VERSION agree, so a
 mislabelled asset is caught at release time rather than by whoever consumes it.
 
@@ -30,30 +29,17 @@ body to walk through that, into $GITHUB_STEP_SUMMARY when running under Actions.
 import argparse
 import hashlib
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHARED_I2C_DATA = REPO_ROOT / "firmware" / "src" / "shared" / "i2c_data.h"
 EXPORT_TOOL = REPO_ROOT / "firmware" / "tools" / "export_app_image.py"
 
+sys.path.insert(0, str(REPO_ROOT / "firmware" / "tools"))
+from fb_image import firmware_version  # noqa: E402
+
 RELEASE_TAG_PREFIX = "releases/firmware/"
-
-
-def parse_define(path, name):
-    text = Path(path).read_text()
-    m = re.search(r"#define\s+%s\s+\(?\s*(0x[0-9A-Fa-f]+|\d+)" % re.escape(name), text)
-    if not m:
-        raise RuntimeError("could not find %s in %s" % (name, path))
-    return int(m.group(1), 0)
-
-
-def firmware_version():
-    major = parse_define(SHARED_I2C_DATA, "FW_VERSION_MAJOR")
-    minor = parse_define(SHARED_I2C_DATA, "FW_VERSION_MINOR")
-    return major, minor
 
 
 def version_from_tag(ref):

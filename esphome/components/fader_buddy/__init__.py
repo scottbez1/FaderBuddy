@@ -75,11 +75,10 @@ def _crc16_ccitt(data: bytes) -> int:
 # ---------------------------------------------------------------------------
 # Released application images
 #
-# Images are published as assets on a GitHub release, tagged with the same
-# `releases/<area>/v<version>` scheme the electronics artifacts use (see
-# ci/util/rev_info.py git_release_version). So FW_VERSION 1.3 lives at tag
-# `releases/firmware/v1.3`, and the asset URL follows from the version alone --
-# nothing to paste but the hash.
+# Images are published as assets on a GitHub release, tagged
+# `releases/firmware/v<version>` -- so FW_VERSION 1.3 lives at tag
+# `releases/firmware/v1.3`, and the asset URL can be determined from only a
+# version.
 #
 # The sha256 is what makes fetching a remote binary safe: it pins the exact bytes,
 # so a re-uploaded or substituted asset fails the build instead of being flashed
@@ -351,6 +350,11 @@ def _default_entity_names(config):
     return config
 
 
+def _has_firmware(config):
+    """True if this fader has a packaged image to install."""
+    return CONF_FIRMWARE in config or CONF_FIRMWARE_IMAGE in config
+
+
 def _claimed_by_legacy_platform(config, key):
     """True if a `text_sensor: platform: fader_buddy` block already provides this.
 
@@ -400,9 +404,10 @@ CONFIG_SCHEMA = cv.All(
             entity_category="config",
             icon=AUTO_BUTTONS[CONF_SELF_CALIBRATION][1],
         ),
-        # Always created, even with no firmware configured - a press just gets
-        # rejected then (see FaderBuddy::request_firmware_update). Whether an
-        # update is pending is runtime state, not something the yaml knows.
+        # Only created when a firmware image is configured (see to_code); with
+        # nothing to install the button would have nothing to do. Whether an
+        # update is actually pending is runtime state, so a press still checks
+        # that (see FaderBuddy::request_firmware_update).
         cv.Optional(CONF_FIRMWARE_UPDATE, default={}): button.button_schema(
             FirmwareUpdateButton,
             entity_category="config",
@@ -447,6 +452,10 @@ async def to_code(config):
         cg.add(var.set_firmware_text_sensor(sens))
 
     for key in AUTO_BUTTONS:
+        # No firmware configured means nothing the button could ever install, so
+        # don't put a dead entity in Home Assistant.
+        if key == CONF_FIRMWARE_UPDATE and not _has_firmware(config):
+            continue
         btn = await button.new_button(config[key])
         await cg.register_parented(btn, config[CONF_ID])
 

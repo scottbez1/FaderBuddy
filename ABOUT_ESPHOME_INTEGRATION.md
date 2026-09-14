@@ -341,9 +341,11 @@ reproducible from any tagged commit.
 
 ### Triggering an update
 
-Every fader gets a **Firmware Update** button automatically, so there is nothing to
-write for the common case — it shows up in Home Assistant under the device's
-settings (`entity_category: config`). Rename or hide it on the hub:
+A fader with `firmware:` or `firmware_image:` configured gets a **Firmware
+Update** button automatically, so there is nothing to write for the common case —
+it shows up in Home Assistant under the device's settings
+(`entity_category: config`). Without a configured image there is nothing to
+install, so no button is created. Rename or hide it on the hub:
 
 ```yaml
 fader_buddy:
@@ -354,12 +356,12 @@ fader_buddy:
       # internal: true          # to keep it out of Home Assistant entirely
 ```
 
-A press is ignored unless there is genuinely something to install — no
-`firmware:`/`firmware_image:` configured, the fader already running the packaged
-version, or firmware too old to reach its bootloader all just log a line and do
-nothing, rather than tying up the I2C bus for tens of seconds to reach the same
-answer. The button is always created, since whether an update is pending is
-runtime state rather than something the yaml knows.
+A press is ignored unless there is genuinely something to install — a fader
+already running the packaged version, or firmware too old to reach its
+bootloader, just logs a line and does nothing, rather than tying up the I2C bus
+for tens of seconds to reach the same answer. That check happens at press time
+because whether an update is pending is runtime state rather than something the
+yaml knows.
 
 The equivalent action, for driving an update from an automation:
 

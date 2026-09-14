@@ -46,6 +46,16 @@ for production purposes.
 
 ## Firmware (ATtiny1616)
 
+### 1.3 - unreleased
+
+- Firmware can be updated over I2C. A bootloader in the ATtiny1616's boot
+  section receives the new application image, and `REG_ENTER_BOOTLOADER` (0x10)
+  asks a running application to reboot into it. Installing the bootloader is a
+  one-time UPDI flash, so boards already in the field need one more visit with a
+  programmer before they can be updated in-band. See ABOUT_I2C_BOOTLOADER.md.
+- Grounding test point TP5 across a reset holds the board in its bootloader,
+  recovering a board whose application does not run or does not answer the bus.
+
 ### 1.2 - unreleased
 
 - Remote movement now uses cascade control (position loop sets a velocity
@@ -116,35 +126,15 @@ layer-addressed registers.
   pressing it drives the carriage to both ends for several seconds - HA files
   it with the device's settings rather than its controls. Rename it with
   `self_calibration: {name: ...}`, or hide it with `internal: true`.
-- The hub creates a **Firmware Update** button too, alongside the
-  `fader_buddy.update_firmware` action. A press only does something when there
-  is actually an update to install: with no `firmware:`/`firmware_image:` in
-  the config, with the fader already running the packaged version, or with
-  firmware too old to reach its bootloader over I2C, the press is logged and
-  ignored rather than taking the bus for tens of seconds to reach the same
-  conclusion. The exception is a fader sitting in its bootloader with no
-  working app - that is always updatable, and is now flagged at startup.
-  `entity_category: config`; rename with `firmware_update: {name: ...}` or
-  hide with `internal: true`.
-- Firmware updates no longer block the main loop. The transfer runs a slice at a
-  time from `loop()`, so the device stays responsive for the seconds it takes, and
-  `fader_buddy.update_firmware` now returns immediately — the outcome still arrives
-  on `on_firmware_update_result`. Page streaming is time-budgeted per loop
-  iteration, and the two long stalls (erase, whole-image CRC) are polled rather
-  than waited out inline.
-- The firmware version text sensor doubles as the update's status field, since a
-  fader mid-update has no version to report: `erasing`, `writing 40%`,
-  `verifying`, then the new version, or `1.3 (update failed)` on a failure. How
-  much of the progress Home Assistant renders depends on `api: batch_delay:`
-  (states are batched and deduplicated per entity); the log shows every step, and
-  the terminal states always get through.
-- The firmware version sensor reads `bootloader (no app)` for a fader sitting in
-  its bootloader, rather than whatever `REG_FW_VERSION` happened to return, and is
-  re-read after a successful update so it reports the newly installed version
-  without a host reboot.
-- The serial number is re-read after a successful update. A fader that booted into
-  its bootloader could never report one - `REG_SERIAL` is an app register - so the
-  sensor stayed empty until the host rebooted.
+- Faders can be updated over I2C, with no UPDI programmer. Point a fader at a
+  released image with `firmware: "1.3"` (fetched from its GitHub release and
+  pinned by sha256) or at a local build with `firmware_image:`, then install it
+  with the `fader_buddy.update_firmware` action or the auto-created **Firmware
+  Update** button. Updates are never automatic, and the button is only created
+  when an image is configured. The outcome arrives on
+  `on_firmware_update_result`. See ABOUT_ESPHOME_INTEGRATION.md.
+- The firmware version text sensor reports update progress while one runs, and
+  is re-read afterwards along with the serial number.
 - **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
   It still works and still wins over the hub's own serial number sensor, so
   there are never two, but it now logs a deprecation warning. To migrate,

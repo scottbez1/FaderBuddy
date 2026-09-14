@@ -18,7 +18,7 @@
  *
  * Drives a FaderBuddy's I2C bootloader (firmware/src/bootloader/) to stream a
  * new application image and verify it. Mirrors the update sequence the ESPHome
- * host will use (see ABOUT_I2C_BOOTLOADER.md sections 6 and 11).
+ * host will use (see ABOUT_I2C_BOOTLOADER.md).
  */
 
 #pragma once

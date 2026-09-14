@@ -12,88 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Generate an embeddable C header holding the FaderBuddy offset application
-image, for the ESP32 jig's I2C bootloader test.
+image, for the ESP32 jig's I2C bootloader update step.
 
-Builds the fb_app_only PlatformIO environment (unless --no-build),
-extracts the exact APPCODE bytes from the resulting Intel-hex starting at the
-boot offset, pads to a whole number of flash pages with 0xFF, computes the
-CRC16-CCITT the bootloader uses, and writes fader_app_image.h.
-
-This mirrors how the ESPHome host bundles the application image (see
-ABOUT_I2C_BOOTLOADER.md section 11).
+Builds the fb_app_only PlatformIO environment (unless --no-build), extracts the
+application bytes from the resulting Intel-hex (see fb_image), computes the
+CRC16-CCITT the bootloader verifies against, and writes fader_app_image.h.
 """
 
 import argparse
-import os
-import re
-import subprocess
 import sys
 from pathlib import Path
 
-# firmware/src/shared/bootloader_protocol.h constants (kept trivially in sync).
-FLASH_START = 0x0600   # BL_APP_START (BOOTEND 0x06 * 256)
-FLASH_SIZE = 16384     # BL_FLASH_SIZE
-PAGE_SIZE = 64         # BL_PAGE_SIZE
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]  # tools -> programAndTest -> production_tools -> repo
-OFFSET_ENV = "fb_app_only"
-OFFSET_HEX = REPO_ROOT / ".pio" / "build" / OFFSET_ENV / "firmware.hex"
-SHARED_I2C_DATA = REPO_ROOT / "firmware" / "src" / "shared" / "i2c_data.h"
 
-
-def crc16_ccitt(data):
-    crc = 0xFFFF
-    for b in data:
-        crc ^= (b << 8) & 0xFFFF
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
-    return crc
-
-
-def parse_define(path, name):
-    """Parse a simple `#define NAME (value)` integer from a C header."""
-    text = Path(path).read_text()
-    m = re.search(r"#define\s+%s\s+\(?\s*(0x[0-9A-Fa-f]+|\d+)" % re.escape(name), text)
-    if not m:
-        raise RuntimeError("could not find %s in %s" % (name, path))
-    return int(m.group(1), 0)
-
-
-def parse_fw_version(path):
-    """FW_VERSION is the packed u16 (major << 8) | minor, so read the halves."""
-    major = parse_define(path, "FW_VERSION_MAJOR")
-    minor = parse_define(path, "FW_VERSION_MINOR")
-    return (major << 8) | minor
-
-
-def build_offset_app():
-    print("Building %s ..." % OFFSET_ENV, flush=True)
-    subprocess.run(
-        [sys.executable, "-m", "platformio", "run", "-e", OFFSET_ENV],
-        cwd=str(REPO_ROOT), check=True,
-    )
-
-
-def load_app_image():
-    from intelhex import IntelHex  # ships with pymcuprog
-    ih = IntelHex(str(OFFSET_HEX))
-    minaddr, maxaddr = ih.minaddr(), ih.maxaddr()
-    if minaddr < FLASH_START:
-        raise RuntimeError("hex has data below the boot offset (0x%04X < 0x%04X)"
-                           % (minaddr, FLASH_START))
-    # Extract [FLASH_START, maxaddr]; gaps read as 0xFF (erased flash).
-    ih.padding = 0xFF
-    image = bytearray(ih.tobinarray(start=FLASH_START, end=maxaddr))
-    # Pad up to a whole page.
-    if len(image) % PAGE_SIZE:
-        image += b"\xFF" * (PAGE_SIZE - (len(image) % PAGE_SIZE))
-    if FLASH_START + len(image) > FLASH_SIZE:
-        raise RuntimeError("image overflows flash")
-    return bytes(image)
+sys.path.insert(0, str(REPO_ROOT / "firmware" / "tools"))
+from fb_image import (  # noqa: E402
+    BL_APP_START, build_offset_app, crc16_ccitt, firmware_version_u16, load_app_image,
+)
 
 
 def emit_header(out_path, image, fw_version):
@@ -103,7 +39,7 @@ def emit_header(out_path, image, fw_version):
     lines.append("#pragma once")
     lines.append("#include <stdint.h>")
     lines.append("")
-    lines.append("#define FADER_APP_FLASH_START (0x%04Xu)" % FLASH_START)
+    lines.append("#define FADER_APP_FLASH_START (0x%04Xu)" % BL_APP_START)
     lines.append("#define FADER_APP_IMAGE_SIZE  (%uu)" % len(image))
     lines.append("#define FADER_APP_IMAGE_CRC16 (0x%04Xu)" % crc)
     lines.append("#define FADER_APP_FW_VERSION  (%uu)" % fw_version)
@@ -127,12 +63,8 @@ def main():
 
     if not args.no_build:
         build_offset_app()
-    if not OFFSET_HEX.exists():
-        raise SystemExit("offset app hex not found: %s (build fb_app_only first)" % OFFSET_HEX)
 
-    fw_version = parse_fw_version(SHARED_I2C_DATA)
-    image = load_app_image()
-    emit_header(args.output, image, fw_version)
+    emit_header(args.output, load_app_image(), firmware_version_u16())
 
 
 if __name__ == "__main__":

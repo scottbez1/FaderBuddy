@@ -14,59 +14,20 @@
 """Export the FaderBuddy offset application image as a raw .bin, for the
 ESPHome component's `firmware_image:` config (I2C-bootloader updates).
 
-Builds the fb_app_only PlatformIO environment (unless --no-build) and
-extracts the exact APPCODE bytes from the resulting Intel-hex, starting at
-the boot offset and padded to a whole number of flash pages with 0xFF. The
-app's FW_VERSION is baked into the last 2 bytes of the image at a fixed
-address (see bootloader_protocol.h BL_APP_META_ADDR / main.cpp
-FW_VERSION_FOOTER) -- the ESPHome component reads it straight from there, so
-this script does not need to (and cannot) pass it along separately.
-
-This mirrors production_tools/programAndTest/tools/generate_app_image.py,
-which does the same extraction for the jig but emits a C header instead of a
-raw binary.
+Builds the fb_app_only PlatformIO environment (unless --no-build) and extracts
+the application bytes from the resulting Intel-hex (see fb_image). The app's
+FW_VERSION is baked into the last 2 bytes of the image at a fixed address (see
+bootloader_protocol.h BL_APP_META_ADDR / main.cpp FW_VERSION_FOOTER), so the
+ESPHome component reads it straight from there and this script does not need to
+pass it along separately.
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
-# firmware/src/shared/bootloader_protocol.h constants (kept trivially in sync).
-FLASH_START = 0x0600   # BL_APP_START (BOOTEND 0x06 * 256)
-FLASH_SIZE = 16384     # BL_FLASH_SIZE
-PAGE_SIZE = 64         # BL_PAGE_SIZE
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]  # tools -> firmware -> repo root
-OFFSET_ENV = "fb_app_only"
-OFFSET_HEX = REPO_ROOT / ".pio" / "build" / OFFSET_ENV / "firmware.hex"
-
-
-def build_offset_app():
-    print("Building %s ..." % OFFSET_ENV, flush=True)
-    subprocess.run(
-        [sys.executable, "-m", "platformio", "run", "-e", OFFSET_ENV],
-        cwd=str(REPO_ROOT), check=True,
-    )
-
-
-def load_app_image():
-    from intelhex import IntelHex  # ships with pymcuprog
-    ih = IntelHex(str(OFFSET_HEX))
-    minaddr, maxaddr = ih.minaddr(), ih.maxaddr()
-    if minaddr < FLASH_START:
-        raise RuntimeError("hex has data below the boot offset (0x%04X < 0x%04X)"
-                           % (minaddr, FLASH_START))
-    # Extract [FLASH_START, maxaddr]; gaps read as 0xFF (erased flash).
-    ih.padding = 0xFF
-    image = bytearray(ih.tobinarray(start=FLASH_START, end=maxaddr))
-    # Pad up to a whole page.
-    if len(image) % PAGE_SIZE:
-        image += b"\xFF" * (PAGE_SIZE - (len(image) % PAGE_SIZE))
-    if FLASH_START + len(image) > FLASH_SIZE:
-        raise RuntimeError("image overflows flash")
-    return bytes(image)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fb_image import build_offset_app, load_app_image  # noqa: E402
 
 
 def main():
@@ -77,8 +38,6 @@ def main():
 
     if not args.no_build:
         build_offset_app()
-    if not OFFSET_HEX.exists():
-        raise SystemExit("offset app hex not found: %s (build fb_app_only first)" % OFFSET_HEX)
 
     image = load_app_image()
     fw_version = (image[-2] << 8) | image[-1]

@@ -94,7 +94,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // Called only from codegen to store initial haptic configs
     void store_initial_layer_haptic_config(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
 
-    // Firmware update over the I2C bootloader -- see ABOUT_I2C_BOOTLOADER.md section 11.
+    // Firmware update over the I2C bootloader -- see ABOUT_I2C_BOOTLOADER.md.
     // Called only from codegen to configure the packaged application image (embedded
     // once and shared across MULTI_CONF instances; image/length/crc16 describe the
     // exact page-aligned APPCODE bytes, fw_version is read from its last 2 bytes --
@@ -192,7 +192,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         };
         InitialHapticConfig initial_haptic_configs_[8] = {};
 
-        // --- Firmware update state (ABOUT_I2C_BOOTLOADER.md section 11) ---
+        // --- Firmware update state (ABOUT_I2C_BOOTLOADER.md) ---
         const uint8_t *firmware_image_{nullptr};
         uint32_t firmware_image_length_{0};
         uint16_t firmware_image_crc16_{0};

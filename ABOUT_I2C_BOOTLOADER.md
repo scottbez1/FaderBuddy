@@ -1,73 +1,42 @@
-# I2C Bootloader Design (ATtiny1616)
+# I2C Bootloader (ATtiny1616)
 
-> **Status: implemented and hardware-validated.**
-> The full I2C update cycle (enter → erase → stream → whole-image CRC verify →
-> RUN_APP → app reports `REG_FW_VERSION`) passes end-to-end on real hardware via
-> the production jig, with the written flash UPDI-verified against the image.
-> Bring-up found two TWI-slave bugs in the bootloader, both fixed (see
-> [DEBUGGING_BOOTLOADER.md](DEBUGGING_BOOTLOADER.md)): the slave init was missing
-> `PIEN` (so Stop conditions never raised `APIF` and every master-write command
-> was silently dropped), and the `twi_service()` error branch could leave
-> `CLKHOLD` asserted and wedge the bus. The ESPHome host-side flow (§11) is still
-> unimplemented.
-> The design below is now realized in code: the bootloader
-> (`firmware/src/bootloader/bootloader.c`), the shared protocol
-> (`firmware/src/shared/bootloader_protocol.h`), the `bootloader` /
-> `fb_app_only` / `fb_app_and_bootloader` PlatformIO environments, the
-> application-side entry path and `REG_ENTER_BOOTLOADER`/`REG_FW_VERSION`
-> registers (protocol bumped to **v6**), and an I2C firmware-upload test in the
-> production jig (`production_tools/programAndTest`, now part of the normal
-> `env:lilygo-t-display` test sequence — see BOOTLOADER_NEXT.md). The
-> register values, section semantics, and constants have been **validated
-> against the *ATtiny1614/16/17 Data Sheet (DS40002204A)***.
->
-> **Two deviations from the spec below, both fixing spec bugs:**
-> - The warm-reset entry token lives at **`0x3F00`**, not `0x3FFE` (§9). `0x3FFE`
->   is at the top of RAM where the stack starts and would be clobbered by the
->   bootloader's own startup pushes before it could read the token.
-> - The bootloader writes `NVMCTRL.CTRLA` via `_PROTECTED_WRITE_SPM` (CCP **SPM**
->   key `0x9D`), not the plain IOREG `_PROTECTED_WRITE` (§5).
->
-> **Not yet done:** the ESPHome host-side packaging/update flow (§11) and the
-> optional robustness extras (WDT command timeout, CRC-footer app validity, and
-> shrinking `BOOTEND` from the initial 0x08 toward the measured ~1.3 KB — §2/§9).
+FaderBuddy firmware can be updated over the I2C bus, with no UPDI programmer
+attached. A small bootloader lives in the ATtiny1616's hardware boot section and
+writes the application section on command from the host.
 
-## 1. Goal & constraints
+This document describes how that works, what it guarantees, and where it is
+still weak. Commands for building, flashing and testing live in
+[CLAUDE.md](CLAUDE.md).
 
-Today a FaderBuddy's ATtiny1616 can only be flashed with a physical UPDI
-programmer touching three test pads (see
-[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)). We want the ESP32 host
-to be able to push firmware updates to each fader **over the existing I2C bus**,
-with these hard constraints:
+## 1. Goal and constraints
 
-- **No pin changes.** The only wires between host and target are I2C (SDA/SCL on
-  the TWI0 pins). UPDI, the debug/serial pins, etc. stay as they are.
-- **No new wires.**
-- **The host cannot control target power** — any scheme that needs a power cycle
-  to enter update mode is out.
-- **Keep the existing PlatformIO + megaTinyCore toolchain** for building the
-  ATtiny firmware.
+Without the bootloader, an ATtiny1616 can only be flashed with a physical UPDI
+programmer on three test pads (see
+[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)). The bootloader lets an
+ESP32 host push updates over the wires that are already there. The design had to
+work under four hard constraints:
 
-**Approach:** a bootloader in the ATtiny1616's hardware boot section. The boot
-section owns the reset vector (PC = 0x0000), so it always runs first on any reset;
-NVMCTRL self-programming lets it flash the application; and hardware write
-protection prevents a corrupt application from overwriting the bootloader.
+- **No pin changes and no new wires.** Host and target share only I2C
+  (SDA/SCL on the TWI0 pins).
+- **The host cannot control target power.** Anything that needs a power cycle to
+  enter update mode is out.
+- **Keep the PlatformIO + megaTinyCore toolchain** for the ATtiny firmware.
+- **A bad application must never brick a board.** Recovery has to stay possible
+  over I2C.
 
-The one-time cost: every board needs a **single UPDI flash** to install (a) the
-bootloader, (b) the boot-section fuses, and (c) an application built to run at the
-post-boot offset. A combined PlatformIO environment (see [§7](#7-toolchain--build-integration-staying-in-platformio))
-bundles all three into one upload. After that, all future updates are I2C-only.
-UPDI remains the bring-up path for blank chips and the recovery path of last resort.
+The boot section satisfies all four. It owns the reset vector, so it always runs
+first. NVMCTRL self-programming lets it write the application. Hardware write
+protection stops the application from damaging it.
 
-(The firmware image is assumed already available to the host by some means — how
-the host obtains the image is out of scope.)
+The one-time cost is a **single UPDI flash per board**, installing the
+bootloader, the boot-section fuses, and an application linked at the post-boot
+offset. After that, updates are I2C-only. UPDI stays the bring-up path for blank
+chips and the recovery path of last resort.
 
 ## 2. Flash memory map
 
-The ATtiny1616 has **16 KB flash** with a **64-byte page size** (256 pages total),
-memory-mapped into the data space at **`FLASHSTART = 0x8000`** (confirmed against
-datasheet Table 6-1 and Figure 6-2 / Figure 9-2). Flash is divided into
-three consecutive sections defined by two fuses (`FUSE.BOOTEND`, `FUSE.APPEND`):
+The ATtiny1616 has 16 KB of flash with a 64-byte page size (256 pages), mapped
+into the data space at `FLASHSTART = 0x8000`. Two fuses split it into sections:
 
 ```
 program view   data-space (mapped) view
@@ -80,591 +49,449 @@ BOOTEND*256    0x8000+BOOTEND*256 ├──────────────�
 0x4000         0xBFFF  └────────────────────────┘  (16 KB)
 ```
 
-Two address spaces are in play and matter for the flash-write code (§5): the
-**program counter / section view** starts at `0x0000`, while **loads/stores that
-fill the page buffer use the data-space mapped view at `0x8000 + offset`**.
-Everywhere below, "flash address `X`" means program/section offset `X`; the store
-target is `0x8000 + X`.
+Two address spaces matter for the flash-write code. The program counter and the
+section fuses use offsets from `0x0000`. Loads and stores that fill the page
+buffer use the mapped view at `0x8000 + offset`. Everywhere below, "flash
+address X" means the program/section offset; the store target is `0x8000 + X`.
 
-- **`BOOTEND`** fuse: boot-section size, in **256-byte units**. A C bootloader
-  doing NVMCTRL + polled TWI + CRC16 is roughly **1–1.5 KB**, so start with
-  `BOOTEND = 0x06` (1536 bytes) and shrink after measuring the built size.
-  (512 bytes = `BOOTEND = 0x02` is achievable as a lower bound.)
-- **`APPEND`** fuse: `0x00` → the application section extends to the end of flash
-  (no separate APPDATA region needed).
-- The **boot section is at flash address `0x0000`**, so it contains the reset
-  vector and therefore **always executes first on any reset**.
-- The **application is linked to start at `BOOTEND * 256`** (see §7).
+- **`BOOTEND`** sets the boot-section size in 256-byte units. It is **`0x06`**
+  (1536 bytes) today. The bootloader measures about 1366 bytes, leaving roughly
+  170 bytes free.
+- **`APPEND`** is `0x00`, so the application section runs to the end of flash.
+  There is no separate APPDATA region.
+- The application is linked to start at `BOOTEND * 256` = `0x0600`.
 
-## 3. Boot-section integrity (write protection)
+`BOOTEND` is not a value to change casually. Six places move in lockstep; the
+comment on `BL_BOOTEND` in `firmware/src/shared/bootloader_protocol.h` lists
+them.
 
-Confirmed against the datasheet (*NVMCTRL — Memory Organization*, §9.3.1.1):
+Application flash is tight. The app has roughly 130 bytes of headroom below the
+`.fw_meta` footer, and about 1.1 KB of the image is avr-libc soft-float pulled
+in by the float-based control law in `motor_control.h`. Converting the control
+hot path to fixed point is the next real source of app flash.
 
-- **The CPU can never write to the BOOT section** — unconditional, inherent
-  hardware behavior, independent of any fuse or lock bit. Neither the application
-  nor the bootloader itself can rewrite the boot section.
-- **Directional inter-section write protection:** BOOT code may write APPCODE and
-  APPDATA; APPCODE may write only APPDATA; APPDATA may write neither Flash nor
-  EEPROM.
-- **`BOOTLOCK` / `APCWP`** are optional lock bits in `NVMCTRL.CTRLB` (effective
-  until the next reset), **not** fuses and **not** required for this design. Note
-  `BOOTLOCK` additionally blocks *reads and execution* of the boot section — so
-  **do not set it** (the boot section must stay executable on every reset). This
-  design sets **no** lock bits and relies on the inherent CPU-can't-write-BOOT
-  protection.
+## 3. Boot-section integrity
 
-Consequence: **a buggy or half-written application can never corrupt the
-bootloader.** Because the bootloader always runs first on reset, even a totally
-broken application still lets the host re-enter the bootloader and re-flash
-without UPDI. As defense in depth the bootloader still **bounds-checks every
-target page address** so a bad host command is rejected in software before it even
-reaches the hardware guard.
+Per the datasheet (*NVMCTRL — Memory Organization*, §9.3.1.1):
 
-## 4. Interrupt vectors (`CPUINT.CTRLA.IVSEL`) — no action needed
+- **The CPU can never write the BOOT section.** This is inherent hardware
+  behaviour, independent of any fuse or lock bit. Neither the application nor
+  the bootloader itself can rewrite it.
+- **Inter-section writes are directional.** BOOT code may write APPCODE and
+  APPDATA. APPCODE may write only APPDATA. APPDATA may write neither.
+- **`BOOTLOCK` and `APCWP`** are optional `NVMCTRL.CTRLB` lock bits, not fuses,
+  and this design sets neither. `BOOTLOCK` also blocks reads and execution of
+  the boot section, so setting it would stop the bootloader from running at all.
 
-`CPUINT.CTRLA.IVSEL` (**bit 6**, CCP-protected; reset = 0) selects where the
-interrupt vector table is fetched from (confirmed against datasheet §13.5.1):
+The consequence is the safety property the whole design rests on: **a buggy or
+half-written application can never corrupt the bootloader.** Since the
+bootloader runs first on every reset, even a completely broken application still
+leaves a route back over I2C. As defence in depth, the bootloader also
+bounds-checks every target page address in software.
 
-- **`IVSEL = 0` (the reset default) → vectors at the start of the *application*
-  section.**
-- **`IVSEL = 1` → vectors at the start of the *boot* section.**
+The flip side is that **the bootloader itself is not field-updatable**. Changing
+it always requires UPDI. Keeping it small and stable is therefore a feature, and
+any change to it must stay compatible with hosts and application images already
+in the field.
 
-**No code needs to touch `IVSEL` at all:**
+## 4. Interrupt vectors
 
-- The **bootloader uses no interrupts** — it polls the TWI slave flags — so it
-  doesn't care where the vector base points.
-- The **application wants its vector table at the application start**, which is
-  exactly what the reset default (`IVSEL = 0`) already gives it. As long as the
-  app is linked with its vector table at `BOOTEND * 256` (see §7), its ISRs
-  resolve into the application section **with no startup write to `IVSEL`**.
-- **Reset always vectors to `0x0000`** (the boot section) regardless of `IVSEL` —
-  `IVSEL` only moves the *interrupt* vector base, never the reset vector.
+`CPUINT.CTRLA.IVSEL` selects where the interrupt vector table is fetched from.
+`IVSEL = 0`, the reset default, points at the start of the application section;
+`IVSEL = 1` points at the boot section.
+
+No code touches `IVSEL`. The bootloader uses no interrupts, so it does not care.
+The application wants its vectors at the application start, which is exactly
+what the reset default gives it, as long as it is linked with its vector table
+at `BOOTEND * 256`. Reset always vectors to `0x0000` regardless of `IVSEL`.
 
 ## 5. Self-programming via NVMCTRL
 
-Flash is memory-mapped, and writing is a two-step "fill the page buffer, then
-issue a command" flow. Per 64-byte page:
+Writing flash is a two-step "fill the page buffer, then issue a command" flow.
+Per 64-byte page:
 
-0. **Pre-check** — poll `NVMCTRL.STATUS` until both `FBUSY` (bit 0) and `EEBUSY`
-   (bit 1) are clear before issuing any NVM command.
-1. **Clear the page buffer** — `NVMCTRL.CTRLA = PBC` (page buffer clear). The
-   buffer auto-clears after any reset, write, erase, or sleep-wake, so this is
-   strictly optional but cheap insurance.
-2. **Fill the buffer** — ordinary stores (`st`) to the **data-space mapped flash
-   addresses** (`0x8000 + offset`) of the target page load the temporary page
-   buffer. Writing to `0x0000`-based addresses would *not* hit flash.
-3. **Erase + write** — `NVMCTRL.CTRLA = ERWP` (erase and write page).
-4. **Wait** — the CPU **stalls** during the flash operation (datasheet: "the CPU
-   will be halted"), so no read-while-write restriction applies and the next
-   instruction after the `_PROTECTED_WRITE` does not execute until the operation
-   completes. Check `WRERROR` (STATUS bit 2) afterward.
+1. **Pre-check.** Poll `NVMCTRL.STATUS` until `FBUSY` and `EEBUSY` are clear.
+2. **Clear the page buffer** with `NVMCTRL.CTRLA = PBC`. The buffer auto-clears
+   after any reset, write, erase, or sleep-wake, so this is cheap insurance
+   rather than a requirement.
+3. **Fill the buffer** with ordinary stores to the mapped addresses
+   (`0x8000 + offset`) of the target page. Stores to `0x0000`-based addresses
+   would not reach flash.
+4. **Erase and write** with `NVMCTRL.CTRLA = ERWP`.
+5. **Check `WRERROR`** afterwards. No explicit wait is needed: the CPU is halted
+   for the duration of the flash operation, so the next instruction does not run
+   until it completes.
 
-Every write to `NVMCTRL.CTRLA` must go through the **Configuration Change
-Protection** unlock: write the SPM signature to `CPU.CCP` immediately before
-(`_PROTECTED_WRITE(NVMCTRL.CTRLA, cmd)` does this).
+Every write to `NVMCTRL.CTRLA` goes through Configuration Change Protection,
+using the **SPM** key `0x9D` (`_PROTECTED_WRITE_SPM`). The IOREG key `0xD8`
+(`_PROTECTED_WRITE`) is for protected I/O registers such as `RSTCTRL.SWRR`, and
+does not work for `NVMCTRL.CTRLA`.
 
-Command values — **confirmed** against the datasheet *NVMCTRL — CTRLA.CMD* table
-(§9.5.1):
+Command values, from the datasheet `CTRLA.CMD` table (§9.5.1):
 
-| Value | Name   | Meaning                | Notes |
-|:-----:|--------|------------------------|-------|
-| 0x00  | —      | No command             | |
-| 0x01  | `WP`   | Write page             | |
-| 0x02  | `ER`   | Erase page             | |
-| 0x03  | `ERWP` | Erase and write page   | |
-| 0x04  | `PBC`  | Page buffer clear      | |
-| 0x05  | `CHER` | Chip erase (Flash + EEPROM) | **Not used by this bootloader** — use per-page `ER` for `ERASE_APP` instead (see §6) |
+| Value | Name   | Meaning                     | Notes |
+|:-----:|--------|-----------------------------|-------|
+| 0x00  | —      | No command                  | |
+| 0x01  | `WP`   | Write page                  | |
+| 0x02  | `ER`   | Erase page                  | |
+| 0x03  | `ERWP` | Erase and write page        | what page streaming uses |
+| 0x04  | `PBC`  | Page buffer clear           | |
+| 0x05  | `CHER` | Chip erase (Flash + EEPROM) | **not used** — it would erase EEPROM too, losing calibration |
 
-CCP signatures (datasheet §8.7.1): **`0x9D` = SPM key** (self-programming);
-**`0xD8` = IOREG key** (protected I/O registers, e.g. `IVSEL`, `RSTCTRL.SWRR`).
+Because `BOOTEND` counts 256-byte units and 256 is a multiple of the 64-byte
+page, the application start is always page-aligned. There is no partial-page
+case at the section boundary.
 
-Note: `SET_PAGE_ADDR` (§6) carries a flash **section offset**; the bootloader adds
-`0x8000` to derive the store address for the page buffer fill. Because `BOOTEND`
-is in 256-byte units and 256 is a multiple of the 64-byte page, every
-`BOOTEND * 256` app start is naturally page-aligned — no partial-page edge case at
-the section boundary.
+## 6. Wire protocol
 
-## 6. TWI0 polled slave + wire protocol
+The bootloader drives the **TWI0** slave registers directly, polled, with no
+ISR and no `Wire` library. That keeps it small and self-contained in the boot
+section. The protocol is defined in
+[`firmware/src/shared/bootloader_protocol.h`](firmware/src/shared/bootloader_protocol.h),
+which is shared with every host.
 
-The bootloader talks I2C directly against the **TWI0** registers in **slave mode,
-polled, no ISR, and without the `Wire` library** (keeps it tiny and self-contained
-in the boot section). The relevant registers (datasheet *TWI*, §26):
-`TWI0.SADDR`, `TWI0.SCTRLA`, `TWI0.SSTATUS`, `TWI0.SCTRLB`, `TWI0.SDATA`.
+**Address.** The bootloader answers on the **same address as the application** —
+base `0x20` plus the 3-bit hardware address from PC2/PC1/PC0. A fader keeps its
+identity in bootloader mode.
 
-Slave loop sketch (`SSTATUS`/`SCTRLB` bit names & command encodings confirmed
-against datasheet §26):
+**Commands** (multi-byte fields big-endian, matching `i2c_data.h`):
 
-1. Init: `TWI0.SADDR = address << 1`; enable the slave in `TWI0.SCTRLA`.
-2. Poll `TWI0.SSTATUS`:
-   - **Address match** (`APIF` set, `AP` = address): inspect `DIR`, then ACK via
-     `TWI0.SCTRLB` "response" command.
-   - **Data, master-write/slave-receive** (`DIF`, `DIR`=0): read `TWI0.SDATA`,
-     then ACK the next byte.
-   - **Data, master-read/slave-transmit** (`DIF`, `DIR`=1): write `TWI0.SDATA`,
-     then issue "response."
-   - **Stop** (`APIF`, not `AP`): complete the transaction.
-   - **Bus error / collision**: reset the interface and abort.
-
-**Address:** the bootloader uses the **same address scheme as the application** —
-base `0x20` plus the 3-bit hardware address from pins PC2/PC1/PC0
-(`firmware/src/main.cpp` `setup_i2c()`, addresses `0x20`–`0x27`). So a fader keeps
-its identity in bootloader mode. (Alternatively, a fixed "bootloader address"
-could be used to make mode unambiguous to the host — a design choice to settle at
-implementation; keeping the app address is simplest.)
-
-**Command set** (all multi-byte fields **big-endian** to match FaderBuddy's existing convention in
-[`i2c_data.h`](firmware/src/shared/i2c_data.h)):
-
-| Opcode | Command             | Payload / behavior                                                        |
+| Opcode | Command             | Payload / behaviour                                                       |
 |:------:|---------------------|---------------------------------------------------------------------------|
-| `0x01` | `SET_PAGE_ADDR`     | 2-byte flash page address; resets the frame counter and page buffer       |
-| `0x02` | `SEND_FRAME`        | 16 data bytes + CRC16; 4 frames fill a 64-byte page, then it auto-writes  |
+| `0x01` | `SET_PAGE_ADDR`     | 2-byte flash page address; resets the frame counter and page buffer        |
+| `0x02` | `SEND_FRAME`        | 16 data bytes + CRC16; 4 frames fill a 64-byte page, which then auto-writes |
 | `0x03` | `RUN_APP`           | leave bootloader mode and start the application                           |
-| `0x04` | `ERASE_APP`         | erase the entire application section (EEPROM untouched); see note below   |
-| `0x06` | `GET_VERSION_CRC16` | args: address + length → returns bootloader version + CRC16 of that range |
+| `0x04` | `ERASE_APP`         | invalidate the application (see below)                                    |
+| `0x05` | `GET_STATUS`        | read back `[version, status, last_error]`                                 |
+| `0x06` | `GET_VERSION_CRC16` | address + length → bootloader version + CRC16 of that flash range         |
 
-**`ERASE_APP` implementation:** Issue `ER` commands page-by-page over the APPCODE
-range (`BOOTEND * 256` through `FLASHEND`). Do **not** use `CHER` — chip erase
-also erases EEPROM (losing any stored calibration/user data) and its behavior with
-respect to the BOOT section when issued from CPU code is not explicitly documented
-as safe.
+Master-write commands are processed at the **Stop** condition. Master-read
+commands are processed at the address match. Reading register `0x00` returns
+`BL_VERSION_MARKER` (`0xB0`), which is how a host tells bootloader mode from a
+running application (see [§8](#8-version-identity-and-no-app-detection)).
 
-**Recommended update sequence:**
+**`ERASE_APP` erases only the first page**, the one holding the reset vector.
+That is enough to mark the application invalid, and each streamed page is
+written with `ERWP`, which erases it in place anyway. See
+[§12](#12-implementation-notes) for why a full-section erase is avoided.
+
+**The update sequence** is:
 
 1. `ERASE_APP`
-2. For each page: `SET_PAGE_ADDR`, then `SEND_FRAME` ×4 (each CRC16-checked)
-3. `GET_VERSION_CRC16` over the whole application region to verify the write
+2. For each page: `SET_PAGE_ADDR`, then `SEND_FRAME` × 4
+3. `GET_VERSION_CRC16` over the whole application region, to verify the write
 4. `RUN_APP`
 
-Per-frame CRC16 catches bit errors during transfer; the whole-image CRC verify
-before `RUN_APP` catches anything missed and prevents jumping into a bad image.
+Per-frame CRC16 catches transfer errors as they happen. The whole-image CRC
+catches anything missed and stops the host from jumping into a bad image.
 
-## 7. Toolchain / build integration (staying in PlatformIO)
+## 7. Entering the bootloader
 
-**Known limitation:** PlatformIO's megaTinyCore integration does **not** natively
-support "build for a bootloader" or "upload via a bootloader." So we structure it
-ourselves — still entirely within PlatformIO, as **three environments**:
+There is no power-cycle control, so entry is application-triggered, with a
+hardware escape hatch for when the application cannot help.
 
-- **`[env:fb_bootloader_only]`** — the bootloader's own minimal source (NVMCTRL + polled
-  TWI0 + CRC16, no Arduino framework, or a very thin one), linked into the boot
-  section and emitted as a hex. Its measured size sets the final `BOOTEND`.
-- **`[env:fb_app_only]`** (the existing app env, now built at the boot offset) —
-  link `.text` starting at `BOOTEND * 256`, with the vector table at the
-  application start. **No `IVSEL` startup write is needed** — the reset default
-  (`IVSEL = 0`) already routes interrupts to the application section (see §4); the
-  only requirement is the vector-table placement. The cleanest route is to
-  **reuse megaTinyCore's existing bootloader offset machinery** (it already does
-  precisely this for Arduino IDE bootloader builds). If that isn't directly
-  reachable from PlatformIO, achieve the same with `-Wl,--section-start=.text=<offset>`
-  (plus vector placement) and an `extra_scripts` hook — the project already uses
-  `extra_scripts` for `firmware/tools/install_pyupdi.py`, so there is precedent.
-  **The exact megaTinyCore knobs must be confirmed against the installed core
-  version.** This env is *also* the **day-to-day dev-iteration path**: once the
-  bootloader is installed it persists, so a developer re-flashes only the app over
-  UPDI without touching the bootloader.
-- **`[env:fb_app_and_bootloader]`** (new — the combined first-flash) — see below.
+### From a running application
 
-### Do you need two uploads the first time? No — provide a combined env.
+1. The host writes `REG_ENTER_BOOTLOADER` (0x10) with the magic payload
+   `ENTER_BOOTLOADER_MAGIC`. The magic means a stray or corrupt write cannot
+   reboot a fader by accident.
+2. The I2C ISR only sets a flag. The main loop then writes the **entry token**
+   and issues a software reset via `RSTCTRL.SWRR`.
+3. The bootloader runs, reads `RSTCTRL.RSTFR` to confirm the reset was a
+   software reset (`SWRF`), and checks the token. If both match it stays
+   resident. Otherwise it clears the token and starts the application. Either
+   way it writes `RSTFR` back to clear the sticky flags.
 
-Logically there are **three artifacts** (fuses, bootloader hex, offset-app hex),
-but you should not have to do multiple manual uploads to bring up a blank chip. The
-`fb_app_and_bootloader` env packages them into **one action**:
+The entry token is a `.noinit` RAM variable pinned to **`0x3F00`** in both
+builds. RAM survives a warm reset, and the C runtime does not clear `.noinit`.
+GPIOR registers cannot be used for this: they are cleared by every reset,
+including a software reset.
 
-1. An `extra_scripts` **post-build merge** combines the bootloader hex and the
-   offset-app hex into a single Intel-hex. The two regions never overlap (bootloader
-   at `0x0000`, app at `BOOTEND * 256`), so this is a straightforward merge with
-   `srec_cat`, `avr-objcopy`, or the `intelhex` Python package.
-2. A single `upload_command` writes the merged hex **and sets the `BOOTEND` /
-   `APPEND` fuses** in one UPDI invocation. Recommend **`pymcuprog`** here — it has
-   better fuse-writing support than `pyupdi`, and `firmware/tools/install_pymcuprog.py`
-   already exists in the tree (currently unused); wire it into this env's
-   `extra_scripts` exactly as `install_pyupdi.py` is wired into the app env today.
+Requiring both the reset-cause flag and the token makes accidental entry
+effectively impossible. After a power-on reset, RAM is indeterminate, but that
+path has neither `SWRF` set nor a valid token, so it correctly falls through to
+the application.
 
-So the first-time flow becomes: *pick the `fb_app_and_bootloader` env → Upload* — one
-step, over UPDI, exactly the [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)
-physical setup (UPDI Friend on the three pads). That same combined upload is also the
-**recovery path** if a board's application is ever left invalid. After the one-time
-factory flash, everything is I2C.
+### Forced entry with the TP5 strap
 
-## 8. Application-side changes (specified, not implemented)
+`REG_ENTER_BOOTLOADER` only works if the application runs and answers the bus.
+Two failure modes escape it: an image that was partially written but whose reset
+vector happens to be programmed, so `app_is_valid()` accepts it; and an
+application that starts but wedges before serving I2C. Both leave a fader
+looking dead.
 
-To let the host *ask* a running fader to drop into the bootloader:
+**TP5 (PB5)** is the hardware escape. Its net is the MCU pin and one test pad on
+the back of the board, and nothing else, so only a deliberate short pulls it
+low. To use it:
 
-- **Protocol** — add new registers in the free `0x10+` space of
-  [`firmware/src/shared/i2c_data.h`](firmware/src/shared/i2c_data.h):
-  `REG_ENTER_BOOTLOADER` (takes a **magic payload** so a stray write can't trigger
-  it) and `REG_FW_VERSION` (the application build/semantic version — see
-  [§10](#10-version-identity--no-application-detection)). Do **not** bump
-  `I2C_PROTOCOL_VERSION`: both registers are purely additive, and a host that
-  validates the protocol version strictly would break on a bump it has no reason
-  to care about. The capability signal is `FW_VERSION_BOOTLOADER_ENTRY` — the
-  minimum `REG_FW_VERSION` that honours `REG_ENTER_BOOTLOADER`.
-  > ⚠️ Per [CLAUDE.md](CLAUDE.md), `i2c_data.h` is **hand-synced across four
-  > copies**: the firmware source, `esphome/components/fader_buddy/i2c_data.h`,
-  > the production-jig header, and the WebHID JS constants. All four must be
-  > updated together. (The firmware and esphome copies have already drifted
-  > slightly — `1UL` vs `1U` in the `STATE_*_bm` macros — so re-sync carefully.)
-- **Firmware** — handle `REG_ENTER_BOOTLOADER` in `onI2cReceive()` by setting a
-  `volatile` flag only (it runs in ISR context — the existing code is careful
-  about this). In the main loop, when the flag is set, write the **entry token**
-  and perform the **software reset** (see §9) outside ISR context.
-
-## 9. Bootloader entry mechanism (no power cycle available)
-
-Because the host cannot power-cycle the target, entry is **application-triggered**:
-
-1. Host writes `REG_ENTER_BOOTLOADER` (with magic) to the running app.
-2. The app writes an **entry token** to a location that survives a warm reset, then
-   issues a **software reset**:
-   `_PROTECTED_WRITE(RSTCTRL.SWRR, RSTCTRL_SWRE_bm)` (`SWRE` = bit 0, confirmed
-   in datasheet §12.5.2; `SWRR` is CCP `IOREG`-protected, hence `_PROTECTED_WRITE`).
-3. On reboot the **bootloader runs first** (it owns `0x0000`), reads
-   `RSTCTRL.RSTFR` to confirm the reset cause was a **software reset** (`SWRF`, bit
-   4, confirmed §12.5.1), and checks the entry token. If both match → stay resident
-   as an I2C slave in bootloader mode. Otherwise → clear the token and jump to the
-   application. In both cases the bootloader **writes `RSTFR` back to clear the
-   flags** (write 1 to clear; flags are sticky until explicitly cleared).
-
-**Where to store the entry token** — the bootloader and application are separate
-programs, so they must agree on a fixed location. **Use a `.noinit` RAM variable
-pinned to a fixed absolute address** (e.g. `0x3FFE`, just below `RAMEND = 0x3FFF`)
-in *both* builds. RAM contents survive a warm reset (software/WDT/BOR) because
-SRAM cells retain their state — only a power-on reset leaves them indeterminate.
-The C runtime does **not** clear `.noinit` (megaTinyCore excludes it from the
-`.bss` clear).
-
-**Do not use GPIOR registers.** The datasheet confirms `GPIORn` has a reset value
-of `0x00` and is cleared by every reset including a software reset — it cannot
-carry a token across the entry reset. (Confirmed from §6.8.2.)
-
-Combining the reset-cause flag with the token makes accidental entry effectively
-impossible. (One `.noinit` caveat: after a true power-on/BOD reset RAM is
-indeterminate — but that path has neither `SWRF` set nor a valid token, so it
-correctly falls through to the application.)
-
-**Safety fallbacks:**
-
-- A short **post-reset listen window** in the bootloader (wait briefly for I2C
-  activity before jumping to the app) as a secondary entry route. If this window
-  can be reached after a **power-on reset** (not just the warm SW-reset path),
-  remember the NVMCTRL **POR write lockout** (datasheet §9.3.2.5): after POR the
-  controller rejects NVM writes until `FBUSY`/`EEBUSY` clear, so poll `FBUSY` (or
-  disable the timeout via `SYSCFG0`) before the first flash op.
-- A **watchdog command timeout** while resident in bootloader mode, so a
-  stalled/abandoned update auto-recovers to the application instead of hanging on
-  the shared bus.
-
-### Forced-entry strap (TP5 / PB5) — implemented
-
-`REG_ENTER_BOOTLOADER` only works if the application is running *and healthy
-enough to serve I2C*. Two failure modes escape it: an image that was partially
-written but whose reset vector happens to be programmed (so `app_is_valid()`
-accepts it), and an app that starts but wedges before it answers the bus. Both
-leave the fader looking dead with no software route back.
-
-**TP5 (PB5)** is the hardware escape. It is a spare pin whose net is the MCU pin
-and that one test pad on the back of the board — nothing else — so nothing but a
-deliberate short can pull it down. Ground it while the board comes out of reset
-and the bootloader stays resident instead of starting the application:
-
-1. Short TP5 to any ground (nearest are R2 / J4, ~4 mm away).
+1. Short TP5 to any ground. The nearest are R2 and J4, about 4 mm away.
 2. Power-cycle or reset the board.
-3. Release the short — it only has to be held across reset, not for the whole
-   update. The bootloader is now resident and answers `BL_VERSION_MARKER` at
-   register `0x00`; update it normally, then `BL_CMD_RUN_APP`.
+3. Release the short. It only has to be held across reset.
 
-Implementation (`firmware/src/bootloader/bootloader.c`,
-`strap_requests_bootloader()`): the internal pull-up is enabled, the pin is
-sampled eight times spread over a few hundred microseconds and every sample must
-read low, then the pull-up is switched back off so the application sees the pin
-in its reset state and a permanently grounded pad draws no current. Total cost
-62 bytes of boot section and well under a millisecond at every normal boot.
+The bootloader is then resident and answers `BL_VERSION_MARKER` at register
+`0x00`. Update it normally, then send `RUN_APP`.
 
-Pin choice, for anyone revisiting it: PA3 (TP6) is TCA0 `WO3`, and PA4/PA5 are
-`WO4`/`WO5` — the motor outputs — under this part's default `PORTMUX.CTRLC`
-mapping, which is why the strap is not on PA3. PA7 (TP1) and PB4 (TP4) are the
-equivalent alternatives; PB5 was taken because the bootloader already drives
-PORTB for the heartbeat LED. TP2/TP3 are RX/TX and are left for serial debug.
+`strap_requests_bootloader()` enables the internal pull-up, samples the pin
+eight times over a few hundred microseconds, and requires every sample to read
+low. It then switches the pull-up back off, so the application sees the pin in
+its reset state and a permanently grounded pad draws no current. The check costs
+62 bytes of boot section and well under a millisecond on every boot.
 
-## 10. Version identity & "no application" detection
+For anyone revisiting the pin choice: PA3 (TP6) is TCA0 `WO3`, and PA4/PA5 are
+`WO4`/`WO5`, the motor outputs, under this part's default `PORTMUX.CTRLC`
+mapping. PA7 (TP1) and PB4 (TP4) are the equivalent alternatives. PB5 was taken
+because the bootloader already drives PORTB for the heartbeat LED. TP2 and TP3
+are RX/TX and are left for serial debug.
 
-The host needs to reliably tell three states apart on the bus: **app running**,
-**bootloader resident (no usable app)**, and **device absent/wedged** — and it needs
-a version to compare against for update decisions. Two complementary pieces:
+## 8. Version identity and "no app" detection
 
-### `REG_VERSION` (0x00) as a mode/identity read
+A host needs to tell three states apart on the bus, and needs a version to
+compare against when deciding whether to update.
 
-Reading register `0x00` becomes the universal "who are you" probe:
+Reading register `0x00` is the universal probe:
 
-| Response at `0x00`         | Meaning                                        |
-|----------------------------|------------------------------------------------|
-| A valid protocol version (≥5) | Application is running normally              |
-| A reserved **bootloader marker** (e.g. `0xB0`) | Bootloader is resident — no usable app |
-| NAK / no response          | Device absent, unpowered, or bus wedged        |
+| Response at `0x00`            | Meaning                                 |
+|-------------------------------|-----------------------------------------|
+| A valid protocol version (≥5) | The application is running normally     |
+| `0xB0` (`BL_VERSION_MARKER`)  | The bootloader is resident; no usable app |
+| NAK / no response             | Device absent, unpowered, or bus wedged |
 
-The marker is chosen to be outside any valid protocol version and `≠ 0xFF`. This
-reuses the read the ESPHome component already does in `setup()`
-(`esphome/components/fader_buddy/fader_buddy.cpp`) — today it `mark_failed()`s on a
-version mismatch; extend it to recognize the marker and treat the device as
-**"needs firmware"** rather than simply broken.
+`REG_VERSION` is a protocol compatibility version and is too coarse to drive
+updates, so the application also serves **`REG_FW_VERSION`** (0x11), a packed
+`(major << 8) | minor`. The host compares that against the version it has
+packaged.
 
-### `REG_FW_VERSION` — the application version to compare
+A board ends up bootloader-only in one of two ways: a bootloader flashed without
+an application, or an update interrupted partway through. There is no atomic A/B
+image — 16 KB of flash cannot hold two — so an update is not transactional. On
+every boot the bootloader therefore runs `app_is_valid()`, which today checks
+that the application's reset vector is not blank. If the check fails, the
+bootloader stays resident and keeps answering with the marker, which is exactly
+the state the host detects. That check is weaker than it should be; see
+[§11](#11-known-gaps).
 
-`REG_VERSION` is the *protocol/compatibility* version; it is not granular enough to
-drive updates. Add a separate app-only **`REG_FW_VERSION`** (build number or
-semantic version, in the free `0x10+` space) that the host compares against the
-version it has packaged (see [§11](#11-host-side-firmware-packaging--update-policy-esphome))
-to decide whether an update is needed.
+**Pre-bootloader firmware.** Boards running firmware older than the bootloader
+work answer `0x00` with a normal protocol version but have no bootloader behind
+them. The host distinguishes them with `REG_FW_VERSION` against
+`FW_VERSION_BOOTLOADER_ENTRY`, the minimum version that honours
+`REG_ENTER_BOOTLOADER`. Anything below that, including `FW_VERSION_NONE`, means
+a one-time UPDI migration is required. This is a floor, not a guarantee: the
+application cannot read the boot section, so a board whose bootloader was
+somehow never installed would still report a bootloader-aware version. In
+practice the two are installed together, and the host's marker probe catches the
+mismatch before anything is erased.
 
-### How "no app" arises, and how the bootloader guarantees the marker shows
+## 9. Build and install
 
-A board can end up bootloader-only in two ways: a bootloader flashed without an app,
-or a **failed/partial application update** (e.g. power lost mid-write — recall
-[§9](#9-bootloader-entry-mechanism-no-power-cycle-available) has no atomic A/B
-image). The bootloader must never jump into a blank or half-written app, so on every
-boot it runs an **application-validity self-check**:
+Three PlatformIO environments, all in the root `platformio.ini`:
 
-- **Minimum:** the application's reset vector at `BOOTEND * 256` is not blank
-  (`!= 0xFFFF`; erased flash reads `0xFF`).
-- **Robust:** a **CRC footer** embedded in the app image at a fixed
-  linker-placed location (end of APPCODE) storing the image length + CRC16; the
-  bootloader recomputes the CRC over the app region and compares. This catches
-  partial writes, not just a blank chip, and reuses the same CRC16 the
-  `GET_VERSION_CRC16` command uses for post-write verification.
+- **`fb_bootloader_only`** — the bootloader alone. Bare-metal, no Arduino
+  framework, linked into the boot section.
+- **`fb_app_only`** — the application linked at `BOOTEND * 256`, with its vector
+  table at the application start. This is the day-to-day development path: once
+  the bootloader is installed it stays installed, so a developer re-flashes only
+  the application over UPDI. `USING_OPTIBOOT` strips megaTinyCore's
+  reset-flag and reset-loop `.init3` code, which the bootloader has already
+  handled.
+- **`fb_app_and_bootloader`** — the combined first flash. A post-build hook
+  merges the two hex files, which never overlap, and a single
+  `firmware/tools/flash_with_fuses.py` invocation writes the merged image **and**
+  the `BOOTEND`/`APPEND` fuses over UPDI with `pymcuprog`.
 
-If the check fails, the bootloader **stays resident** and keeps answering `0x00`
-with the marker — which is exactly the state the host detects. No valid app is ever
-executed, and the device advertises that it needs one.
+A fourth environment, `fb_legacy_no_bootloader`, builds the application at
+`0x0000` with no bootloader at all. It is only for boards that are not getting
+the bootloader.
 
-### Pre-bootloader firmware (migration)
+So bringing up a blank chip is one action: select `fb_app_and_bootloader` and
+upload, using the same physical setup as
+[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md). That same combined
+upload is the recovery path if a board is ever left in a state I2C cannot reach.
 
-Boards still running the current, pre-bootloader firmware answer `0x00` with a
-normal protocol version but have **no bootloader** behind them. The host must not
-send them `REG_ENTER_BOOTLOADER` expecting an I2C update. It distinguishes them by
-`REG_FW_VERSION` against `FW_VERSION_BOOTLOADER_ENTRY` (the capability signal from
-[§8](#8-application-side-changes-specified-not-implemented)): a firmware version
-below that threshold — `FW_VERSION_NONE` included — means "UPDI migration
-required, one time." This is the only remaining case that still needs a physical
-programmer.
+## 10. Host side
 
-Note this is a floor, not a guarantee: `FW_VERSION` describes the *application*,
-and the application cannot read the boot section's contents, so a board whose
-bootloader was somehow never installed would still report a bootloader-aware
-version. In practice the two are installed together by the factory flash, and the
-host's `BL_VERSION_MARKER` probe catches the mismatch before any app is erased.
+### The ESPHome component
 
-## 11. Host-side firmware packaging & update policy (ESPHome)
+`esphome/components/fader_buddy/` embeds a packaged application image at codegen
+time and drives the update over I2C. Configuration and usage are documented in
+[ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md); this section
+covers how it works.
 
-> **Status: implemented.** The ESPHome component (`esphome/components/fader_buddy/`)
-> embeds the packaged application image at codegen time and drives the full update
-> sequence via a manual `fader_buddy.update_firmware` action. Config-validated and
-> compiled end-to-end against a real ESPHome build; not yet exercised against
-> hardware (the jig remains the hardware-validated reference implementation of this
-> sequence).
+**What gets packaged.** Only the application. The image is the exact
+page-aligned APPCODE bytes as a raw `.bin`, produced by
+`firmware/tools/export_app_image.py`.
 
-### What gets packaged
+**Where the version comes from.** `FW_VERSION` is baked into the image at a
+fixed address, the last two bytes of flash (`BL_APP_META_ADDR` in
+`bootloader_protocol.h`, `FW_VERSION_FOOTER` in `firmware/src/main.cpp`).
+Because the application section always runs to `FLASHEND`, that address never
+moves as the application grows. The component reads the version straight from
+the packaged `.bin`, so it cannot drift from what the flashed application will
+report. The whole-image CRC16 is not baked in, because a CRC cannot cover
+itself; it is computed at ESPHome build time from the same bytes.
 
-Only the **application** is written over I2C. The bootloader is deliberately **not
-field-updatable** (it is write-protected from the app per [§3](#3-boot-section-integrity-write-protection),
-and it cannot safely rewrite itself while running) — so bootloader changes always
-require UPDI, and keeping it small and stable is a feature, not a limitation. The
-packaged blob is the **offset application image** (the exact page-aligned APPCODE
-bytes, `.bin` format, produced by `firmware/tools/export_app_image.py`).
+**Embedding.** `to_code()` emits the image as a `static const uint8_t[] PROGMEM`
+array. The component is `MULTI_CONF`, and many faders normally run the same
+firmware, so the blob is emitted once per distinct image and shared across
+instances rather than duplicating roughly 14 KB per fader.
 
-Its `FW_VERSION` is **not** a separate config field — it's baked into the image
-itself, at the fixed last-2-bytes-of-flash address (`BL_APP_META_ADDR` in
-`bootloader_protocol.h`, `FW_VERSION_FOOTER` in `firmware/src/main.cpp`). Because the
-app section always runs to `FLASHEND` regardless of app size, that address never
-moves as the app grows. The component reads the version straight from the last 2
-bytes of the packaged `.bin`, which is by construction identical to what the flashed
-app will report via `REG_FW_VERSION` — there's no separate value that could drift out
-of sync. The whole-image CRC16 (compared against `GET_VERSION_CRC16` after streaming)
-isn't baked in either, for a different reason: a CRC over the whole image can't
-sensibly include itself. It's computed by `to_code()` directly from the packaged
-`.bin` bytes at ESPHome-build time, the same way `export_app_image.py` computes it
-for the jig — also automatically correct, since it's a hash of the exact bytes being
-embedded rather than a hand-maintained number.
+**The sequence** is the same one the jig uses: probe register `0x00` → if not
+already resident, `REG_ENTER_BOOTLOADER` and wait for the marker → `ERASE_APP` →
+stream pages → whole-image `GET_VERSION_CRC16` → `RUN_APP` → re-read
+`REG_FW_VERSION` to confirm.
 
-### Embedding the blob (codegen)
+**It runs a slice at a time from `loop()`.** `update_tick_()` walks an
+`UpdateStage` enum, one stage per call; `update_firmware()` only arms the state
+machine and returns. The transfer takes seconds, and blocking for that long
+would starve the API and WiFi, and would make progress reporting impossible,
+since queued entity states are only flushed from the loop. Three details make
+the slicing work:
 
-The component's `__init__.py` `to_code()` emits the image as a
-`static const uint8_t[] PROGMEM` array via `cg.add_global(cg.RawExpression(...))`.
-Because the component is `MULTI_CONF = True` (many faders, all running the same
-firmware), the blob is emitted **once per distinct image path** — a module-level
-cache (`_firmware_image_cache`, keyed by resolved path) shares the symbol across
-instances pointing at the same file rather than duplicating a ~14 KB array per fader.
+- **Page streaming is time-budgeted**, not one page per tick. `UPDATE_WRITE`
+  keeps writing until `UPDATE_WRITE_BUDGET_MS` is spent, then yields. One page
+  per tick would turn a 230-page image into about 4 seconds of pure latency.
+- **The two long stalls are split into "ask" and "poll"** — erase and
+  whole-image CRC. Both leave the target unable to answer for hundreds of
+  milliseconds, and waiting for them inline would have been the one thing still
+  blocking the loop.
+- **Every polling stage carries a deadline**, compared wraparound-safe.
 
-### Config surface
+`update()` early-returns while an update is in flight, since a fader in its
+bootloader has no `REG_STATE` to read.
 
-```yaml
-fader_buddy:
-  - id: fader0
-    address: 0x20
-    firmware_image: firmware/faderbuddy-app-v6.bin   # bundled image; omit to disable updates
-    max_update_attempts: 3                           # per-address+version safety cap (default 3)
-    on_firmware_update_result:
-      then:
-        - lambda: |-
-            ESP_LOGI("main", "update: success=%d message=%s", success, message.c_str());
-```
+**Guard rails:**
 
-### The update flow
+- **Only on a version mismatch.** A fader already running the packaged version
+  is a no-op, reported as success.
+- **An attempt cap in persistent storage.** `ESPPreferences`, keyed by a hash of
+  the I2C address and the target version, incremented on failure. Once
+  `max_update_attempts` is reached for that version, further attempts are
+  refused without touching the bus. Because the key includes the version,
+  packaging a different image starts a fresh counter with no explicit reset.
+- **Never interrupt the user.** The run waits, bounded, for the fader to leave
+  `MODE_INPUT_ACTIVE` before taking the bus, and reports failure if it is still
+  in use.
+- **One fader at a time.** A class-static flag refuses a second concurrent
+  update across all instances. It is claimed before the first tick and held for
+  the whole run, which matters because the sequence is interruptible: without
+  it, a second fader could start in a gap between the first one's slices.
+- **Manual only.** There is no autoupdate mode. An update runs only when a human
+  presses the button or an automation calls the action.
 
-Registered as a **manual action** `fader_buddy.update_firmware` (`fader_buddy.h`'s
-`UpdateFirmwareAction`, driving `FaderBuddy::update_firmware()`) and as the
-auto-created **Firmware Update** button (`FirmwareUpdateButton`, driving
-`FaderBuddy::request_firmware_update()` — the same thing behind a cheap
-`firmware_update_available()` pre-check, so a speculative press with nothing to
-install costs no bus traffic). Those are the only ways an update ever runs —
-**there is no autoupdate mode**; a human always triggers it explicitly. The sequence, ported from the jig's reference implementation
-(`production_tools/programAndTest/src/fader_buddy_bootloader.cpp`): probe register
-`0x00` (app version or bootloader marker) → (if not already resident)
-`REG_ENTER_BOOTLOADER` → wait for the bootloader marker → `ERASE_APP` → stream pages
-(`SET_PAGE_ADDR` + 4× `SEND_FRAME` with per-frame CRC16) → `GET_VERSION_CRC16`
-whole-image verify → `RUN_APP` → re-read `REG_FW_VERSION` to confirm.
+### The production jig
 
-Unlike the jig, which can block, the component runs this **a slice at a time from
-`loop()`** — `update_tick_()` walking the `UpdateStage` enum, one stage per call.
-`update_firmware()` only arms the state machine and returns; the outcome arrives on
-`on_firmware_update_result`. The transfer takes seconds end to end, and blocking
-that long would starve the API, WiFi and every other component — and would make
-progress reporting impossible, because queued entity states are only flushed from
-the loop. Three details make the slicing work:
+`production_tools/programAndTest/` is the reference implementation and the
+regression test. Every board that goes through the jig exercises the full update
+path:
 
-- **Page streaming is time-budgeted**, not one-page-per-tick:
-  `UPDATE_WRITE` keeps writing until `UPDATE_WRITE_BUDGET_MS` (20ms) is spent, then
-  yields. At one page per tick the ~230-page image would take ~4s of pure latency.
-- **The two long stalls are split into "ask" and "poll"** — `bl_request_erase_app_()`
-  / `UPDATE_ERASE_WAIT` and `bl_request_image_crc16_()` / `UPDATE_CRC_WAIT`. Both
-  leave the target unable to answer for hundreds of ms; waiting inline for them
-  would have been the one thing still blocking the loop.
-- **Every polling stage carries a deadline** (`update_deadline_`, compared
-  wraparound-safe), replacing the old `delay()`-based `bl_wait_for_*` helpers.
+- `TEST_FW_BOOTSTRAP` UPDI-flashes the DUT with the **current bootloader, built
+  from source on that run**, plus a fixed `FW_VERSION=0` application. That
+  establishes "a board with a bootloader, running an old app".
+- `TEST_FW_I2C_UPDATE` then drives `REG_ENTER_BOOTLOADER` from that running old
+  application and updates it to the current application over I2C.
 
-`update()` early-returns while a run is in flight: the fader is in its bootloader,
-where `REG_STATE` means nothing.
+Building the bootloader fresh on every jig run is deliberate. A checked-in
+bootloader image would silently ship a stale bootloader on every board flashed
+after a bootloader change, and the bootloader is the one part that cannot be
+fixed later over I2C. See
+`production_tools/programAndTest/factory_test_images/README.md`.
 
-### Guard rails (as implemented)
+## 11. Known gaps
 
-- **Update only on version mismatch** — a no-op (reported as success) if the fader
-  already reports the packaged `REG_FW_VERSION`.
-- **Per-address+version attempt tracking in persistent storage** — `ESPPreferences`
-  (`global_preferences->make_preference<uint8_t>(...)`), keyed by a hash of the I2C
-  address **and** target version. Incremented on failure; once `max_update_attempts`
-  is reached for a given target version, further attempts are refused without
-  touching the bus. Because the key includes the target version, switching to a
-  differently-versioned packaged image starts a fresh (zero) counter automatically —
-  no explicit reset logic needed. Result (success/failure + reason) is surfaced via
-  the `on_firmware_update_result` trigger for the user to wire to whatever
-  sensor/notification they want.
-- **Don't interrupt the user** — `UPDATE_WAIT_TOUCH_IDLE` waits (bounded, 5s) for
-  the fader to leave `MODE_INPUT_ACTIVE` before taking the bus; gives up and reports
-  failure if it's still in use. Polled from `loop()` like every other stage, so a
-  fader being touched no longer freezes the device for those 5 seconds.
-- **One fader at a time** — a class-static `s_update_in_progress` flag refuses a
-  second concurrent update across all `FaderBuddy` instances. It is claimed before
-  the first tick and held for the whole multi-tick run, which matters more now that
-  the sequence is interruptible: without it a second fader could start a run in a
-  gap between the first one's slices. (Also relevant if two update
-  actions are triggered from different tasks, e.g. concurrent HA service calls; the
-  single-threaded ESPHome main loop already serializes same-task calls).
+Everything below is absent from the current implementation, not broken in it.
 
-## 12. Risks & open questions
+- **App validity is only a reset-vector check.** `app_is_valid()` checks that
+  the reset vector is not blank. It does not catch a partially written image
+  whose first page happened to land. Closing this means a linker-placed CRC
+  footer (image length + CRC16 at the end of APPCODE) that the bootloader
+  recomputes on boot, reusing the CRC16 already used for post-write verify.
+  Streaming page 0 last would also help, since an interrupted update would then
+  leave the reset vector blank. Until then, the TP5 strap is the recovery path,
+  and it needs physical access.
+- **No command timeout in the resident bootloader.** A host that abandons an
+  update mid-stream leaves the bootloader resident forever. A watchdog or
+  command timeout would let it recover on its own — jumping to the application
+  if one is valid, otherwise resetting the TWI interface and continuing to
+  serve. On a shared bus this matters more than it would on a point-to-point
+  link.
+- **No host-side bus recovery.** Neither the jig nor the ESPHome component
+  recovers the master after a transaction timeout (`Wire.end()`/`begin()`, or
+  clocking nine SCL pulses). This cannot rescue a *slave* holding SCL low, but
+  it would protect against other stalls.
+- **`ERASE_APP` does not blank pages beyond the new image.** It erases only the
+  reset-vector page, and streaming rewrites only the pages the image covers. If
+  a new image is smaller than the old one, stale bytes remain above it. This is
+  harmless today, since the CRC verify covers exactly the streamed range, but it
+  would matter for a CRC footer over the whole section.
+- **Unvalidated on hardware:** the combined `fb_app_and_bootloader` upload onto
+  a truly blank chip, and updating a multi-fader chain one fader at a time
+  without disturbing the others. The individual pieces of both are validated;
+  the combinations are not.
+- **No CI coverage.** There is no hardware in CI, so every claim above was
+  validated on the bench or by the jig.
 
-**Confirmed against the datasheet (DS40002204A)** — these were verified during this
-design pass and are settled:
+## 12. Implementation notes
 
-- ✅ Flash: 16 KB, 64-byte pages (256 total), FLASHSTART = 0x8000 (§6 Table 6-1,
-  Figure 6-2, Figure 9-2).
-- ✅ NVMCTRL `CTRLA.CMD` values (`WP`=0x1, `ER`=0x2, `ERWP`=0x3, `PBC`=0x4,
-  `CHER`=0x5) and the `CPU.CCP` SPM signature `0x9D` (§9.5.1, §8.7.1).
-- ✅ Flash sections in 256-byte blocks via `FUSE.BOOTEND`/`FUSE.APPEND`; flash is
-  mapped into data space at `0x8000` (§9.3.1.1).
-- ✅ Boot-section protection: **the CPU can never write BOOT** (inherent, no
-  `BOOTPROT` fuse); directional inter-section protection; `BOOTLOCK`/`APCWP` are
-  optional `CTRLB` lock bits we deliberately leave unset (§9.3.1.1, §9.5.2).
-- ✅ CPU halts during Flash write/erase (no NRWW restriction); check `WRERROR`
-  afterward (§9.3.2.4.1, §9.5.3).
-- ✅ `CPUINT.CTRLA.IVSEL` is bit 6, CCP-protected; `IVSEL=0` (reset default) →
-  app-section vectors, so **no `IVSEL` handling is required** (§13.5.1).
-- ✅ `RSTCTRL.RSTFR` `SWRF` = bit 4; `RSTCTRL.SWRR` `SWRE` = bit 0 (§12.5.1,
-  §12.5.2).
-- ✅ **GPIOR registers are cleared by a software reset** (reset value `0x00`), so
-  the token uses `.noinit` RAM instead (§6.8.2).
-- ✅ TWI0 slave registers/bits (`SADDR`, `SCTRLA`, `SSTATUS`/`APIF`/`AP`/`DIF`/`DIR`,
-  `SCTRLB`/`ACKACT`/`SCMD`, `SDATA`) (§26).
-- ✅ Flash write/erase endurance **10,000 cycles**, backing the flash-wear argument
-  (§1).
+Details that are not obvious from the code, and that are likely to trip up the
+next person working in this area.
 
-**Still to pin down at implementation time** (toolchain, not silicon behavior):
+**`PIEN` must be set on the TWI slave.** `TWI0.SCTRLA` needs
+`TWI_PIEN_bm | TWI_ENABLE_bm`. Per datasheet §26.5.9, `PIEN` gates whether
+`APIF` is raised on a Stop condition — the *flag*, not merely the interrupt.
+The bootloader processes every master-write command at Stop, so without `PIEN`
+commands like `SET_PAGE_ADDR` and `SEND_FRAME` are silently dropped while the
+hardware still byte-ACKs them. Reads keep working, because they are processed at
+the repeated-start address match, which raises `APIF` regardless. `DIEN` and
+`APIEN` gate only interrupts and stay off, since there is no ISR.
 
-- Exact megaTinyCore/PlatformIO knobs to build the app at the `BOOTEND * 256`
-  offset with correct vector placement (§7) — the least-certain integration point.
-- Final `BOOTEND` value, set from the *measured* built bootloader size (§2).
-- `FUSE.BOOTEND`/`FUSE.APPEND` addresses for the `pymcuprog` fuse-write step (§7).
+**Every TWI event must end with one `SCMD` write.** `APIF` and `DIF` can only be
+cleared by writing `SDATA` or `SCMD`; writing `SSTATUS` does not clear them. An
+error path that clears flags and returns without issuing an `SCMD` leaves
+`CLKHOLD` asserted, which holds SCL low and wedges the bus for everyone.
+`COLL` co-occurs with `APIF`/`DIF` at the end of a slave transmit, so it must be
+folded into the master-read completion check rather than handled as a separate
+early return. `twi_service()` follows megaTinyCore's polled handler: compute one
+action, always write `SCTRLB` at the end.
 
-**Design/operational risks:**
+**Do not bulk-erase the application section.** Roughly 224 back-to-back
+standalone `ER` commands leave the NVM controller silently unable to write:
+subsequent `ERWP` commands no-op with no `WRERROR` set. A single erase is fine,
+and many `ERWP` operations are fine. This is why `erase_app()` erases only the
+reset-vector page. The exact silicon mechanism is unknown.
 
-- **Shared-bus robustness.** A fader stuck mid-update must not wedge the bus for
-  its neighbors. Mitigations: WDT command timeout, bus-error recovery/abort, and
-  **updating one fader at a time**.
-- **No atomic A/B image.** 16 KB flash isn't enough to hold two full images, so an
-  update is not transactional — a power loss mid-write leaves a partial
-  application. This is acceptable because the **boot section survives** (protected,
-  and always runs first), so the host can simply re-enter the bootloader and
-  re-flash without UPDI. Document this failure mode for operators.
-- **Toolchain uncertainty.** The offset/`IVSEL` application build is the least
-  certain integration point; validate it early (see [§13](#13-verification--test-plan-for-the-implementation-pass))
-  since everything else depends on the app running correctly from the offset.
-- **Deployment / migration.** Existing and newly-fabricated boards need the
-  one-time UPDI install of bootloader + fuses + offset app before I2C updates
-  become available. Boards already in the field would need one more UPDI visit to
-  gain the capability.
+**The bootloader cannot trust an immediate read-back of what it just wrote.**
+Reading mapped flash right after a write can return the page-buffer value rather
+than what is actually in flash. Use a UPDI read as ground truth, or re-read
+after other NVM activity.
 
-## 13. Verification & test plan (for the implementation pass)
+**UPDI flash readback is the most useful debugging tool here**, because it is
+independent of the I2C path. RAM readback is useful too but needs care: confirm
+with a sentinel value that the read itself does not reset the part, since unlike
+flash, RAM reflects boot state if the tool resets it.
 
-There is no way to hardware-test this in CI, so validation happens on real
-hardware in stages:
+**The entry token is at `0x3F00`, not the top of RAM.** An address near `RAMEND`
+sits where the stack starts and would be clobbered by the bootloader's own
+startup pushes before it could be read.
 
-1. **Build the offset application first** and flash it (plus fuses) via UPDI with
-   *no* bootloader. Confirm it runs correctly from `BOOTEND * 256` with working
-   interrupts (touch, motor, I2C) — this de-risks the toolchain (§7) before any
-   bootloader exists.
-2. **Build and UPDI-flash the bootloader**; confirm the app still starts (normal
-   reset → bootloader → jump to app).
-3. **Combined factory env** (§7): confirm `[env:fb_app_and_bootloader]` merges
-   bootloader + app and flashes both **plus fuses** in a single UPDI upload onto a
-   blank chip, yielding a running app.
-4. **Identity/version reads** (§10): confirm `REG_VERSION` returns the protocol
-   version when the app runs and the **bootloader marker** when only the bootloader
-   is resident (blank/invalid app), and that `REG_FW_VERSION` reports the expected
-   build; confirm the app-validity self-check keeps a blank/partial app from running.
-5. **Exercise the entry path**: host writes `REG_ENTER_BOOTLOADER`; confirm the
-   device comes back as an I2C slave in bootloader mode (marker at `0x00`,
-   `GET_VERSION_CRC16` responds).
-6. **Full update cycle**: `ERASE_APP` → stream pages with per-frame CRC16 →
-   `GET_VERSION_CRC16` whole-image verify → `RUN_APP`, and confirm the new app runs
-   and reports the new `REG_FW_VERSION`.
-7. **Interrupted-update recovery**: abort mid-stream, confirm the app-validity check
-   + WDT timeout / re-entry recovers and a subsequent full update succeeds.
-8. **Host packaging & policy** (§11): with the ESPHome component, verify the
-   embedded blob updates a mismatched fader via the manual `update_firmware` action;
-   verify it does **not** reflash a fader already at the packaged version; and verify
-   the per-address attempt cap stops retries after `max_update_attempts` and surfaces
-   the failure status.
-9. **Multi-fader**: confirm a chain of faders can each be addressed and updated
-   one-at-a-time without disturbing the others.
+**Useful CRC16 signatures.** CRC16-CCITT over the whole application image, for
+classifying a bad verify without reaching for UPDI: an all-`0xFF` section (the
+write never landed) and an all-`0x00` section each have their own fixed value,
+as do byte-swapped writes and even/odd-byte-only writes. Compute the expected
+value for the current image size with the same `crc16_ccitt()` the packaging
+tools use (`firmware/tools/fb_image/`).
 
-Any of the existing I2C controllers can drive these tests: the
-[WebHID / MCP2221 tool](software/mcp2221-webhid/), the ESP32 production jig
-(`production_tools/programAndTest/`), or the ESPHome host itself once its flashing
-state machine exists (`esphome/components/fader_buddy/fader_buddy.cpp`, reusing its
-`write_with_retry_()` pattern).
+**`i2c_data.h` and `bootloader_protocol.h` are hand-synced across copies** —
+firmware, `esphome/components/fader_buddy/`, the jig, and the WebHID JS
+constants. `ci/util/check_i2c_data_sync.py` enforces the C copies on every push;
+the WebHID copy is still on you.
 
 ## Related documentation
 
-- [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) — current UPDI flashing
-  procedure (the bootstrap and recovery path).
-- [ABOUT_LAYERS.md](ABOUT_LAYERS.md) — layer architecture and the I2C protocol.
-- [firmware/src/shared/i2c_data.h](firmware/src/shared/i2c_data.h) — the I2C
-  register map this design extends.
+- [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md) — UPDI flashing, the
+  bootstrap and recovery path.
+- [ABOUT_ESPHOME_INTEGRATION.md](ABOUT_ESPHOME_INTEGRATION.md) — configuring and
+  triggering updates from a host.
+- [firmware/src/shared/bootloader_protocol.h](firmware/src/shared/bootloader_protocol.h)
+  — the wire protocol and memory map.
+- [firmware/src/shared/i2c_data.h](firmware/src/shared/i2c_data.h) — the
+  application register map, including `REG_ENTER_BOOTLOADER` and
+  `REG_FW_VERSION`.

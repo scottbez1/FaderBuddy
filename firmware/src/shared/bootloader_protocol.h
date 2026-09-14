@@ -53,7 +53,7 @@
  *
  * Changing this is a UPDI-only operation (fuse write), and the boot section is
  * unwritable by the CPU in any case, so a board in the field cannot be moved to
- * a different split over I2C. See ABOUT_I2C_BOOTLOADER.md sections 2 and 3.
+ * a different split over I2C. See ABOUT_I2C_BOOTLOADER.md.
  */
 #define BL_BOOTEND             (0x06)
 #define BL_APP_START           ((uint16_t)(BL_BOOTEND) * 256U)          /* 0x0600 */

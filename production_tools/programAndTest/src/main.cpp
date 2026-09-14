@@ -51,7 +51,7 @@
 #define SERVO_CLEAR_POS 50
 
 // Fixed "old firmware" baseline UPDI-flashed at the start of TEST_FW_BOOTSTRAP
-// (see factory_test_images/old_firmware_fw0.hex and its README). Must match the
+// (see factory_test_images/old_app_fw0.hex and its README). Must match the
 // FW_VERSION baked into that checked-in image.
 #define OLD_FW_VERSION_FOR_TEST (0)
 

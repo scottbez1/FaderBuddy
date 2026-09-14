@@ -42,7 +42,7 @@ const uint8_t FW_VERSION_FOOTER[2] = {
 // Heartbeat blink period for PIN_LED, in ms (25% duty cycle). Overridable via
 // build flag (-DDEBUG_LED_BLINK_PERIOD_MS=N) -- e.g. the fixed "old firmware"
 // factory test image (see production_tools/programAndTest/factory_test_images/
-// old_firmware_fw0.hex) is built with this halved so it's visually
+// old_app_fw0.hex) is built with this halved so it's visually
 // distinguishable from current firmware by blink rate alone.
 #ifndef DEBUG_LED_BLINK_PERIOD_MS
 #define DEBUG_LED_BLINK_PERIOD_MS (512)

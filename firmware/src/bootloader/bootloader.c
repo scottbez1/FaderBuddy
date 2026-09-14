@@ -23,6 +23,14 @@
  *
  * See ABOUT_I2C_BOOTLOADER.md for the full design and firmware/src/shared/
  * bootloader_protocol.h for the wire protocol shared with the host.
+ *
+ * The bootloader is NOT field-updatable: it is write-protected from the
+ * application, so the only way onto a board is a UPDI flash. Production boards
+ * get theirs from the programAndTest jig, which builds this file from source on
+ * every run (test_host.py upload_firmware) -- so a change here reaches new
+ * boards automatically, with no checked-in image to refresh. Boards already in
+ * the field keep the bootloader they shipped with, so changes here must stay
+ * backward compatible with hosts and application images in the wild.
  */
 
 #include <avr/io.h>

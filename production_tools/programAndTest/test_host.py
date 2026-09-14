@@ -31,6 +31,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "firmware" / "tools"))
+from fb_image import BL_APPEND, BL_BOOTEND, BOOTLOADER_ENV, BOOTLOADER_HEX  # noqa: E402
+
 # Commands from ESP32
 CMD_PING = ">>PING<<"
 CMD_START_UPLOAD = ">>START_FIRMWARE_UPLOAD<<"
@@ -190,22 +193,24 @@ class TestHost:
 
     def upload_firmware(self) -> bool:
         """
-        UPDI-flash the fixed "old firmware" image (bootloader + FW_VERSION=0
-        application) onto the DUT, via firmware/tools/flash_with_fuses.py.
+        UPDI-flash the DUT's starting state: the current bootloader plus a fixed
+        FW_VERSION=0 application, via firmware/tools/flash_with_fuses.py.
 
-        This establishes the jig's starting state as "a board that already has
-        the bootloader installed and is running an old application" -- the
-        precondition the jig firmware then needs in order to exercise
-        entering the I2C bootloader from a *running app* and updating it to
-        the current application in-band (see BOOTLOADER_NEXT.md P0). It
-        deliberately does NOT build/upload the current firmware -- that
-        happens over I2C, driven by the jig itself once this UPDI flash
-        succeeds.
+        That makes the DUT "a board that already has the bootloader installed and
+        is running an old application" -- the precondition the jig firmware needs
+        in order to enter the I2C bootloader from a *running app* and update it to
+        the current application in-band. The current application is deliberately
+        not flashed here; it arrives over I2C, driven by the jig itself.
+
+        The bootloader half is built fresh from source on every run, so a
+        production board can never be shipped with a stale bootloader. Only the
+        application half is a fixed checked-in image, because the test needs a
+        genuinely old application to update away from.
 
         Returns:
             True if upload succeeded, False otherwise
         """
-        logging.info("Starting firmware upload (fixed old-version image via UPDI)...")
+        logging.info("Starting firmware upload (current bootloader + fixed old app via UPDI)...")
 
         # Clear serial number from previous upload
         self.serial_number = None
@@ -234,9 +239,19 @@ class TestHost:
             logging.info(f"Using PlatformIO venv: {pio_venv}")
 
             flash_script = self.repo_root / "firmware" / "tools" / "flash_with_fuses.py"
-            old_image_hex = (self.script_dir / "factory_test_images" / "old_firmware_fw0.hex")
-            if not old_image_hex.exists():
-                logging.error(f"Fixed old-firmware image not found: {old_image_hex}")
+            old_app_hex = (self.script_dir / "factory_test_images" / "old_app_fw0.hex")
+            if not old_app_hex.exists():
+                logging.error(f"Fixed old-application image not found: {old_app_hex}")
+                return False
+
+            # Build the bootloader from source so every board gets the current one.
+            logging.info(f"Building {BOOTLOADER_ENV}...")
+            build = subprocess.run(
+                [venv_python, "-m", "platformio", "run", "-e", BOOTLOADER_ENV],
+                cwd=self.repo_root, capture_output=True, text=True, timeout=300,
+            )
+            if build.returncode != 0:
+                logging.error(f"Bootloader build failed:\n{build.stdout}\n{build.stderr}")
                 return False
 
             port = self.updi_port or "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
@@ -246,12 +261,11 @@ class TestHost:
             cmd = [
                 venv_python, str(flash_script),
                 "--port", port,
-                "--hex", str(old_image_hex),
+                "--hex", str(BOOTLOADER_HEX),
+                "--hex", str(old_app_hex),
                 "--erase",
-                # Must match BL_BOOTEND in firmware/src/shared/bootloader_protocol.h
-                # and the offset old_firmware_fw0.hex was linked at.
-                "--bootend", "0x06",
-                "--append", "0x00",
+                "--bootend", hex(BL_BOOTEND),
+                "--append", hex(BL_APPEND),
             ]
 
             logging.info(f"Running: {' '.join(cmd)}")

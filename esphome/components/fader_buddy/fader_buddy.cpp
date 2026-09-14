@@ -620,7 +620,7 @@ void FaderBuddy::run_self_calibration() {
 }
 
 // ---------------------------------------------------------------------------
-// Firmware update over the I2C bootloader (ABOUT_I2C_BOOTLOADER.md section 11)
+// Firmware update over the I2C bootloader (ABOUT_I2C_BOOTLOADER.md)
 // ---------------------------------------------------------------------------
 
 void FaderBuddy::set_firmware_image(const uint8_t *image, uint32_t length, uint16_t image_crc16,

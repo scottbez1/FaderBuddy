@@ -18,12 +18,11 @@
 #include <stdint.h>
 
 #define I2C_PROTOCOL_VERSION (5)  // v5: Layer management in firmware, 16-bit haptic config
-// The protocol version covers the WIRE FORMAT of the registers below, and is
-// deliberately not bumped for additive changes that older hosts can ignore -
-// the LAYER_TARGET speed byte and REG_ENTER_BOOTLOADER being the cases in
-// point. Feature-detect on FW_VERSION instead; hosts that hard-fail on an
-// unexpected protocol version would otherwise be bricked by a bump they didn't
-// need to care about.
+// The protocol version covers the WIRE FORMAT of the registers below. Bump it
+// only for a backwards incompatible change; additive changes that older hosts
+// can simply ignore leave it alone. Feature-detect on FW_VERSION instead; hosts
+// that hard-fail on an unexpected protocol version would otherwise be bricked by
+// a bump they didn't need to care about.
 
 // Magic payload (big-endian) required by REG_ENTER_BOOTLOADER so that a stray or
 // corrupt write cannot accidentally reboot a fader into the bootloader.
