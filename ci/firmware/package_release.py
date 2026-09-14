@@ -21,6 +21,10 @@ Release assets are attached to a tag following the same scheme as the electronic
 artifacts (see ci/util/rev_info.py): `releases/firmware/v<major>.<minor>`. Pass
 --expect-version to assert the tag and the firmware's own FW_VERSION agree, so a
 mislabelled asset is caught at release time rather than by whoever consumes it.
+
+Releases are cut by hand -- CI has no write access to the repo -- so with
+--expect-version this also emits the `gh release create` invocation and the release
+body to walk through that, into $GITHUB_STEP_SUMMARY when running under Actions.
 """
 
 import argparse
@@ -59,6 +63,60 @@ def version_from_tag(ref):
         raise SystemExit(
             "tag %r does not start with %r" % (tag, RELEASE_TAG_PREFIX))
     return tag[len(RELEASE_TAG_PREFIX):].lstrip("v")
+
+
+def release_instructions(version, sha256, asset_name):
+    """Markdown walking through cutting the release by hand.
+
+    Rendered into the job summary under Actions; printed to the log otherwise. The
+    fenced blocks are meant to be copy-pasted as-is, hence the ```` fence around the
+    release body, which itself contains ``` blocks.
+    """
+    run_url = "%s/%s/actions/runs/%s" % (
+        os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+        os.environ.get("GITHUB_REPOSITORY", "scottbez1/motorFader"),
+        os.environ.get("GITHUB_RUN_ID", "<run id>"))
+    facts = (
+        "| | |\n"
+        "|---|---|\n"
+        "| Version | `%s` |\n"
+        "| Asset | `%s` |\n"
+        "| sha256 | `%s` |\n" % (version, asset_name, sha256))
+    return """## Firmware v{version} ready to release
+
+{facts}| Tag | `{prefix}v{version}` |
+
+Download the `firmware` artifact from [this run]({run_url}), then:
+
+```bash
+unzip -j firmware.zip '*/{asset_name}' -d .
+sha256sum -c <<< '{sha256}  {asset_name}'
+gh release create '{prefix}v{version}' '{asset_name}' \\
+  --title 'Firmware v{version}' --notes-file release-notes.md
+```
+
+### release-notes.md
+
+````markdown
+ATtiny1616 application image for I2C-bootloader updates.
+
+{facts}
+Add to `KNOWN_FIRMWARE` in `esphome/components/fader_buddy/__init__.py`:
+
+```python
+    "{version}": "{sha256}",
+```
+
+Then in ESPHome:
+
+```yaml
+fader_buddy:
+  - id: fader0
+    firmware: "{version}"
+```
+````
+""".format(version=version, sha256=sha256, asset_name=asset_name, facts=facts,
+           prefix=RELEASE_TAG_PREFIX, run_url=run_url)
 
 
 def main():
@@ -106,13 +164,14 @@ def main():
     print("Add to KNOWN_FIRMWARE in esphome/components/fader_buddy/__init__.py:")
     print('    "%s": "%s",' % (version, sha256))
 
-    # Consumed by the workflow to name the release and set outputs.
-    if "GITHUB_OUTPUT" in os.environ:
-        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as f:
-            f.write("version=%s\n" % version)
-            f.write("sha256=%s\n" % sha256)
-            f.write("asset_path=%s\n" % out_path)
-            f.write("asset_name=%s\n" % out_path.name)
+    if args.expect_version:
+        instructions = release_instructions(version, sha256, out_path.name)
+        print()
+        print(instructions)
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with Path(summary).open("a") as f:
+                f.write(instructions)
 
 
 if __name__ == "__main__":
