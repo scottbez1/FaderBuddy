@@ -18,11 +18,15 @@
 #include <stdint.h>
 
 #define I2C_PROTOCOL_VERSION (5)  // v5: Layer management in firmware, 16-bit haptic config
-// The protocol version covers the WIRE FORMAT of the registers below, and is
-// deliberately not bumped for additive changes that older hosts can ignore -
-// the LAYER_TARGET speed byte being the case in point. Feature-detect on
-// FW_VERSION instead; hosts that hard-fail on an unexpected protocol version
-// would otherwise be bricked by a bump they didn't need to care about.
+// The protocol version covers the WIRE FORMAT of the registers below. Bump it
+// only for a backwards incompatible change; additive changes that older hosts
+// can simply ignore leave it alone. Feature-detect on FW_VERSION instead; hosts
+// that hard-fail on an unexpected protocol version would otherwise be bricked by
+// a bump they didn't need to care about.
+
+// Magic payload (big-endian) required by REG_ENTER_BOOTLOADER so that a stray or
+// corrupt write cannot accidentally reboot a fader into the bootloader.
+#define ENTER_BOOTLOADER_MAGIC (0xB0071053UL)
 
 /*
  * Application firmware version, as a packed u16: (major << 8) | minor.
@@ -42,7 +46,7 @@
  * different version without touching this default.
  */
 #define FW_VERSION_MAJOR (1)
-#define FW_VERSION_MINOR (2)
+#define FW_VERSION_MINOR (3)
 #ifndef FW_VERSION
 #define FW_VERSION ((FW_VERSION_MAJOR << 8) | FW_VERSION_MINOR)
 #endif
@@ -56,6 +60,18 @@
 // Minimum firmware version that measures motor characteristics during
 // self-calibration and reports them at REG_MOTOR_CAL.
 #define FW_VERSION_MOTOR_CAL (0x0102)  // 1.2
+
+// Minimum firmware version that honours REG_ENTER_BOOTLOADER, i.e. that can be
+// dropped into the I2C bootloader by a host. Firmware below this predates the
+// bootloader and needs a one-time UPDI migration to gain the capability - note
+// that installing the bootloader is a fuse change, so it is UPDI-only by
+// construction and cannot be bootstrapped over I2C.
+//
+// This is deliberately an FW_VERSION gate and not a protocol-version bump:
+// adding a write-only register that old hosts never touch breaks no existing
+// host, and bumping I2C_PROTOCOL_VERSION for it would trip any host that
+// validates the protocol version strictly.
+#define FW_VERSION_BOOTLOADER_ENTRY (0x0103)  // 1.3
 
 
 /*
@@ -96,7 +112,7 @@
  * -----|---------------------|---------|------|------------
  * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
  * -----|---------------------|---------|------|------------
- * 0x10 | (reserved)          |         |      | Reserved for ENTER_BOOTLOADER (I2C bootloader work)
+ * 0x10 | ENTER_BOOTLOADER    | W       | u32  | Write ENTER_BOOTLOADER_MAGIC to reboot into the I2C bootloader
  * -----|---------------------|---------|------|------------
  * 0x11 | FW_VERSION          | R       | u16  | Application firmware version (see FW_VERSION)
  * -----|---------------------|---------|------|------------
@@ -149,7 +165,7 @@
 #define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
 #define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
 #define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
-// 0x10 reserved for REG_ENTER_BOOTLOADER (see the I2C bootloader work)
+#define REG_ENTER_BOOTLOADER 0x10  // Write ENTER_BOOTLOADER_MAGIC (u32 big-endian) to reboot into the bootloader
 #define REG_FW_VERSION 0x11  // Application firmware version (R, u16 big-endian, see FW_VERSION)
 #define REG_MOTOR_CAL 0x12  // Measured motor characteristics (R, 12 bytes, see below)
 

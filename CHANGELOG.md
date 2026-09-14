@@ -46,6 +46,16 @@ for production purposes.
 
 ## Firmware (ATtiny1616)
 
+### 1.3 - unreleased
+
+- Firmware can be updated over I2C. A bootloader in the ATtiny1616's boot
+  section receives the new application image, and `REG_ENTER_BOOTLOADER` (0x10)
+  asks a running application to reboot into it. Installing the bootloader is a
+  one-time UPDI flash, so boards already in the field need one more visit with a
+  programmer before they can be updated in-band. See ABOUT_I2C_BOOTLOADER.md.
+- Grounding test point TP5 across a reset holds the board in its bootloader,
+  recovering a board whose application does not run or does not answer the bus.
+
 ### 1.2 - unreleased
 
 - Remote movement now uses cascade control (position loop sets a velocity
@@ -116,6 +126,15 @@ layer-addressed registers.
   pressing it drives the carriage to both ends for several seconds - HA files
   it with the device's settings rather than its controls. Rename it with
   `self_calibration: {name: ...}`, or hide it with `internal: true`.
+- Faders can be updated over I2C, with no UPDI programmer. Point a fader at a
+  released image with `firmware: "1.3"` (fetched from its GitHub release and
+  pinned by sha256) or at a local build with `firmware_image:`, then install it
+  with the `fader_buddy.update_firmware` action or the auto-created **Firmware
+  Update** button. Updates are never automatic, and the button is only created
+  when an image is configured. The outcome arrives on
+  `on_firmware_update_result`. See ABOUT_ESPHOME_INTEGRATION.md.
+- The firmware version text sensor reports update progress while one runs, and
+  is re-read afterwards along with the serial number.
 - **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
   It still works and still wins over the hub's own serial number sensor, so
   there are never two, but it now logs a deprecation warning. To migrate,

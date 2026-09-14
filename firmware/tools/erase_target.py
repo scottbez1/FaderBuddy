@@ -1,14 +1,25 @@
 Import("env")
 
-# Adds `pio run --target erase`, which performs a full UPDI chip erase
-# (flash + EEPROM) without programming anything. Uses the same device/port/baud
-# flags as the normal upload (see `upload_flags` in platformio.ini).
+# Adds a custom `erase` target (`pio run -e <env> -t erase`) that does a full
+# chip erase over UPDI via pymcuprog, without building or flashing anything.
+# Wipes flash (app + bootloader) but does not touch fuses (BOOTEND/APPEND
+# survive, so a subsequent bootloader/app flash still lands at the right
+# offsets).
+
+
+def erase_chip(*args, **kwargs):
+    env.Execute("$PYTHONEXE -m pip install --quiet pymcuprog")
+    port = env.subst("$UPLOAD_PORT")
+    env.Execute(
+        '"$PYTHONEXE" "$PROJECT_DIR/firmware/tools/flash_with_fuses.py" '
+        '--erase-only --port "%s"' % port
+    )
+
 
 env.AddCustomTarget(
     name="erase",
     dependencies=None,
-    actions=["pyupdi $UPLOAD_FLAGS -e"],
-    title="Erase Chip",
-    description="Full UPDI chip erase (flash + EEPROM, fuses untouched)",
-    always_build=True,
+    actions=[erase_chip],
+    title="Full chip erase",
+    description="Full flash erase over UPDI via pymcuprog",
 )

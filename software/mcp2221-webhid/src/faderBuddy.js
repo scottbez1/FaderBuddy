@@ -48,9 +48,12 @@ export class FaderBuddy {
         this.REG_ACTIVE_LAYER = 0x0D;
         this.REG_LAYER_TARGET = 0x0E;         // Layer-addressed
         this.REG_LAYER_HAPTIC_CONFIG = 0x0F;  // Layer-addressed
-        // 0x10 reserved for REG_ENTER_BOOTLOADER
-        this.REG_FW_VERSION = 0x11;
-        this.REG_MOTOR_CAL = 0x12;
+        this.REG_ENTER_BOOTLOADER = 0x10;     // Write ENTER_BOOTLOADER_MAGIC (u32 BE) to reboot into the bootloader
+        this.REG_FW_VERSION = 0x11;           // Application firmware version (u16 BE)
+        this.REG_MOTOR_CAL = 0x12;            // Measured motor characteristics (12 bytes)
+
+        // Magic payload (big-endian) required by REG_ENTER_BOOTLOADER
+        this.ENTER_BOOTLOADER_MAGIC = 0xB0071053;
 
         // Mode states
         this.MODE_REMOTE_MOVEMENT = 0;
