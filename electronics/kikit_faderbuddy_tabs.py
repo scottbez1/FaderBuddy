@@ -36,14 +36,18 @@ from kikit.substrate import SubstrateNeighbors
 # and of the two GND vias near the right edge.
 SIDE_TAB_OFFSETS_MM = [8.5]
 
-# Tabs on the top/bottom (59mm) edges, joining the rows of the panel, as an
-# offset in mm from the board's left edge. These are the only two windows along
-# those edges with no copper or holes close to the outline:
-#   x=60.0 (offset 7.0)  -- under the "Install fader here" silkscreen, clear 55.7..64.5
-#   x=92.2 (offset 39.2) -- under the 5-pin headers, clear 85.0..100.6
-# Everything in between is blocked by D1, D2, TP2, TP3, J4/J5 mounting pads and
-# a via sitting 0.5mm from the edge.
-ROW_TAB_OFFSETS_MM = [7.0, 39.2]
+# Tab on the top/bottom (59mm) edges, joining the rows of the panel, as an
+# offset in mm from the board's left edge. A single wide tab (same vwidth as the
+# side tabs) is easier to grab and snap off than two narrow ones.
+#
+# x=88.1 (offset 35.1) sits under the J1/J3 5-pin headers, roughly on pin 5 (the
+# inner-most pin, x=87.14) -- i.e. towards the middle of the board. The window
+# with no copper or holes near either the top or the bottom outline runs
+# x 85.1..101.0 (bounded by a J4 mounting pad on the left and C3 / a via on the
+# right), so a 5mm tab centred here keeps ~0.6mm clear of both. Everything
+# further left is blocked by D1, D2, TP2, TP3, the J4/J5 mounting pads and a via
+# sitting 0.5mm from the edge.
+ROW_TAB_OFFSETS_MM = [35.1]
 
 
 class FaderBuddyTabs(TabsPlugin):

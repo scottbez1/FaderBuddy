@@ -3,8 +3,8 @@
     //   kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
     //       electronics/fader_buddy_main.kicad_pcb electronics/build/panelized_fader_buddy_main.kicad_pcb
     //
-    // A single board is 59 x 17mm, so a 2x5 grid plus a 5mm frame yields a
-    // panel of roughly 134 x 110mm containing 10 boards.
+    // A single board is 59 x 17mm, so a 2x5 grid plus an 8mm frame yields a
+    // panel of roughly 142 x 124mm containing 10 boards.
     "layout": {
         "type": "grid",
         "rows": 5,
@@ -12,7 +12,7 @@
         // Board-to-board gap. Each of these joints is cut twice (once at each
         // board's outline), so the leftover strip between two boards is exactly
         // this wide -- keep it wide enough to grab and snap off as one piece.
-        "space": "3mm",
+        "space": "5mm",
         // Leave ${COMMIT_HASH}/${RELEASE_VERSION} etc. as-is; they get
         // substituted later by ci/electronics/export_util.py and KiBot.
         "baketext": false
@@ -23,9 +23,9 @@
         "type": "plugin",
         "code": "electronics/kikit_faderbuddy_tabs.py.FaderBuddyTabs",
         // hwidth: single tab on each short (left/right) edge
-        // vwidth: the two row-to-row tabs on each long (top/bottom) edge
+        // vwidth: single row-to-row tab on each long (top/bottom) edge
         "hwidth": "5mm",
-        "vwidth": "3mm"
+        "vwidth": "5mm"
     },
     "cuts": {
         "type": "mousebites",
@@ -35,7 +35,7 @@
     },
     "framing": {
         "type": "frame",
-        "width": "5mm",
+        "width": "8mm",
         "space": "1.4mm",
         // Cut the frame at all four corners so each rail snaps off cleanly
         "cuts": "both"
@@ -43,7 +43,7 @@
     "fiducials": {
         "type": "4fid",
         "hoffset": "14mm",
-        "voffset": "2.5mm",
+        "voffset": "4mm",
         "coppersize": "1mm",
         "opening": "2mm"
     },
