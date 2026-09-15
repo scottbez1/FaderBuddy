@@ -46,6 +46,10 @@ for production purposes.
 
 ## Firmware (ATtiny1616)
 
+### 1.4 - unreleased
+
+- Version bump only, for testing a firmware update.
+
 ### 1.3 - unreleased
 
 - Firmware can be updated over I2C. A bootloader in the ATtiny1616's boot
