@@ -70,6 +70,9 @@ fader_buddy:
 and to move the fader from a lambda:
 ```cpp
 id(my_fader).remote_move_to(position, layer);
+
+// optionally cap the speed - 0-255, where 255 is full speed
+id(my_fader).remote_move_to(position, layer, 128);
 ```
 
 That's pretty much all there is to it!
@@ -222,6 +225,7 @@ This README covers the basics, but there are a number of additional pages with m
 - **[ABOUT_MF60T_LOW_PROFILE_MOD.md](ABOUT_MF60T_LOW_PROFILE_MOD.md)** - Optional instructions for modifying the MF60T faders so they can fit in smaller areas
 - **[ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md)** - How to order and assemble your own FaderBuddy boards directly
 - **[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md)** - How to upload firmware to the FaderBuddy microcontroller using UPDI
+- **[ABOUT_I2C_BOOTLOADER.md](ABOUT_I2C_BOOTLOADER.md)** - How firmware updates work over I2C (no UPDI programmer), via the custom bootloader in the ATtiny1616 boot section
 
 ### Project Structure
 ```

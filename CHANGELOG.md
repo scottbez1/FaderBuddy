@@ -1,0 +1,205 @@
+# Changelog
+
+FaderBuddy has three pieces that version independently: the **hardware**, the
+**fader firmware** (ATtiny1616), and the **ESPHome component** that drives it
+from a host. They are deliberately decoupled - a fader in the field can be
+running older firmware than the host talking to it - so this file records what
+each release changed and which combinations work together.
+
+Separately, the **I2C protocol version** (reported at `REG_VERSION`) describes
+the wire format of the register map. It is bumped only when the layout of an
+existing register changes, never for additive features that an older host can
+simply not use. Hosts should feature-detect on the firmware version rather than
+the protocol version; see `firmware/src/shared/i2c_data.h`.
+
+## Compatibility
+
+Any firmware works with any component 0.2.0 or later - a component newer than
+the firmware just logs a warning and skips features the firmware can't do
+(e.g. move speed, motor characterisation). Component 0.1.0 needs the fader's
+protocol version to match exactly, so it won't start against a future
+firmware that bumps the protocol.
+
+Firmware 1.0 predates `REG_FW_VERSION` and reports no version at all; hosts
+that check it will read `0xFFFF` and should treat that as firmware 1.0.
+
+---
+
+## Hardware
+
+### v1
+
+All boards built to date - all are essentially identical, with minor changes
+for production purposes.
+
+- **v1.3.1** (pre-release) - adds a panelized gerber/BOM/CPL export for
+  ordering 10 boards per panel. Only board change is two vias moved 0.75mm
+  for mousebite clearance.
+- **v1.3** - design files migrated to KiCad 10 (from 8); back silkscreen
+  updated to say "FaderBuddy" instead of "motor fader".
+- **v1.2** - fixed the JLCPCB BOM part number for the microcontroller, which
+  had pointed at the ATtiny816 (1 ADC) instead of the ATtiny1616 (2 ADCs) this
+  design needs.
+- **v1.1 and earlier** (v0.1-v1.0) - initial bring-up; error in JLC part numbers.
+
+---
+
+## Firmware (ATtiny1616)
+
+### 1.3 - unreleased
+
+- Firmware can be updated over I2C. A bootloader in the ATtiny1616's boot
+  section receives the new application image, and `REG_ENTER_BOOTLOADER` (0x10)
+  asks a running application to reboot into it. Installing the bootloader is a
+  one-time UPDI flash, so boards already in the field need one more visit with a
+  programmer before they can be updated in-band. See ABOUT_I2C_BOOTLOADER.md.
+- Grounding test point TP5 across a reset holds the board in its bootloader,
+  recovering a board whose application does not run or does not answer the bus.
+- Fixed the bootloader decoding the three I2C address jumpers in the reverse
+  order from the application. The board nets are `PC0 = A2`, `PC1 = A1`,
+  `PC2 = A0`, so reversing them swaps address offsets 1<->4 and 3<->6 while
+  leaving 0, 2, 5 and 7 correct. A board on one of the affected settings
+  answered on a different address the moment it dropped into its bootloader,
+  so a host would find nothing at the configured address and could not update
+  it. Bootloaders already flashed keep the old decode - see below.
+- The bootloader runs the main clock at its full 20 MHz. It had been leaving
+  the reset default in place - OSC20M divided by 6, so 3.33 MHz - which put the
+  TWI slave's 10x f_CLK_PER/f_SCL requirement at a 333 kHz ceiling. A host on a
+  400 kHz bus was therefore out of spec whenever a fader was in its bootloader,
+  showing up as intermittent NAKs and dropped frames during exactly the
+  operation that needed to work. Since the bootloader is not field-updatable,
+  boards already carrying one keep the old behaviour; run them at 100 kHz (or
+  reflash the bootloader over UPDI) if updates over I2C prove flaky.
+
+### 1.2 - unreleased
+
+- Remote movement now uses cascade control (position loop sets a velocity
+  reference, an inner loop realises it) with a friction feedforward derived
+  from the plant model rather than a fixed duty. See
+  `firmware/ABOUT_MOTOR_CONTROL.md` for why.
+- Self-calibration now also characterises the motor (per-direction breakaway
+  duty, speed/duty slope) and derives the feedforward, take-up ceiling, and
+  on-target deadband from it, so tuning holds across faders with different
+  friction or torque.
+- New `REG_MOTOR_CAL` (0x12), reporting those measurements. Read-only and
+  diagnostic.
+- Calibration EEPROM format changed - the first boot after updating falls
+  back to default endpoints until self-calibration is re-run.
+- Self-calibration now returns the fader to the active layer's position using
+  the newly measured endpoints. It previously re-used a target derived from the
+  bounds it had just replaced, so the fader settled slightly off.
+- The position nonce in `STATE` is now actually incremented on local input. It
+  had no producer, so a user move that ended on the same 8-bit position as it
+  started was invisible to the host.
+- The backlash take-up ceiling is re-armed on a direction reversal rather than
+  on every `LAYER_TARGET` write. A host streaming position updates previously
+  held the fader at the take-up duty - roughly half speed - for the whole
+  gesture.
+- Detent haptics no longer pull toward the top of travel when the fader is
+  below the calibrated minimum (reachable with a stale calibration).
+- Fixed the hysteresis window being half-width when a move ended at the very top
+  of travel, which made a fader parked there twice as likely to report spurious
+  user input.
+
+### 1.1 - unreleased
+
+- Rewritten remote-movement control: PD on position with a per-direction
+  friction feedforward, a stiction ramp, and a backlash take-up ramp. Moves are
+  quieter and no longer overshoot. See `firmware/ABOUT_MOTOR_CONTROL.md`.
+- `LAYER_TARGET` (0x0E) accepts an optional 4th byte setting move speed
+  (0-255, 255 = full speed). Three-byte writes are unchanged, so this is
+  backwards compatible.
+- New `REG_FW_VERSION` (0x11), reporting a packed `(major << 8) | minor`.
+  This is the first firmware that reports a version.
+- Debug-only registers moved from 0x10-0x12 to 0xF0-0xF2, so production
+  registers can keep growing from 0x10.
+- On a movement timeout, a fader that is essentially in position now goes idle
+  quietly instead of latching `MODE_ERROR`.
+
+### 1.0
+
+The last unversioned firmware - everything released before `REG_FW_VERSION`
+existed. Protocol v5: firmware-managed layers, 16-bit haptic config, and the
+layer-addressed registers.
+
+---
+
+## ESPHome component
+
+### 0.3.0 - unreleased
+
+- The hub now creates its own diagnostic text sensors - serial number and
+  firmware version - so a bare `fader_buddy:` block reports what it is with no
+  entity yaml at all. Names default to `<hub id> Serial Number` / `<hub id>
+  Firmware Version`; override `name:`, or set `internal: true` /
+  `disabled_by_default: true`, on the hub's `serial_number:` /
+  `firmware_version:` key. Firmware version had no sensor before, only a log
+  line.
+- The hub also creates a **Self Calibration** button, so a fader can be
+  recalibrated from Home Assistant without writing an automation around the
+  `fader_buddy.run_self_calibration` action. `entity_category: config`, since
+  pressing it drives the carriage to both ends for several seconds - HA files
+  it with the device's settings rather than its controls. Rename it with
+  `self_calibration: {name: ...}`, or hide it with `internal: true`.
+- Faders can be updated over I2C, with no UPDI programmer. Point a fader at a
+  released image with `firmware: "1.3"` (fetched from its GitHub release and
+  pinned by sha256) or at a local build with `firmware_image:`, then install it
+  with the `fader_buddy.update_firmware` action or the auto-created **Firmware
+  Update** button. Updates are never automatic, and the button is only created
+  when an image is configured. The outcome arrives on
+  `on_firmware_update_result`. See ABOUT_ESPHOME_INTEGRATION.md.
+- The firmware version text sensor reports update progress while one runs, and
+  is re-read afterwards along with the serial number.
+- **Deprecated:** `text_sensor: platform: fader_buddy`, to be removed in 0.5.0.
+  It still works and still wins over the hub's own serial number sensor, so
+  there are never two, but it now logs a deprecation warning. To migrate,
+  delete the `text_sensor:` block and move any `name:`/`icon:` onto the hub's
+  `serial_number:` key.
+- Fixed `remote_move_to` at speed 255 re-using the previous speed limit. Full
+  speed was sent as a 3-byte write, which leaves the layer's stored speed
+  alone, so a move after any slower one silently kept the old limit. The speed
+  byte is now sent on every move when the firmware supports it.
+- Reads `REG_MOTOR_CAL` at startup and logs what the fader measured about its
+  motor, or a note that it hasn't been characterised yet. Diagnostic only.
+- Reports the fader's mode changes, which previously went unlogged entirely:
+  self-calibration starting and finishing (re-reading `REG_MOTOR_CAL` on
+  completion, so the run's own measurements are logged rather than the ones
+  read at startup), and a warning whenever the fader latches `MODE_ERROR` -
+  including a failed endpoint sweep, which was silent.
+- The startup version probe is retried before giving up, and a fader with a
+  configured firmware image that still doesn't answer no longer fails the
+  component. Previously one NAK at boot - a fader still coming out of reset, a
+  bus still settling behind a chain of them - marked the hub failed for the
+  whole boot: both text sensors stayed Unknown and, because ESPHome runs
+  neither `loop()` nor `update()` on a failed component, the firmware update
+  that could have recovered it was refused and could not have run anyway. Such
+  a fader is now re-probed on a doubling backoff - about 1, 3, 7, 15 and 31
+  seconds after boot - and initializes itself whenever it turns up, and the
+  **Firmware Update** button stays available for one that is wedged rather than
+  absent. The backoff is bounded deliberately: a fader still silent after half
+  a minute is absent rather than slow, and probing it once per poll forever
+  would take the bus away from the faders that are working. A fader reporting a protocol older
+  than v5 still fails the component: that firmware predates I2C bootloader
+  entry (firmware 1.3), so UPDI really is the only way back, and the log now
+  says so.
+- Dropped the persistent failed-update attempt counter and its
+  `max_update_attempts:` option. It existed to stop an automatic updater
+  looping on a fader that never takes the image, and updates are manual only -
+  a human pressing a button is already the stop. A failed update is reported
+  and forgotten; press the button again to retry.
+
+### 0.2.0 - unreleased
+
+- `fader_buddy.remote_move_to` takes `speed:` (0-255), and `layer_haptics`
+  takes `default_speed:` for moves that don't name one.
+- Reads and logs the fader's firmware version at startup, and warns instead
+  of silently doing nothing when a config asks for a move speed the fader's
+  firmware can't honour (the move runs at full speed instead).
+- Accepts a fader reporting a newer protocol version, warning instead of
+  failing to start. Only an older protocol is still treated as incompatible.
+
+### 0.1.0
+
+The last unversioned component - everything before this file existed. Layer
+management, haptic config, rate-limited triggers, the serial number text
+sensor, and position/touch/double-tap handling.

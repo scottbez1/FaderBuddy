@@ -1,0 +1,17 @@
+name: I2C Protocol Sync
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check-i2c-data-sync:
+    name: Check i2c_data.h copies are in sync
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Diff i2c_data.h copies against the canonical firmware copy
+        run: ./ci/util/check_i2c_data_sync.py
