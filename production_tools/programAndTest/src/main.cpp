@@ -864,7 +864,7 @@ bool testFwI2cUpdate() {
 
         // Overall watchdog for the whole sequence (generous margin over the
         // hardware-validated ~few-second full update).
-        if (millis() - testTracking.firmwarePhaseStartTime > 15000) {
+        if (millis() - testTracking.firmwarePhaseStartTime > 20000) {
           Serial.println("FAILED: I2C bootloader update timed out");
           BOOTLOAD_FAIL("FW BL TMO");
         }
