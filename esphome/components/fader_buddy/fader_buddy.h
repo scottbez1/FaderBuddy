@@ -34,7 +34,7 @@ namespace fader_buddy {
 
 // Version of this ESPHome component, independent of the fader's firmware
 // version. Logged at startup so a bug report identifies both halves.
-#define FADER_BUDDY_COMPONENT_VERSION "0.3.0"
+#define FADER_BUDDY_COMPONENT_VERSION "0.3.1"
 
 
 // Protocol v5: Layer management is now handled in firmware

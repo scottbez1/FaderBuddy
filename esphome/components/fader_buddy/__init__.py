@@ -89,7 +89,7 @@ GITHUB_REPO = "scottbez1/FaderBuddy"
 RELEASE_TAG_PREFIX = "releases/firmware/"
 
 KNOWN_FIRMWARE: dict[str, str] = {
-    # "1.3": "<sha256 of fader_buddy_app_v1.3.bin>",
+    "1.3": "e5f192e8cee97a866a59082b76ac9f49f562df2a45a45adb5ffa3c46efb2fce8",
 }
 
 
