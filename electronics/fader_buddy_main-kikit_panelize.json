@@ -3,16 +3,31 @@
     //   kikit panelize -p electronics/fader_buddy_main-kikit_panelize.json \
     //       electronics/fader_buddy_main.kicad_pcb electronics/build/panelized_fader_buddy_main.kicad_pcb
     //
-    // A single board is 59 x 17mm, so a 2x5 grid plus an 8mm frame yields a
-    // panel of roughly 142 x 124mm containing 10 boards.
+    // A single board is 59 x 17mm, so a 2x5 grid plus a 10mm frame and the
+    // vertical backbone yields a panel of 154 x 128mm containing 10 boards.
     "layout": {
         "type": "grid",
         "rows": 5,
         "cols": 2,
-        // Board-to-board gap. Each of these joints is cut twice (once at each
-        // board's outline), so the leftover strip between two boards is exactly
-        // this wide -- keep it wide enough to grab and snap off as one piece.
-        "space": "5mm",
+        // Row-to-row gap. Each of these joints is cut twice (once at each
+        // board's outline), so the leftover strip between two boards is
+        // exactly this wide -- keep it wide enough to grab and snap off as one
+        // piece.
+        "vspace": "4mm",
+        // A vertical backbone runs the full height of the panel between the
+        // two columns, stiffening the panel during assembly. KiKit adds hspace
+        // on each side of it, so the column-to-column gap is
+        // 2mm + 5mm + 2mm = 9mm: a rigid spine with short 2mm tab stubs
+        // reaching it (roughly the 1.4mm the boards sit off the frame).
+        // vbonecut perforates the backbone where it meets the top and bottom
+        // rails, so the whole spine comes away with them. KiKit would also
+        // perforate it at every row boundary; the cuts plugin below drops
+        // those so the spine stays rigid. The board-to-backbone cuts all stay
+        // at the hand-picked tab positions, clear of the vias and tooling
+        // holes.
+        "hspace": "2mm",
+        "vbackbone": "5mm",
+        "vbonecut": true,
         // Leave ${COMMIT_HASH}/${RELEASE_VERSION} etc. as-is; they get
         // substituted later by ci/electronics/export_util.py and KiBot.
         "baketext": false
@@ -28,20 +43,24 @@
         "vwidth": "5mm"
     },
     "cuts": {
-        "type": "mousebites",
+        // Mousebites, minus the backbone's row-boundary cuts -- see
+        // electronics/kikit_faderbuddy_cuts.py
+        "type": "plugin",
+        "code": "electronics/kikit_faderbuddy_cuts.py.FaderBuddyCuts",
         "drill": "0.6mm",
         "spacing": "1mm",
         "offset": "-0.1mm"
     },
     "framing": {
         "type": "frame",
-        "width": "8mm",
+        "width": "10mm",
         "space": "1.4mm",
-        // Cut the frame at all four corners so each rail snaps off cleanly
-        "cuts": "both"
+        // Only horizontal corner cuts, so the left/right rails snap off while
+        // the top/bottom rails stay attached to them (and to the backbone)
+        "cuts": "h"
     },
     "fiducials": {
-        "type": "4fid",
+        "type": "3fid",
         "hoffset": "14mm",
         "voffset": "4mm",
         "coppersize": "1mm",
