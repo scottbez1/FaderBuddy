@@ -234,7 +234,7 @@ Requires fader firmware **1.1 or newer**. On older firmware the component logs a
 
 The scale is linear in velocity, and both ends are usable — `0` is the slowest speed the mechanism sustains without creeping in stick-slip steps (roughly 700ms for full travel), and `255` removes the limit entirely.
 
-This sets a speed limit, so a half-scale move takes about half as long as a full-scale move. Lower speeds can help when several faders move at once.
+This sets a speed limit, so a half-scale move takes about half as long as a full-scale move.
 
 Treat it as a limit rather than a precise speed. It is realised through a friction-dependent mechanism, so actual velocity lands within about 15% of nominal, with around 7% difference between moving up and moving down.
 

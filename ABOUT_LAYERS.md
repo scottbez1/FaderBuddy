@@ -12,7 +12,7 @@ For example, consider a fader that can control both lamp brightness and fan spee
 
 When the active layer is 0 (lamp brightness), the user will feel smooth fader motion and the host will see updates in layer 0's position data. If the host tells FaderBuddy to switch to layer 1 the fader will move to the last-known layer 1 (fan speed) position. Now if the user interacts with the fader they will feel the haptic "snaps" between the 4 available positions, and the position will be reflected in layer 1 data.
 
-FaderBuddy defers layer changes while the user is touching or moving the fader, so their input stays on the current layer.
+FaderBuddy defers layer changes while the user is touching or moving the fader, so their input stays on the current layer, and FaderBuddy won't fight with the user.
 
 In the example above, if the user is still moving the fader when the host requests a change from layer 0 to layer 1, the FaderBuddy will stay in layer 0 and the user will continue to feel smooth motion and the position will still be written to layer 0. Once the user finishes their interaction the FaderBuddy will automatically apply the pending layer change to layer 1, with the fader moving to the layer 1 fan speed position and the detents will be turned on.
 
@@ -25,7 +25,7 @@ If you want to control more than 8 things with a single fader, you can have the 
 
 ### What is a Layer?
 
-A layer stores a position and haptic settings in the fader's volatile memory. The firmware manages it:
+A layer stores a position and haptic settings in the fader's volatile memory. Think of it as a separate "preset" that the fader can switch between.
 
 - **8 layers per fader** (indexed 0-7)
 - **Per-layer restore position**: Each layer remembers where its last-known "target" position is
