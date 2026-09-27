@@ -232,9 +232,9 @@ Command the fader to move to a specific position.
 
 Requires fader firmware **1.1 or newer**. On older firmware the component logs a warning once and moves at full speed instead; it checks the firmware version at startup, so a `default_speed` that cannot be honoured is reported then rather than on the first move.
 
-The scale is linear in velocity, and both ends are usable — `0` is the slowest speed the mechanism sustains without creeping in stick-slip steps (roughly 700ms for full travel), and `255` removes the limit entirely. There is nothing outside the range worth reaching for.
+The scale is linear in velocity, and both ends are usable — `0` is the slowest speed the mechanism sustains without creeping in stick-slip steps (roughly 700ms for full travel), and `255` removes the limit entirely.
 
-This caps the fader's speed rather than scheduling the move, so a shorter move takes proportionally less time — at a given speed, a half-scale move takes about half as long as a full-scale one. Slowing moves down is mostly useful when several faders move at once, or when you want motion to read as deliberate rather than instant.
+This sets a speed limit, so a half-scale move takes about half as long as a full-scale move. Lower speeds can help when several faders move at once.
 
 Treat it as a limit rather than a precise speed. It is realised through a friction-dependent mechanism, so actual velocity lands within about 15% of nominal, with around 7% difference between moving up and moving down.
 
@@ -397,7 +397,7 @@ installed` on its status sensor, and is recovered by installing the
 **Trigger fires too frequently or sporadic movement in a bidirectional setup:**
 - Use `value_change_min_interval` in `layer_haptics` to rate limit
 - Example: `value_change_min_interval: 100ms` limits to 10 updates per second
-- This can be useful if you have a bidirectional setup (i.e. moving the fader controls a light in HASS, and changing a light in HASS moves the fader) and the on_manual_move trigger takes a while to be confirmed/reflected, for example when updating a high-roundtrip-latency light like a Zigbee light. Without rate-limiting, this can often result in weird motor movements after manually moving the fader, as HASS may queue up brightness changes that happen too quickly and then deliver them for while after you've already let go, causing the motor to almost replay your previous movement.
+- In a bidirectional setup, slow devices such as Zigbee lights can cause Home Assistant to queue brightness updates. These may move the fader after you let go, replaying your input. Rate limiting reduces this backlog.
 
 **Fader doesn't move to commanded position:**
 - Run self-calibration: `fader_buddy.run_self_calibration`

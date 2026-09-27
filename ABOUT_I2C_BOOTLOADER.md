@@ -83,16 +83,12 @@ Per the datasheet (*NVMCTRL — Memory Organization*, §9.3.1.1):
   and this design sets neither. `BOOTLOCK` also blocks reads and execution of
   the boot section, so setting it would stop the bootloader from running at all.
 
-The consequence is the safety property the whole design rests on: **a buggy or
-half-written application can never corrupt the bootloader.** Since the
-bootloader runs first on every reset, even a completely broken application still
-leaves a route back over I2C. As defence in depth, the bootloader also
-bounds-checks every target page address in software.
+A buggy or partially written application cannot corrupt the bootloader. It runs
+first on every reset, allowing recovery over I2C. The bootloader also checks
+that each target page address is within the application section.
 
-The flip side is that **the bootloader itself is not field-updatable**. Changing
-it always requires UPDI. Keeping it small and stable is therefore a feature, and
-any change to it must stay compatible with hosts and application images already
-in the field.
+**Changing the bootloader requires UPDI.** Changes must stay compatible with
+existing hosts and application images.
 
 ## 4. Interrupt vectors
 
@@ -362,10 +358,9 @@ bootloader has no `REG_STATE` to read.
 
 - **Only on a version mismatch.** A fader already running the packaged version
   is a no-op, reported as success.
-- **No attempt cap, and no retry.** A failed update is reported and forgotten;
-  nothing retries it and no counter persists. That only needs revisiting if
-  updates ever become automatic — a loop that retries by itself needs a stop,
-  but a human pressing a button already is one.
+- **No automatic retries.** Failed updates are reported, and the user can try
+  again. Attempts are not counted or limited. Automatic updates would need a
+  retry limit.
 - **Never interrupt the user.** The run waits, bounded, for the fader to leave
   `MODE_INPUT_ACTIVE` before taking the bus, and reports failure if it is still
   in use.
@@ -402,8 +397,6 @@ fixed later over I2C. See
 `production_tools/programAndTest/factory_test_images/README.md`.
 
 ## 11. Known gaps
-
-Everything below is absent from the current implementation, not broken in it.
 
 - **App validity is only a reset-vector check.** `app_is_valid()` checks that
   the reset vector is not blank. It does not catch a partially written image

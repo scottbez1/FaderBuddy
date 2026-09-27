@@ -138,7 +138,7 @@ constant `+80` offset, so it drove at full authority right up to the deadband
 and arrived at ~12000 raw/s - precisely the 58-80 raw overshoot it used to
 show.
 
-**Stiction ramp** fixes a genuine failure, not just feel. Because FF sits below
+**Stiction ramp** prevents stalls near the target. Because FF sits below
 breakaway, small errors produce `FF + KP*error` below breakaway: the controller
 commands motion it cannot produce, sits stuck outside the deadband, and after
 8 s falls into `MODE_ERROR`. The ramp adds drive at `MOVE_RAMP_RATE` only while
@@ -166,8 +166,7 @@ dragged, say - retargets many times a second; re-arming on each of those would
 hold the ceiling at the take-up duty for the whole gesture and cap the fader at
 roughly half speed.
 
-Three things about this are easy to get wrong, and all were bugs during
-development:
+Two constraints prevent problems found during development:
 
 - **It must be time-based, not gated on "are we moving yet".** While crossing
   the slack the rotor *is* moving, it just isn't loaded, so a velocity-gated
@@ -224,7 +223,7 @@ At 250 us the loop saturates (loop rate == tick rate) with no margin; don't.
 | `MOVE_SPEED_FASTEST_MS` | 250 | Full-travel time at host speed 254. Faster than this the limiter stops biting. |
 | `MOVE_TIMEOUT_TOLERANCE` | 20 | On timeout, error below this goes idle instead of `MODE_ERROR`. |
 
-**The deadband has a floor set by the plant, not by taste.** Nothing moves
+**The mechanism sets the minimum deadband.** Nothing moves
 below breakaway, and at breakaway speed jumps straight to `v_jump`, so the
 smallest correction the fader can make is that speed times the time it takes to
 actually stop. A deadband below that floor cannot be satisfied: the controller
@@ -240,10 +239,8 @@ correction of 5-8 ADC counts at 450-560 ADC/s implies **9-18 ms end to end**,
 two to three times the coast alone. `MOTORCAL_STOP_TIME_MS` is 15 ms for that
 reason; sizing it at 6 produced a window a looser fader could not land in.
 
-The error is worth making in the generous direction. Too small and the fader
-dithers and times out; too large and the final position is slightly off, which
-at these sizes is 2-5 LSB of the 8-bit position the host sees. The first is a
-failure, the second is a rounding difference.
+Prefer a slightly larger deadband: too small causes dithering and timeouts;
+too large leaves a position error of 2-5 LSB in the host's 8-bit position.
 
 **`k*KV` is the speed/robustness tradeoff**, and it is the product that
 matters, not `KV` alone. Lower is faster but rings sooner; higher is smoother
@@ -267,11 +264,9 @@ misread as a speed-limiter problem.
 
 ## Tuning for hardware variance
 
-This is an open source project and users run whatever fader they have - newer,
-older, stiffer, looser. **The gains are therefore centred for the widest range
-of hardware that still settles, not for best accuracy on one fader.** A slightly
-missed target is barely noticeable. A fader that takes seconds to settle, or
-times out into `MODE_ERROR`, is a dealbreaker. Optimise in that order.
+Tune the gains to settle reliably across faders with different friction and
+age. Avoid slow settling and `MODE_ERROR` timeouts before improving position
+accuracy on any one fader.
 
 The parameter that matters is how the feedforward compares to a given unit's
 breakaway duty. Sweeping FF on the reference fader (breakaway 68 rising) shows
@@ -294,8 +289,8 @@ until the movement timeout. That is what "motor active, oscillating, never
 settles, then error" looks like in the field, and no deadband value fully
 rescues it (tested up to 10 ADC counts).
 
-**Why too-high FF is cheap.** `MOVE_TAKEUP_DUTY` caps drive while the carriage
-is stalled, so an over-high feedforward is simply clamped instead of producing a
+**Higher FF is limited by the take-up ceiling.** `MOVE_TAKEUP_DUTY` caps drive
+while the carriage is stalled, so an over-high feedforward is simply clamped instead of producing a
 violent escape. Once moving, the D term absorbs the extra.
 
 Measured tolerance at the shipping values, emulated by offsetting FF:
@@ -433,18 +428,16 @@ limiter stops having any effect, past the slow end the mechanism stick-slips -
 so a physical-units parameter mostly offers values that do nothing or cannot be
 honoured. Mapping the whole byte onto the validated window means every value a
 host can send does something, and the endpoints can be re-measured and moved
-without changing the host-facing meaning of the byte. The cost is that "how
-long will this move take" is no longer readable off the parameter, which is
-honest: it was never accurate to better than ~15% anyway.
+without changing the host-facing meaning of the byte. The parameter does not
+specify a move duration; timing accuracy was only about 15% with the previous
+scheme.
 
 **It is realised by clamping the velocity reference**, and nothing else - one
 line in the control law. Because the feedforward is `breakaway + v_ref/k`, a
 lower reference directly means less drive, so the requested speed is produced
 rather than fought for.
 
-That is worth stating against what it replaced, because the earlier design is
-an instructive failure. With a *fixed* feedforward the drive alone commanded
-~1100 ADC/s regardless of the request, so clamping the error could never slow
+The previous fixed feedforward commanded ~1100 ADC/s regardless of the request, so clamping the error could never slow
 the fader below that floor. Two extra parts were bolted on to work around it:
 an error clamp to stop the P term saturating, and a **one-sided governor** that
 subtracted drive once measured velocity exceeded the limit.
