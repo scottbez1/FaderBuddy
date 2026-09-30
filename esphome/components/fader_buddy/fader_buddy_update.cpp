@@ -38,6 +38,12 @@ void FaderBuddyUpdate::publish_installing() {
   this->publish_state();
 }
 
+void FaderBuddyUpdate::publish_pending() {
+  this->state_ = update::UPDATE_STATE_INSTALLING;
+  this->update_info_.has_progress = false;
+  this->publish_state();
+}
+
 void FaderBuddyUpdate::publish_progress(uint8_t pct) {
   this->state_ = update::UPDATE_STATE_INSTALLING;
   this->update_info_.has_progress = true;

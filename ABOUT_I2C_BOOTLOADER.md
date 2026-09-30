@@ -364,10 +364,15 @@ bootloader has no `REG_STATE` to read.
 - **Never interrupt the user.** The run waits, bounded, for the fader to leave
   `MODE_INPUT_ACTIVE` before taking the bus, and reports failure if it is still
   in use.
-- **One fader at a time.** A class-static flag refuses a second concurrent
+- **One fader at a time.** A class-static flag stops a second concurrent
   update across all instances. It is claimed before the first tick and held for
   the whole run, which matters because the sequence is interruptible: without
-  it, a second fader could start in a gap between the first one's slices.
+  it, a second fader could start in a gap between the first one's slices. A
+  request made while it is held is queued (FIFO, shown as "Update pending" and
+  as installing with no percentage in Home Assistant) and started from `loop()`
+  once the flag clears. Home Assistant needs no heartbeat meanwhile: the ESPHome
+  integration's install call returns once the command is sent, and has no
+  timeout.
 - **Manual only.** There is no autoupdate mode. An update runs only when a human
   presses the button or an automation calls the action.
 

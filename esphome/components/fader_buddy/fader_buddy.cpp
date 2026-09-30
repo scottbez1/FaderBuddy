@@ -31,6 +31,7 @@ namespace fader_buddy {
 static const char *const TAG = "fader_buddy";
 
 bool FaderBuddy::s_update_in_progress = false;
+std::vector<FaderBuddy *> FaderBuddy::s_update_queue;
 
 FaderBuddy::FaderBuddy() : PollingComponent(), i2c::I2CDevice() {
   // Protocol v5: No layer state initialization needed - firmware manages layers
@@ -361,6 +362,17 @@ void FaderBuddy::publish_status_(const std::string &text) {
 // Called whenever the fader's firmware state changes, so the status sensor and
 // the update entity stay in sync.
 void FaderBuddy::publish_firmware_state_() {
+  // A queued fader keeps showing as pending, whatever else changes while it
+  // waits (a re-probe, a check for updates), until its turn comes.
+  if (update_pending_) {
+    publish_status_("Update pending");
+#ifdef USE_UPDATE
+    if (this->update_entity_ != nullptr) {
+      this->update_entity_->publish_pending();
+    }
+#endif
+    return;
+  }
   publish_status_(status_text_());
 #ifdef USE_UPDATE
   if (this->update_entity_ != nullptr) {
@@ -412,6 +424,7 @@ void FaderBuddy::loop() {
   if (update_stage_ != UPDATE_IDLE) {
     update_tick_();
   }
+  dispatch_queued_update_();
 }
 
 void FaderBuddy::update() {
@@ -867,8 +880,8 @@ void FaderBuddy::start_firmware_update(bool force) {
 // picks up a fader that was reflashed over UPDI, or one that only started
 // responding after the startup re-probes gave up.
 void FaderBuddy::refresh_firmware_state() {
-  if (update_stage_ != UPDATE_IDLE) {
-    return;  // an update in progress publishes its own state
+  if (update_stage_ != UPDATE_IDLE || update_pending_) {
+    return;  // an update in progress, or queued, publishes its own state
   }
   if (awaiting_device_) {
     probe_and_init_(false);
@@ -905,17 +918,40 @@ void FaderBuddy::update_firmware() {
     on_firmware_update_result_->trigger(false, "update already in progress");
     return;
   }
-  if (s_update_in_progress) {
-    ESP_LOGW(TAG, "update_firmware: another fader's update is already in progress, skipping");
-    // Republish so Home Assistant goes back to showing "update available"
-    // instead of a stalled install. Retry once the other fader is done.
+  if (update_pending_) {
+    // The queued request will report the result; don't queue a second one.
+    ESP_LOGD(TAG, "update_firmware: already queued");
+    return;
+  }
+  // Queue behind a running update, or behind anything already waiting, so
+  // faders update in the order they were asked for. Home Assistant's
+  // "update all" asks for every fader at once, so this is the normal case.
+  if (s_update_in_progress || !s_update_queue.empty()) {
+    ESP_LOGI(TAG, "update_firmware: another fader is updating, queued (%u ahead)",
+             (unsigned) s_update_queue.size() + (s_update_in_progress ? 1 : 0));
+    s_update_queue.push_back(this);
+    update_pending_ = true;
     publish_firmware_state_();
-    on_firmware_update_result_->trigger(false, "another update already in progress");
     return;
   }
 
+  begin_update_();
+}
+
+void FaderBuddy::dispatch_queued_update_() {
+  if (s_update_in_progress || s_update_queue.empty()) {
+    return;
+  }
+  FaderBuddy *next = s_update_queue.front();
+  s_update_queue.erase(s_update_queue.begin());
+  next->update_pending_ = false;
+  ESP_LOGI(TAG, "update_firmware: starting queued update for fader at 0x%02X", next->address_);
+  next->begin_update_();
+}
+
+void FaderBuddy::begin_update_() {
   // Claim the bus for this fader before the first tick, so a second request
-  // landing later in the same loop iteration is refused rather than interleaved.
+  // landing later in the same loop iteration is queued rather than interleaved.
   s_update_in_progress = true;
   update_page_ = 0;
   update_progress_pct_ = 0xFF;
