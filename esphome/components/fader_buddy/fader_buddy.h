@@ -16,7 +16,6 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
 #include "esphome/core/component.h"
 #include "esphome/components/button/button.h"
@@ -113,10 +112,10 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
     // Safe to call whether or not the fader is already at the packaged version
     // (no-ops if so). Never triggered automatically -- only when this is called.
     // Only one fader updates at a time, since they share the bus: a request made
-    // while another fader is updating is queued, shown as "Update pending", and
+    // while another fader is updating waits, shown as "Update pending", and
     // started when the bus frees up. Its result arrives when it eventually runs.
     void update_firmware();
-    // True between update_firmware() and the result trigger, queued time included.
+    // True between update_firmware() and the result trigger, waiting time included.
     bool firmware_update_in_progress() const { return update_stage_ != UPDATE_IDLE || update_pending_; }
     // Whether an update would actually do anything: an image is configured, the
     // fader isn't already running it, and there is a route to the bootloader.
@@ -256,11 +255,9 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         // the whole multi-tick sequence, so unlike the per-instance update_stage_
         // this also stops a second fader starting one while the first is mid-flight.
         static bool s_update_in_progress;
-        // Faders waiting for s_update_in_progress to clear, oldest first. Drained
-        // from loop() by whichever fader runs first, not by the queued fader
-        // itself, so the queue can't stall behind any one component.
-        static std::vector<FaderBuddy *> s_update_queue;
-        // This fader is in s_update_queue.
+        // An update was requested while another fader held the bus. loop()
+        // starts it once s_update_in_progress clears, so waiting faders go in
+        // loop (YAML) order rather than request order.
         bool update_pending_{false};
 
         // --- Update state machine (driven by update_tick_() from loop()) ---
@@ -295,8 +292,6 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         // Claim the bus and start the transfer. The caller has already checked
         // that the bus is free.
         void begin_update_();
-        // Start the oldest queued update, if the bus is free.
-        static void dispatch_queued_update_();
         void enter_update_stage_(UpdateStage stage, uint32_t timeout_ms = 0);
         void publish_update_progress_(const char *label, uint8_t pct);
         // An update stage with no meaningful percentage yet.

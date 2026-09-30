@@ -62,7 +62,7 @@ class FaderBuddyUpdate : public update::UpdateEntity, public Parented<FaderBuddy
   // Installing, with no percentage (entering the bootloader, erasing,
   // verifying). Leaves any percentage already shown in place.
   void publish_installing();
-  // Queued behind another fader's update. Home Assistant shows this as
+  // Waiting behind another fader's update. Home Assistant shows this as
   // installing with no percentage. It has no install timeout - the ESPHome
   // integration's install call returns as soon as the command is sent, and
   // in_progress then tracks only what the device reports - so a long wait in

@@ -133,10 +133,10 @@ layer-addressed registers.
 ### 0.4.1 - unreleased
 
 - Installing firmware on several faders at once (e.g. Home Assistant's
-  **Update all**) now queues them and updates each in turn, instead of refusing
-  all but the first. A queued fader shows as installing in Home Assistant and
-  **Update pending** on its Status sensor. `fader_buddy.update_firmware` queues
-  the same way, and its `on_firmware_update_result` fires when the queued update
+  **Update all**) now updates each in turn, instead of refusing all but the
+  first. A waiting fader shows as installing in Home Assistant and
+  **Update pending** on its Status sensor. `fader_buddy.update_firmware` waits
+  the same way, and its `on_firmware_update_result` fires when the update
   actually finishes.
 
 ### 0.4.0
