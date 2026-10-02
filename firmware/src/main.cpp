@@ -74,12 +74,11 @@ const uint8_t FW_VERSION_FOOTER[2] = {
 #define REMOTE_MOVEMENT_STEADY_THRESHOLD (300)
 #define IDLE_DURATION_THRESHOLD (1000)
 
-// Haptic parameters
-#define HAPTIC_DEAD_ZONE (8)           // ADC units of dead zone around target
-#define HAPTIC_BASE_PWM (150)           // Base PWM value for haptic force
-#define HAPTIC_MAX_PWM (254)            // Maximum PWM value
+// Haptic parameters. Haptics pull toward a target through the same control law
+// as remote moves (move_toward()), so there is no separate force model here -
+// just where to pull to, and how hard it may push.
+#define HAPTIC_MIN_PWM (110)            // Drive cap at strength 0 (slow decay)
 #define HAPTIC_MAGNET_RANGE (60)        // Active range for magnetic endpoints (ADC units)
-#define HAPTIC_BASE_MULTIPLIER (3.0f)   // Base force multiplier for haptics
 
 // Tap detection timing
 #define TAP_MAX_DURATION (200)            // Maximum tap press duration (ms)
@@ -681,14 +680,11 @@ uint16_t tap_position_delta() {
                                             : (tap_position_start - current_adc);
 }
 
-// Calculate max PWM from 3-bit strength value (0-7)
-// Returns maximum PWM value to use for haptic force
-// strength 0 -> minimum usable PWM (~189), strength 7 -> full PWM limit (254)
-uint8_t get_strength_max_pwm(uint8_t strength) {
-  // Scale from 189 (minimum usable) to 254 (max) based on strength
-  // strength 0: 189 max PWM, strength 7: 254 max PWM
-  const uint8_t min_pwm = 189;  // Minimum usable PWM (was strength 2)
-  return min_pwm + (strength * (HAPTIC_MAX_PWM - min_pwm)) / 7;
+// Drive cap for a 3-bit haptic strength (0-7), in slow-decay duty. Strength 0
+// still sits well above breakaway, so the weakest setting can always return
+// the carriage to its detent.
+int16_t get_strength_max_pwm(uint8_t strength) {
+  return HAPTIC_MIN_PWM + (strength * (MOVE_MAX_DUTY - HAPTIC_MIN_PWM)) / 7;
 }
 
 // Calculate the nearest detent position in ADC units
@@ -867,6 +863,41 @@ void apply_move_speed(uint8_t speed) {
   move_max_velocity = adc_per_sec;
 }
 
+// Cascade control law, shared by remote moves and haptics: the position loop
+// turns error into a velocity reference, the velocity loop delivers it via
+// feedforward (plant inverted) plus feedback. Returns signed slow-decay duty,
+// unclamped; the caller owns the deadband and the drive ceiling. See "The
+// control law" in ABOUT_MOTOR_CONTROL.md for the derivation.
+static float control_law(float error, float max_velocity) {
+  float sign = (error > 0) ? 1.0f : -1.0f;
+  float mag = move_vref_slope * error * sign;   // |v_ref|
+  if (max_velocity > MOVE_VEL_UNLIMITED && mag > max_velocity) mag = max_velocity;
+  // Never ask for less than the mechanism can actually sustain: below the
+  // Stribeck floor it stick-slips rather than moving, and holding the
+  // reference here is also what keeps the feedforward clear of breakaway when
+  // the error is small.
+  if (mag < move_vel_min) mag = move_vel_min;
+
+  uint8_t d = (error > 0) ? MOTORCAL_RISING : MOTORCAL_FALLING;
+  return sign * (move_bd[d] + mag * move_inv_k[d]) + move_kv * (sign * mag - velocity_ewma);
+}
+
+// Haptic restoring force toward `target`, capped at `limit` duty. Because the
+// control law asks for less speed the closer the carriage gets, a released
+// fader decelerates into the detent instead of overshooting it; the user
+// holding it just feels the pull saturate at the cap. Coasts in the deadband so
+// the fader is free at rest.
+static void haptic_pull(float target, int16_t limit) {
+  float error = target - input_ewma;
+  int16_t drive = 0;
+  if (error > move_deadband || error < -move_deadband) {
+    drive = (int16_t)control_law(error, MOVE_VEL_UNLIMITED);
+    if (drive > limit) drive = limit;
+    if (drive < -limit) drive = -limit;
+  }
+  motor_set(drive, true, MOTOR_IDLE_COAST);
+}
+
 void motor_update() {
   uint32_t now = millis();
 
@@ -972,24 +1003,6 @@ void motor_update() {
         }
         float error = target_adc - input_ewma;
         if (error > move_deadband || error < -move_deadband) {
-          // Cascade control: the position loop turns error into a velocity
-          // reference, the velocity loop delivers it via feedforward (plant
-          // inverted) plus feedback. See "The control law" in
-          // ABOUT_MOTOR_CONTROL.md for the derivation.
-          float sign = (error > 0) ? 1.0f : -1.0f;
-          float mag = move_vref_slope * error * sign;   // |v_ref|
-          if (move_max_velocity > MOVE_VEL_UNLIMITED && mag > move_max_velocity) {
-            mag = move_max_velocity;
-          }
-          // Never ask for less than the mechanism can actually sustain: below
-          // the Stribeck floor it stick-slips rather than moving, and holding
-          // the reference here is also what keeps the feedforward clear of
-          // breakaway when the error is small.
-          if (mag < move_vel_min) mag = move_vel_min;
-
-          uint8_t d = (error > 0) ? MOTORCAL_RISING : MOTORCAL_FALLING;
-          float ff = move_bd[d] + mag * move_inv_k[d];
-
           // Ramp in extra drive only while stalled. The feedforward is derived
           // to sit above breakaway, so this should now be rare - it covers
           // measurement error, a cold or stiff unit, and the uncharacterised
@@ -1007,10 +1020,9 @@ void motor_update() {
             stiction_ramp -= MOVE_RAMP_DECAY_RATE * dt;
             if (stiction_ramp < 0) stiction_ramp = 0;
           }
-          // Feedforward plus stall escape, both signed toward the target, and
-          // the velocity loop closing on the signed reference.
-          float u = sign * (ff + stiction_ramp) +
-                    move_kv * (sign * mag - velocity_ewma);
+          // The shared control law plus stall escape, signed toward the target.
+          float u = control_law(error, move_max_velocity) +
+                    ((error > 0) ? stiction_ramp : -stiction_ramp);
 
           // Drive ceiling opens up over time from the take-up value, easing
           // the motor through belt backlash instead of stepping to full duty.
@@ -1067,52 +1079,20 @@ void motor_update() {
         // Haptics - extract current mode from haptic_config
         HapticMode haptic_mode = static_cast<HapticMode>((haptic_config & HAPTIC_MODE_bm) >> HAPTIC_MODE_bp);
 
+        int16_t limit = get_strength_max_pwm((haptic_config & HAPTIC_DETENT_STRENGTH_bm) >> HAPTIC_DETENT_STRENGTH_bp);
+
         if (haptic_mode == HAPTIC_SMOOTH_WITH_MAGNET_ENDS) {
           // Magnetic endpoints - pull toward calibration limits when near
-          uint8_t strength = (haptic_config & HAPTIC_DETENT_STRENGTH_bm) >> HAPTIC_DETENT_STRENGTH_bp;
-          uint8_t max_pwm = get_strength_max_pwm(strength);
-
-          if (input_ewma < input_calib_min + HAPTIC_MAGNET_RANGE && input_ewma > input_calib_min + HAPTIC_DEAD_ZONE) {
-            float delta = (input_calib_min - input_ewma) * HAPTIC_BASE_MULTIPLIER;
-            uint8_t pwm = (-delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : -delta + HAPTIC_BASE_PWM;
-            motor_set(-(int16_t)pwm, false, MOTOR_IDLE_COAST);
-          } else if (input_ewma > input_calib_max - HAPTIC_MAGNET_RANGE && input_ewma < input_calib_max - HAPTIC_DEAD_ZONE) {
-            float delta = (input_calib_max - input_ewma) * HAPTIC_BASE_MULTIPLIER;
-            uint8_t pwm = (delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : delta + HAPTIC_BASE_PWM;
-            motor_set((int16_t)pwm, false, MOTOR_IDLE_COAST);
+          if (input_ewma < input_calib_min + HAPTIC_MAGNET_RANGE) {
+            haptic_pull(input_calib_min, limit);
+          } else if (input_ewma > input_calib_max - HAPTIC_MAGNET_RANGE) {
+            haptic_pull(input_calib_max, limit);
           } else {
             motor_coast();
           }
         } else if (haptic_mode == HAPTIC_DETENTS) {
-          // Detent haptics - pull toward nearest detent position
           uint8_t detent_count = (haptic_config & HAPTIC_DETENT_COUNT_bm) >> HAPTIC_DETENT_COUNT_bp;
-          uint8_t strength = (haptic_config & HAPTIC_DETENT_STRENGTH_bm) >> HAPTIC_DETENT_STRENGTH_bp;
-          uint8_t max_pwm = get_strength_max_pwm(strength);
-
-          // Get nearest detent position
-          uint16_t nearest_detent = get_nearest_detent_position(detent_count, input_ewma);
-
-          // Calculate displacement from detent (positive = need to move up, negative = need to move down)
-          int16_t displacement = nearest_detent - input_ewma;
-
-          // Apply dead zone
-          if (abs(displacement) > HAPTIC_DEAD_ZONE) {
-            // Calculate restorative force proportional to displacement
-            float delta = displacement * HAPTIC_BASE_MULTIPLIER;
-
-            if (delta > 0) {
-              // Pull toward higher position (Motor A)
-              uint8_t pwm = (delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : delta + HAPTIC_BASE_PWM;
-              motor_set((int16_t)pwm, false, MOTOR_IDLE_COAST);
-            } else {
-              // Pull toward lower position (Motor B)
-              uint8_t pwm = (-delta + HAPTIC_BASE_PWM > max_pwm) ? max_pwm : -delta + HAPTIC_BASE_PWM;
-              motor_set(-(int16_t)pwm, false, MOTOR_IDLE_COAST);
-            }
-          } else {
-            // Within dead zone, no force
-            motor_coast();
-          }
+          haptic_pull(get_nearest_detent_position(detent_count, input_ewma), limit);
         } else {
           // No haptics for NO_HAPTICS mode
           motor_coast();

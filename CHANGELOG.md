@@ -46,6 +46,17 @@ for production purposes.
 
 ## Firmware (ATtiny1616)
 
+### 1.5 - unreleased
+
+- Haptics (detents and magnetic ends) now run through the same control law as
+  remote moves - position loop, plant-model feedforward and velocity loop -
+  instead of a separate proportional controller. A released fader decelerates
+  into its detent rather than overshooting and oscillating around it, and
+  per-unit motor characterisation now applies to haptics too.
+- Haptics switched from fast- to slow-decay drive to match the plant model, so
+  the strength scale was remapped: the cap now runs from 110 duty (strength 0)
+  to full (strength 7). The feel of each strength level has changed.
+
 ### 1.4 - unreleased
 
 - Version bump only, for testing a firmware update.

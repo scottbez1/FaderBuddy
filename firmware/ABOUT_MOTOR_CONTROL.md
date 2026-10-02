@@ -72,10 +72,8 @@ This is why movement no longer drops the carrier to 306 Hz. That switch existed
 purely to buy torque back, and it was the audible buzz. There is now one
 permanently inaudible carrier (19.6 kHz) for everything.
 
-**Haptics deliberately still use fast decay.** `HAPTIC_BASE_PWM` and
-`get_strength_max_pwm()`'s 189 floor were tuned against the fast-decay force
-curve. Switching haptics to slow decay would make them far stronger and change
-the feel. If you ever do switch them, those constants must be retuned together.
+Haptics use slow decay too, because they run through the same control law
+(see "Haptics" below) and the plant model it inverts was measured in slow decay.
 
 ## The control law
 
@@ -183,6 +181,30 @@ Two constraints prevent problems found during development:
 
 **Optional speed limit** (see below) is off by default and changes nothing when
 unset.
+
+## Haptics
+
+Haptics are not a second controller. `haptic_pull()` picks a target - the
+nearest detent, or the calibrated end within `HAPTIC_MAGNET_RANGE` of it -
+and hands the error to the same `control_law()` a remote move uses, with no
+speed limit, no stall ramp and no take-up ceiling. Only two things differ:
+
+- **The drive is capped by haptic strength** (`get_strength_max_pwm()`,
+  `HAPTIC_MIN_PWM` to full duty). While the user holds the fader off a detent
+  the velocity reference is unmet, so the output saturates at the cap: that cap
+  *is* the felt force. Strength 0 is kept well above breakaway so even the
+  weakest setting returns the carriage to the detent.
+- **The deadband coasts rather than brakes**, so the fader is free at rest.
+
+The previous haptics were `150 + 3 * error` with no velocity term - far above
+breakaway right up to the dead zone, so a released fader arrived fast, sailed
+through the detent and was pulled back, oscillating. The velocity loop cuts
+drive (and reverses it) when the carriage is moving faster than the error
+warrants, exactly as it does at the end of a move.
+
+A side effect of the velocity loop: dragging the fader *away* from a detent
+feels slightly stiffer the faster you go, and flinging it *toward* one is
+damped. Both saturate at the strength cap.
 
 ## Fixed-rate loop and the velocity estimate
 
