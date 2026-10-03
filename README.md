@@ -165,7 +165,7 @@ When connecting more than one FaderBuddy to the same I2C bus, or if there's alre
 | `0x27`  | `[█]` | `[█]` | `[█]` |
 
 ## Calibrating Your Fader
-Once your FaderBuddy is mounted on its motorized fader and connected to Home Assistant, run a self-calibration before anything else. Every fader's motor is a little different - friction, breakaway force, and speed vary from unit to unit - so FaderBuddy measures the one it's attached to and tunes its motor drive to match. Until it's calibrated, it falls back to generic defaults that work, but won't move as smoothly or settle as precisely.
+Once your FaderBuddy is mounted on its motorized fader and connected to Home Assistant, run a self-calibration to tune the motor control. FaderBuddy will come with a generic profile, but it may not move as smoothly or settle well.
 
 To calibrate from Home Assistant:
 1. Open the device page for your fader (**Settings → Devices & services → ESPHome**, then select your device).
@@ -174,12 +174,9 @@ To calibrate from Home Assistant:
 4. Check the fader's **Status** sensor under **Diagnostic** - it should read `calibration succeeded`. If it reports a failure instead, it says why.
 
 
-
 https://github.com/user-attachments/assets/dca807f0-2b44-4b6c-8e06-34a2b3fe7681
 
-
-
-The results are stored on the FaderBuddy itself, so you only need to do this once - re-run it if you move the board to a different fader.
+The results are stored on the FaderBuddy in flash, so you only need to do this once per board - re-run it if you move the board to a different fader or change something substantial (like adding a heavy fader cap).
 
 ## About the Board Design
 The most plug-and-play option (if you're in the US) is to buy the FaderBuddy PCBs [pre-assembled from the Bezek Labs store](https://bezeklabs.etsy.com/listing/4506790932), which come with firmware already flashed, the hardware tested, and it helps support this project and future development!
