@@ -88,6 +88,7 @@ Here's what firmware updates look like:
 ## Getting Started
 What you need:
 - **60mm motorized fader**: Behringer MF60T faders (sold in 5-packs as replacement parts) from music/AV retailers like [Sweetwater](https://www.sweetwater.com/store/detail/MOTORFADER--behringer-mf60t-motorized-faders-set-of-5-for-motor-controllers) or [Amazon](https://www.amazon.com/Behringer-MOTOR-High-Performance-Faders-Keyboards/dp/B01DT827IC) - these appear to be manufactured by Soundwell
+- **100mm motorized fader**: a separate PCB for a Soundwell 100mm fader lives at `electronics/fader_buddy_100mm`. It is not the board sold by Bezek Labs. Ordering files are in the 100mm section of [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md).
 - **FaderBuddy PCB**: Available [pre-assembled from Bezek Labs](https://bezeklabs.etsy.com/listing/4506790932) in the US (purchasing there directly supports this project), or use the design files fabricate and assemble your own PCBs via JLCPCB. See [ABOUT_PCB_FABRICATION.md](ABOUT_PCB_FABRICATION.md) for details.
 - **ESP32**: Any ESPHome-compatible ESP32 board with 2 free GPIO pins for I2C.
 

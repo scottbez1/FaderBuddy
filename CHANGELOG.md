@@ -43,6 +43,10 @@ for production purposes.
   design needs.
 - **v1.1 and earlier** (v0.1-v1.0) - initial bring-up; error in JLC part numbers.
 
+### 100mm
+
+- Initial board for the Soundwell SM10001 100mm motor fader. Same circuit as hardware v1.3; the outline and fader footprint differ. Design files are `electronics/fader_buddy_100mm.*`.
+
 ---
 
 ## Firmware (ATtiny1616)
