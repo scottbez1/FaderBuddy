@@ -35,7 +35,7 @@ namespace fader_buddy {
 
 // Version of this ESPHome component, independent of the fader's firmware
 // version. Logged at startup so a bug report identifies both halves.
-#define FADER_BUDDY_COMPONENT_VERSION "0.4.1"
+#define FADER_BUDDY_COMPONENT_VERSION "0.5.0"
 
 
 // Protocol v5: Layer management is now handled in firmware
@@ -172,8 +172,10 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         //   "0.0+bootloader"      - in its bootloader, no app installed
         //   "0.0+unreachable"     - never answered a probe
         std::string firmware_version_string_() const;
-        // Human-readable text for the status sensor.
+        // Human-readable text for the status sensor: the firmware status, plus
+        // the calibration status when there is something to say about it.
         std::string status_text_() const;
+        std::string firmware_status_text_() const;
         // Publish arbitrary text to the status sensor, for transient states
         // that status_text_() doesn't cover (update progress, failure reasons).
         void publish_status_(const std::string &text);
@@ -190,7 +192,24 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         // Could an install run against this fader at all?
         // firmware_update_available() is offered && possible.
         bool firmware_update_possible_() const;
-        void read_motor_calibration_();
+        // Logs the motor characterisation, and returns whether the fader has
+        // one (MOTOR_CAL_UNKNOWN if the firmware can't say).
+        enum MotorCalReadResult { MOTOR_CAL_UNKNOWN, MOTOR_CAL_ABSENT, MOTOR_CAL_PRESENT };
+        MotorCalReadResult read_motor_calibration_();
+
+        // Self-calibration's outcome, shown on the status sensor so it can be
+        // seen from Home Assistant without the logs. Only the most recent run
+        // is remembered, and nothing survives a host reboot - at startup all
+        // that can be told is whether the motor was ever characterised.
+        enum CalibrationStatus {
+            CALIBRATION_UNKNOWN,         // nothing worth showing
+            CALIBRATION_NEEDED,          // startup: motor never characterised
+            CALIBRATION_RUNNING,
+            CALIBRATION_SUCCEEDED,
+            CALIBRATION_MOTOR_DEFAULTS,  // endpoints found, motor measurement discarded
+            CALIBRATION_FAILED,          // endpoint sweep found no usable travel
+        };
+        CalibrationStatus calibration_status_{CALIBRATION_UNKNOWN};
 
         // State variables
         uint32_t last_state_{0};

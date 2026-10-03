@@ -144,6 +144,10 @@ layer-addressed registers.
 
 ### 0.5.0 - in development / unreleased
 
+- **Breaking:** `text_sensor: platform: fader_buddy`, deprecated since 0.3.0,
+  is removed. A config still using it fails validation with instructions:
+  delete the `text_sensor:` block and move any `name:`/`icon:` onto the hub's
+  `serial_number:` key.
 - Installing firmware on several faders at once (e.g. Home Assistant's
   **Update all**) now updates each in turn, instead of refusing all but the
   first. A waiting fader shows as installing in Home Assistant and
@@ -151,6 +155,11 @@ layer-addressed registers.
   the same way, and its `on_firmware_update_result` fires when the update
   actually finishes.
 - Packages firmware v1.5
+- The Status sensor now shows self-calibration progress and its result -
+  succeeded, failed (no travel found), or incomplete (endpoints found but the
+  motor measurement was discarded, leaving default motor tuning) - so a run can
+  be checked from Home Assistant without the logs. A fader whose motor has
+  never been calibrated says so at startup.
 
 ### 0.4.0
 

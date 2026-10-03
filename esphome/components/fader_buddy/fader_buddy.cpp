@@ -154,7 +154,10 @@ void FaderBuddy::probe_and_init_(bool first_attempt) {
   // Read the chip serial number once (static factory ID) and publish it.
   read_serial_number_();
   read_firmware_version_();
-  read_motor_calibration_();
+  if (read_motor_calibration_() == MOTOR_CAL_ABSENT) {
+    calibration_status_ = CALIBRATION_NEEDED;
+    publish_firmware_state_();
+  }
 
   // Flag a config that asks for something this fader's firmware cannot do, at
   // startup rather than waiting for the first move to warn.
@@ -319,9 +322,33 @@ std::string FaderBuddy::firmware_version_string_() const {
   return buf;
 }
 
-// Human-readable version of the above, for the status text sensor. Also says
-// whether an update is available, or why it can't be installed over I2C.
 std::string FaderBuddy::status_text_() const {
+  std::string text = firmware_status_text_();
+  switch (this->calibration_status_) {
+    case CALIBRATION_UNKNOWN:
+      break;
+    case CALIBRATION_NEEDED:
+      text += " - motor not calibrated, run Self Calibration";
+      break;
+    case CALIBRATION_RUNNING:
+      text += " - calibrating";
+      break;
+    case CALIBRATION_SUCCEEDED:
+      text += " - calibration succeeded";
+      break;
+    case CALIBRATION_MOTOR_DEFAULTS:
+      text += " - calibration incomplete: motor measurement failed, using default motor tuning";
+      break;
+    case CALIBRATION_FAILED:
+      text += " - calibration failed: no fader travel detected, check motor and potentiometer wiring";
+      break;
+  }
+  return text;
+}
+
+// Human-readable firmware version, for the status text sensor. Also says
+// whether an update is available, or why it can't be installed over I2C.
+std::string FaderBuddy::firmware_status_text_() const {
   if (this->awaiting_device_) {
     return "Not responding";
   }
@@ -385,17 +412,17 @@ void FaderBuddy::publish_firmware_state_() {
 // host here - but these are the numbers to look at when a fader hunts or
 // settles slowly, and on a bench with no test jig attached this log is the
 // only way to see them.
-void FaderBuddy::read_motor_calibration_() {
+FaderBuddy::MotorCalReadResult FaderBuddy::read_motor_calibration_() {
   if (this->firmware_version_ == FW_VERSION_NONE ||
       this->firmware_version_ < FW_VERSION_MOTOR_CAL) {
-    return;  // Older firmware has no such register; nothing to report
+    return MOTOR_CAL_UNKNOWN;  // Older firmware has no such register; nothing to report
   }
 
   uint8_t reg = REG_MOTOR_CAL;
   uint8_t b[12] = {0};
   if (this->write_read(&reg, 1, b, sizeof(b)) != esphome::i2c::ErrorCode::NO_ERROR) {
     ESP_LOGW(TAG, "Failed to read motor calibration");
-    return;
+    return MOTOR_CAL_UNKNOWN;
   }
 
   uint16_t vel_min = ((uint16_t) b[9] << 8) | b[10];
@@ -404,7 +431,7 @@ void FaderBuddy::read_motor_calibration_() {
     ESP_LOGCONFIG(TAG, "Motor: not characterised, using the default plant model "
                        "(vel_min %u ADC/s, deadband %d). Run self-calibration to measure this unit.",
                   vel_min, b[11]);
-    return;
+    return MOTOR_CAL_ABSENT;
   }
 
   ESP_LOGCONFIG(TAG, "Motor: breakaway %d/%d duty, k %d/%d ADC/s per duty, "
@@ -413,6 +440,7 @@ void FaderBuddy::read_motor_calibration_() {
                 ((uint16_t) b[5] << 8) | b[6], ((uint16_t) b[7] << 8) | b[8]);
   ESP_LOGCONFIG(TAG, "Motor: vel_min %u ADC/s, deadband %d ADC counts",
                 vel_min, b[11]);
+  return MOTOR_CAL_PRESENT;
 }
 
 float FaderBuddy::get_setup_priority() const { return setup_priority::DATA; }
@@ -494,17 +522,30 @@ bool FaderBuddy::read_sensor_data_() {
 
     if (mode == MODE_SELF_CALIBRATION) {
       ESP_LOGI(TAG, "Self-calibration started");
+      this->calibration_status_ = CALIBRATION_RUNNING;
+      this->publish_firmware_state_();
     } else if (previous == MODE_SELF_CALIBRATION) {
       if (mode == MODE_ERROR) {
+        this->calibration_status_ = CALIBRATION_FAILED;
         ESP_LOGE(TAG, "Self-calibration failed: the endpoint sweep found no usable travel. "
                       "Check the motor and potentiometer wiring. The fader ignores position "
                       "commands until the error is cleared.");
       } else {
         // Re-read what it measured. The startup log ran before this, so these
-        // are the only numbers that reflect the run that just finished.
+        // are the only numbers that reflect the run that just finished. The
+        // firmware keeps the endpoints but throws the motor measurement
+        // away if any pass of it was implausible, so a run can end normally
+        // and still leave the fader on default tuning.
         ESP_LOGI(TAG, "Self-calibration complete");
-        this->read_motor_calibration_();
+        if (this->read_motor_calibration_() == MOTOR_CAL_ABSENT) {
+          ESP_LOGW(TAG, "Self-calibration found the endpoints, but the motor measurement was "
+                        "implausible and was discarded. The fader is using default motor tuning.");
+          this->calibration_status_ = CALIBRATION_MOTOR_DEFAULTS;
+        } else {
+          this->calibration_status_ = CALIBRATION_SUCCEEDED;
+        }
       }
+      this->publish_firmware_state_();
     } else if (mode == MODE_ERROR) {
       ESP_LOGW(TAG, "Fader latched MODE_ERROR (a move did not reach its target). "
                     "Position commands are ignored until the error is cleared.");

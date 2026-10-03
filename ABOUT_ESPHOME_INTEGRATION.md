@@ -137,7 +137,7 @@ For additional complete working examples, see the `esphome/examples/` directory:
 - **firmware_image** (optional): Path to a locally built firmware image, for testing unreleased firmware. Mutually exclusive with `firmware`.
 - **firmware_update** (optional): Options for the auto-created firmware update entity. Not created with `firmware: none`. Config category.
 - **serial_number** (optional): Options for the auto-created serial number text sensor (`name`, `id`, `icon`, `internal`, …). Diagnostic category.
-- **status** (optional): Options for the auto-created status text sensor, which shows the firmware version, update availability and update progress. Diagnostic category.
+- **status** (optional): Options for the auto-created status text sensor, which shows the firmware version, update availability, update progress and self-calibration results. Diagnostic category.
 - **self_calibration** (optional): Options for the auto-created self-calibration button. Config category.
 
 ### Triggers
@@ -313,7 +313,9 @@ Each fader creates two diagnostic text sensors automatically:
   hex string, handy for identifying a specific board. Read once at startup.
 - **status** — the fader's state as text, e.g. `Firmware 1.4`,
   `Firmware 1.3 - update to 1.4 available`, `Not responding`, or progress
-  during an update.
+  during an update. It also reports self-calibration: `calibrating` while it
+  runs, then whether it succeeded or failed (and why), and
+  `motor not calibrated` at startup for a fader that has never been calibrated.
 
 Both take the standard ESPHome text sensor options, on the hub:
 
@@ -327,8 +329,8 @@ fader_buddy:
       # internal: true        # to keep it out of Home Assistant entirely
 ```
 
-The older `text_sensor: platform: fader_buddy` form still works for
-`serial_number` and will be removed in component 0.5.0.
+The older `text_sensor: platform: fader_buddy` form was removed in component
+0.5.0; delete that block and set any overrides on the hub as above.
 
 ## C++ API (for Lambdas)
 
