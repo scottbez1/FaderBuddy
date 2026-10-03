@@ -18,9 +18,6 @@ Multiple FaderBuddy boards can be wired together and share just two I2C pins. Wi
 each other without any wires for an easy plug-and-play expandable system (supports 18mm or 19mm spacing between faders).
 STEMMA QT/QWIIC-compatible connectors make it easy to hook FaderBuddy boards to the rest of your design (see [wiring diagrams](#wiring-overview) below for examples).
 
-<!--
-<img alt="motor fader demo tiny" height="427" src="https://github.com/user-attachments/assets/fc8dd191-fca0-4ac6-80d8-bb88dc9d0a7a" />
--->
 <p align="center">
 <img width="435" height="245" alt="FaderBuddySimpleTopDown" src="https://github.com/user-attachments/assets/8a98dc1c-cbcf-4585-8ef0-39cc0e5eeb9b" />
 </p>
@@ -176,7 +173,11 @@ To calibrate from Home Assistant:
 3. Keep your hands off the fader while it sweeps the knob to both ends of its travel and back. This takes a few seconds.
 4. Check the fader's **Status** sensor under **Diagnostic** - it should read `calibration succeeded`. If it reports a failure instead, it says why.
 
-<!-- TODO: screenshot/screencast of running Self Calibration from the Home Assistant dashboard -->
+
+
+https://github.com/user-attachments/assets/dca807f0-2b44-4b6c-8e06-34a2b3fe7681
+
+
 
 The results are stored on the FaderBuddy itself, so you only need to do this once - re-run it if you move the board to a different fader.
 
