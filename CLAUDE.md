@@ -194,7 +194,7 @@ often mis-registered vertically.
 
 ### Electronics Export
 
-Electronics artifacts (JLCPCB files, schematics, PDFs, 3D renders) are generated via Python scripts in `ci/electronics/`:
+Electronics artifacts (JLCPCB files, schematics, PDFs, 3D renders, STEP model) are generated via Python scripts in `ci/electronics/`:
 
 ```bash
 # Install dependencies (KiCad, KiBot, etc) -- only to be used within CI by github runners!
