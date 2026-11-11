@@ -50,6 +50,34 @@ To depanelize: snap off the top and bottom rails first, then the left and right 
 
 </details>
 
+## 100mm board
+
+The 100mm FaderBuddy uses the same circuit as the 60mm board but a different PCB outline and fader footprint for the Soundwell SM10001 100mm motor fader. Design files are `electronics/fader_buddy_100mm.*`. This variant is not sold pre-assembled by Bezek Labs, and there is no panelized ordering option.
+
+Fabrication and assembly follow the same process as the 60mm board: JLCPCB places the SMT parts; you solder the through-hole daisy-chain headers and attach the board to the fader (see **Assembly** below and the pin-header table above).
+
+> [!CAUTION]
+> The files below are auto-generated from the current (untested) design files, and are provided for design reference ONLY. They are NOT considered stable for manufacturing.
+
+Latest auto-generated (untested and likely broken!) artifacts for the 100mm board:
+
+- Review
+  - [Schematic](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-schematic.pdf)
+  - [Interactive BOM](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-ibom.html)
+  - [PCB Packet](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-pcb-packet.pdf)
+- Ordering (Configured for JLCPCB)
+  - 1.6mm, any color, HASL lead-free
+  - [Untested gerbers](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-jlc/gerbers.zip)
+  - [Untested BOM csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-jlc/bom.csv)
+  - [Untested CPL (POS) csv](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-jlc/pos.csv)
+
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-3D_top.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-3D_top.png" width="400" />
+</a>
+<a href="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-3D_bottom.png">
+    <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_100mm-3D_bottom.png" width="400" />
+</a>
+
 ### Assembly
 
 The PCB comes fully assembled from Bezek Labs LLC and JLCPCB. The only soldering required is attaching the PCB to the fader itself and the optional daisy-chaining headers, which are all through-hole connections:
