@@ -50,7 +50,7 @@ jobs:
           ./ci/electronics/export_jlcpcb.py --release-prefix releases/electronics/ --assembly-schematic electronics/fader_buddy_main.kicad_sch --no-drc electronics/build/panelized_fader_buddy_main.kicad_pcb
           cp -r electronics/build/panelized_fader_buddy_main-jlc electronics/build/outputs/fader_buddy_main-panelized-jlc
 
-      - name: fader_buddy_main -- Gen schematic, iBOM, 3d (KiBot)
+      - name: fader_buddy_main -- Gen schematic, iBOM, 3d renders, STEP (KiBot)
         uses: INTI-CMNB/KiBot@b139bf69c75ffffa941c6f5876af42f3f3efd501
         with:
           config: electronics/fader_buddy_main.kibot.yml

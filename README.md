@@ -204,6 +204,8 @@ To fabricate or assemble the PCBs yourself, see [ABOUT_PCB_FABRICATION.md](ABOUT
     <img src="https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main-3D_bottom.png" width="300" />
 </a>
 
+A [STEP model](https://motorfader-artifacts.s3.amazonaws.com/master/electronics/fader_buddy_main.step) of the assembled board is also exported by CI, for mechanical CAD.
+
 ## Touch-compatible Fader Knobs/Caps
 You don't _need_ touch capable fader caps - the FaderBuddy will work fine without them - but touch detection allows the FaderBuddy to cancel a motor movement if it detects a touch along the way, preventing the fader from "fighting" against the user. It also allows the FaderBuddy to detect if a user is touching the fader even if they aren't actively moving, and allows you to support a double-tap action on the fader if you'd like.
 

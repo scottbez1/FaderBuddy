@@ -81,3 +81,10 @@ outputs:
       orthographic: false
       height: 512
       width: 1024
+
+  - name: step
+    comment: 'STEP 3D model of the assembled board, for mechanical CAD'
+    type: step
+    options:
+      output: '%f.%x'
+      metric_units: true
