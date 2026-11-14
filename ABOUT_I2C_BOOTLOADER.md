@@ -173,13 +173,27 @@ written with `ERWP`, which erases it in place anyway. See
 
 **The update sequence** is:
 
-1. `ERASE_APP`
-2. For each page: `SET_PAGE_ADDR`, then `SEND_FRAME` × 4
-3. `GET_VERSION_CRC16` over the whole application region, to verify the write
-4. `RUN_APP`
+1. `ERASE_APP` (blanks page 0, the reset vector)
+2. For every page **except page 0**: `SET_PAGE_ADDR`, then `SEND_FRAME` × 4
+3. `GET_VERSION_CRC16` over pages 1..N-1, checked against a CRC the host
+   computes over the same bytes of the image
+4. Only on a match, write page 0 the same way — this is the commit
+5. `GET_VERSION_CRC16` over the whole application region
+6. `RUN_APP`
 
 Per-frame CRC16 catches transfer errors as they happen. The whole-image CRC
 catches anything missed and stops the host from jumping into a bad image.
+
+**Page 0 goes last because it is the commit.** `app_is_valid()` only checks
+that the reset vector is not blank, and the other pages are not erased up front
+(see above), so a reset vector written first would make any later failure — a
+host that stops mid-stream, a frame dropped for a bad CRC, a frame duplicated
+by a host retry — boot a mix of new and old pages at the next reset. Holding
+page 0 back until the rest has verified keeps the board in its bootloader
+across resets until an update fully lands. If anything fails *after* page 0 is
+written but before `RUN_APP` (a bad page-0 write, a final CRC mismatch), the
+host sends `ERASE_APP` again to re-blank it. This is purely a host-side
+ordering, so it protects boards whose bootloaders are already in the field.
 
 ## 7. Entering the bootloader
 
@@ -332,8 +346,9 @@ instances rather than duplicating roughly 14 KB per fader.
 
 **The sequence** is the same one the jig uses: probe register `0x00` → if not
 already resident, `REG_ENTER_BOOTLOADER` and wait for the marker → `ERASE_APP` →
-stream pages → whole-image `GET_VERSION_CRC16` → `RUN_APP` → re-read
-`REG_FW_VERSION` to confirm.
+stream pages 1..N-1 → `GET_VERSION_CRC16` over them → page 0 → whole-image
+`GET_VERSION_CRC16` → `RUN_APP` → re-read `REG_FW_VERSION` to confirm. See
+[§6](#6-wire-protocol) for why page 0 is held back.
 
 **It runs a slice at a time from `loop()`.** `update_tick_()` walks an
 `UpdateStage` enum, one stage per call; `update_firmware()` only arms the state
@@ -408,9 +423,11 @@ fixed later over I2C. See
   whose first page happened to land. Closing this means a linker-placed CRC
   footer (image length + CRC16 at the end of APPCODE) that the bootloader
   recomputes on boot, reusing the CRC16 already used for post-write verify.
-  Streaming page 0 last would also help, since an interrupted update would then
-  leave the reset vector blank. Until then, the TP5 strap is the recovery path,
-  and it needs physical access.
+  Hosts now write page 0 last, after the rest has verified, which closes the
+  interrupted- and failed-update cases (see the update sequence). What remains
+  is corruption *after* a successful update, and hosts that predate the
+  ordering change. For those, the TP5 strap is the recovery path, and it needs
+  physical access.
 - **No command timeout in the resident bootloader.** A host that abandons an
   update mid-stream leaves the bootloader resident forever. A watchdog or
   command timeout would let it recover on its own — jumping to the application

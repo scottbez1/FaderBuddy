@@ -291,7 +291,9 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
             UPDATE_WAIT_MARKER,      // after REG_ENTER_BOOTLOADER
             UPDATE_ERASE,            // status check, then issue the erase
             UPDATE_ERASE_WAIT,       // target is stalled in NVM, poll it back
-            UPDATE_WRITE,            // stream pages, budgeted per tick
+            UPDATE_WRITE,            // stream pages 1..N-1 (not page 0), budgeted per tick
+            UPDATE_BODY_CHECK,       // NVM status, then ask for the CRC of pages 1..N-1
+            UPDATE_BODY_CRC_WAIT,    // poll for it; on a match, write page 0 last
             UPDATE_WRITE_CHECK,      // post-write NVM status, then ask for the CRC
             UPDATE_CRC_WAIT,         // poll for the whole-image CRC
             UPDATE_WAIT_APP,         // after RUN_APP
@@ -304,7 +306,7 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
 
         UpdateStage update_stage_{UPDATE_IDLE};
         uint32_t update_deadline_{0};   // millis deadline for the polling stages
-        uint32_t update_page_{0};       // next page to write
+        uint32_t update_page_{0};       // next page to write (starts at 1; page 0 goes last)
         uint8_t update_progress_pct_{0xFF};  // last published step; 0xFF = none yet
 
         void update_tick_();
@@ -317,6 +319,8 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         void publish_update_stage_(const char *label);
         void log_update_starting_();
         void finish_update_(bool ok, const std::string &error);
+        // Failure after page 0 is written: re-blank the reset vector, then finish.
+        void fail_and_uncommit_(const std::string &error);
 
         uint8_t get_last_mode_() const;
 
@@ -336,6 +340,8 @@ class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
         bool bl_request_erase_app_();
         bool bl_set_page_addr_(uint16_t addr);
         bool bl_send_frame_(const uint8_t *data16);
+        // SET_PAGE_ADDR + the page's 4 frames. `page` indexes the image.
+        bool bl_write_image_page_(uint32_t page);
         bool bl_request_image_crc16_(uint16_t addr, uint16_t len);
         bool bl_poll_image_crc16_(uint16_t &crc);
         bool bl_run_app_();
