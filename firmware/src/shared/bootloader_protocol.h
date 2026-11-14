@@ -38,14 +38,12 @@
  * Boot section size, in 256-byte units == FUSE.BOOTEND. The application is
  * linked to start at BL_APP_START (== BOOTEND * 256) and the same value is
  * written to the BOOTEND fuse. This is the single source of truth for the
- * boot/app split -- keep this constant, the app's linker offset, the fuse, and
- * the host-side image extractors in lockstep. All of them:
- *   - platformio.ini: board_build.text_section_start, and --bootend in the
- *     fb_bootloader_only / fb_app_and_bootloader upload commands
- *   - firmware/tools/export_app_image.py: FLASH_START
- *   - production_tools/programAndTest/tools/generate_app_image.py: FLASH_START
- *   - production_tools/programAndTest/test_host.py: the --bootend argument
- *   - production_tools/programAndTest/factory_test_images/ (rebuild the image)
+ * boot/app split. C, C++ and Python read it from here (Python via
+ * firmware/tools/fb_image), but a few places can't and repeat the values by
+ * hand -- platformio.ini, the factory test image, this header's ESPHome copy.
+ * They are all listed under "Hardcoded copies of the flash geometry" in
+ * ABOUT_I2C_BOOTLOADER.md: change them together with this, and add any new one
+ * to that list.
  *
  * Sized to the measured bootloader: 1402 bytes as built, so 0x06 (1536) is the
  * smallest 256-byte-granular section that holds it, leaving ~134 bytes of
@@ -72,7 +70,9 @@
  * of that image, with no risk of drifting from what the flashed app will
  * actually report via REG_FW_VERSION -- both come from the same FW_VERSION
  * macro at compile time. Placed via `-Wl,--section-start=.fw_meta=...` in
- * platformio.ini (env:fb_app_only); NOT consumed by the bootloader itself.
+ * platformio.ini (env:fb_app_only), a hardcoded copy listed under "Hardcoded
+ * copies of the flash geometry" in ABOUT_I2C_BOOTLOADER.md; NOT consumed by
+ * the bootloader itself.
  * ------------------------------------------------------------------------- */
 #define BL_APP_META_ADDR       (BL_FLASH_SIZE - 2U)                     /* 0x3FFE */
 

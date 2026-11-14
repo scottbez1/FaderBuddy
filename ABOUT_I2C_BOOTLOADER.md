@@ -56,18 +56,44 @@ address X" means the program/section offset; the store target is `0x8000 + X`.
 
 - **`BOOTEND`** sets the boot-section size in 256-byte units. It is **`0x06`**
   (1536 bytes) today. The bootloader measures about 1402 bytes, leaving roughly
-  134 bytes free. The build enforces the limit: `firmware/tools/bootloader_size_limit.py`
-  caps the linker's flash region at `BL_APP_START`, so a bootloader that outgrows
+  134 bytes free. The build enforces the limit: `env:fb_bootloader_only` caps
+  the linker's flash region at `BL_APP_START`
+  (`-Wl,--defsym=__TEXT_REGION_LENGTH__=0x600`), so a bootloader that outgrows
   the boot section fails to link (``region `text' overflowed``) rather than
-  building cleanly and colliding with the application once flashed. Every build's
-  `Flash:` line reports usage against the 1536 bytes.
+  building cleanly and colliding with the application once flashed. Its
+  `board_upload.maximum_size` makes every build's `Flash:` line report usage
+  against the 1536 bytes.
 - **`APPEND`** is `0x00`, so the application section runs to the end of flash.
   There is no separate APPDATA region.
 - The application is linked to start at `BOOTEND * 256` = `0x0600`.
 
-`BOOTEND` is not a value to change casually. Six places move in lockstep; the
-comment on `BL_BOOTEND` in `firmware/src/shared/bootloader_protocol.h` lists
-them.
+`BOOTEND` is not a value to change casually: every hardcoded copy below moves
+with it, and boards already built keep their old split for good (see the last
+row).
+
+### Hardcoded copies of the flash geometry
+
+`firmware/src/shared/bootloader_protocol.h` is the source of truth for the flash
+geometry (`BL_BOOTEND`, `BL_APPEND`, `BL_FLASH_SIZE`, and the `BL_APP_START`
+and `BL_APP_META_ADDR` derived from them). Most consumers read it: the
+bootloader, the app and the jig include it, and every Python tool goes through
+`firmware/tools/fb_image` (the image exporter, the jig's image generator,
+`test_host.py`, the release packager), as does the ESPHome component's
+`__init__.py` via its own copy. The places below **can't**, and repeat the
+values by hand. Each one carries a comment pointing here. Change them all
+together, and add any new one to this table, with a pointer comment beside it.
+
+| Where | Value | Copy of |
+|---|---|---|
+| `platformio.ini`, `env:fb_app_only`: `board_build.text_section_start` | `0x600` | `BL_APP_START` |
+| `platformio.ini`, `env:fb_app_only`: `-Wl,--section-start=.fw_meta=` | `0x3FFE` | `BL_APP_META_ADDR` |
+| `platformio.ini`, `env:fb_bootloader_only`: `-Wl,--defsym=__TEXT_REGION_LENGTH__=` | `0x600` | `BL_APP_START` |
+| `platformio.ini`, `env:fb_bootloader_only`: `board_upload.maximum_size` | `1536` | `BL_APP_START` |
+| `platformio.ini`, `env:fb_bootloader_only` and `env:fb_app_and_bootloader` upload commands: `--bootend` / `--append` | `0x06` / `0x00` | `BL_BOOTEND` / `BL_APPEND` |
+| `esphome/components/fader_buddy/bootloader_protocol.h` | the whole header | the canonical header. Must stay byte-identical; CI (`ci/util/check_i2c_data_sync.py`) fails if it drifts |
+| `production_tools/programAndTest/factory_test_images/` | a binary linked at `0x600` | `BL_APP_START`. Regenerate it (see its README) |
+| `CLAUDE.md`, the `pymcuprog read ... -o 0x600` example | `0x600` | `BL_APP_START`. Documentation only |
+| Every board already built | its `BOOTEND`/`APPEND` fuses and bootloader | the values at the time it was made. Neither can change in the field (UPDI only), so a new split also makes new app images incompatible with those boards, and the ESPHome component and the release images would have to deal with both |
 
 Application flash is tight. The app has roughly 130 bytes of headroom below the
 `.fw_meta` footer, and about 1.1 KB of the image is avr-libc soft-float pulled

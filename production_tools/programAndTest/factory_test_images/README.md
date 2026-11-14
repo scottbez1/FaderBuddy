@@ -37,7 +37,9 @@ it stays fixed, so the test keeps exercising a real old-to-new transition.
 Regenerate it only when the old starting state itself must change. The one case
 that forces it is a **`BL_BOOTEND` change**: this image is linked at
 `BL_APP_START`, so a different boot/app split leaves it at an address the new
-bootloader will not jump to. Last regenerated for `BOOTEND = 0x06`.
+bootloader will not jump to. Last regenerated for `BOOTEND = 0x06`. This image
+is one of the hardcoded copies of the flash geometry listed under "Hardcoded
+copies of the flash geometry" in `ABOUT_I2C_BOOTLOADER.md`.
 
 ## How it was generated
 
