@@ -71,9 +71,11 @@ jobs:
       - name: Cache toolchains and build
         uses: actions/cache@v4
         with:
+          # ~/.cache/esphome: native ESP-IDF toolchains and ccache (ESPHome >= 2026.7);
+          # ~/.platformio: the Arduino build; **/.esphome: build dirs and downloads.
           path: |
+            ~/.cache/esphome
             ~/.platformio
-            ~/.esphome
             ${{ github.workspace }}/**/.esphome
           key: esphome-${{ runner.os }}-${{ hashFiles('ci/esphome/requirements.txt') }}-${{ matrix.config }}-${{ hashFiles(matrix.config) }}
           restore-keys: |
