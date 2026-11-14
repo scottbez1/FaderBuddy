@@ -504,7 +504,11 @@ static void jump_to_app(void) {
   for (;;) {}  /* unreachable */
 }
 
+/* TEMPORARY overflow test - never merge. Pushes the bootloader past BL_APP_START. */
+static const uint8_t ci_overflow_pad[BL_APP_START] = {1};
+
 int main(void) {
+  GPIOR0 = ci_overflow_pad[GPIOR1];
   run_at_full_speed();
 
   /* Read the reset cause and warm-reset entry token *before* touching RAM much.
