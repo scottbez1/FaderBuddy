@@ -1,0 +1,86 @@
+name: ESPHome
+
+# Compiles the fader_buddy external component under a pinned ESPHome, so a C++
+# or config-validation error in the component fails CI instead of a user's build.
+# Validating the example also downloads the packaged fader firmware release asset
+# and checks it against its KNOWN_FIRMWARE sha256.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'esphome/**'
+      - 'ci/esphome/**'
+      - '.github/workflows/esphome.yml'
+  pull_request:
+    paths:
+      - 'esphome/**'
+      - 'ci/esphome/**'
+      - '.github/workflows/esphome.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR supersedes the run in flight; master runs all finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  compile:
+    name: Compile ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    strategy:
+      # Report every config, not just the first to fail.
+      fail-fast: false
+      matrix:
+        include:
+          - name: example (ESP32-S3, Arduino, LVGL)
+            config: esphome/examples/multi-fader-display.yaml
+          - name: minimal (ESP32, ESP-IDF, firmware none)
+            config: ci/esphome/minimal-esp-idf.yaml
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ci/esphome/requirements.txt
+
+      - name: Install ESPHome
+        run: pip install -r ci/esphome/requirements.txt
+
+      # The example reads these via !secret. Throwaway values, generated per run;
+      # the API key must be valid base64 of 32 bytes to pass validation.
+      - name: Write placeholder secrets
+        run: |
+          cat > "$(dirname '${{ matrix.config }}')/secrets.yaml" <<SECRETS
+          wifi_ssid: "ci"
+          wifi_password: "ci-not-a-password"
+          api_key: "$(head -c 32 /dev/urandom | base64)"
+          ota_password: "ci-not-a-password"
+          SECRETS
+
+      - name: Cache toolchains and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.esphome
+            ${{ github.workspace }}/**/.esphome
+          key: esphome-${{ runner.os }}-${{ hashFiles('ci/esphome/requirements.txt') }}-${{ matrix.config }}-${{ hashFiles(matrix.config) }}
+          restore-keys: |
+            esphome-${{ runner.os }}-${{ hashFiles('ci/esphome/requirements.txt') }}-${{ matrix.config }}-
+
+      - name: Validate config
+        run: esphome config ${{ matrix.config }} > /dev/null
+
+      - name: Compile
+        run: esphome compile ${{ matrix.config }}
