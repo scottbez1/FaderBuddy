@@ -66,13 +66,16 @@ display:
     cs_pin: GPIO5
     reset_pin: GPIO3
 
-    dimensions: 
-      height: 80 # only 76 useable but otherwise will show glitchy lines
-      width: 284
-      offset_height: 82
-      offset_width: 18
+    # In the panel's native (portrait) orientation, before rotation is applied -
+    # mipi_spi validates them against the ST7789V's native 240x320. The 76x284
+    # glass sits centred on it: (240-76)/2 = 82, (320-284)/2 = 18.
+    dimensions:
+      width: 80 # only 76 useable but otherwise will show glitchy lines
+      height: 284
+      offset_width: 82
+      offset_height: 18
 
-    rotation: 90 # when choosing other rotations you must also swap the height/width and offsets
+    rotation: 90 # landscape; the dimensions above stay native for any rotation
     auto_clear_enabled: false
 
 # LVGL Configuration
