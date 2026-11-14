@@ -55,8 +55,12 @@ buffer use the mapped view at `0x8000 + offset`. Everywhere below, "flash
 address X" means the program/section offset; the store target is `0x8000 + X`.
 
 - **`BOOTEND`** sets the boot-section size in 256-byte units. It is **`0x06`**
-  (1536 bytes) today. The bootloader measures about 1366 bytes, leaving roughly
-  170 bytes free.
+  (1536 bytes) today. The bootloader measures about 1402 bytes, leaving roughly
+  134 bytes free. The build enforces the limit: `firmware/tools/bootloader_size_limit.py`
+  caps the linker's flash region at `BL_APP_START`, so a bootloader that outgrows
+  the boot section fails to link (``region `text' overflowed``) rather than
+  building cleanly and colliding with the application once flashed. Every build's
+  `Flash:` line reports usage against the 1536 bytes.
 - **`APPEND`** is `0x00`, so the application section runs to the end of flash.
   There is no separate APPDATA region.
 - The application is linked to start at `BOOTEND * 256` = `0x0600`.

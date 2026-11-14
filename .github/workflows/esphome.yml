@@ -80,7 +80,8 @@ jobs:
             esphome-${{ runner.os }}-${{ hashFiles('ci/esphome/requirements.txt') }}-${{ matrix.config }}-
 
       - name: Validate config
-        run: esphome config ${{ matrix.config }} > /dev/null
+        # Prints the resolved config, errors included; the secrets are throwaway.
+        run: esphome config ${{ matrix.config }}
 
       - name: Compile
         run: esphome compile ${{ matrix.config }}
