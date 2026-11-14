@@ -75,13 +75,14 @@ display:
       offset_width: 82
       offset_height: 18
 
-    rotation: 90 # landscape; the dimensions above stay native for any rotation
+    # No rotation here: LVGL owns it (see lvgl: below), and rejects a rotated display.
     auto_clear_enabled: false
 
 # LVGL Configuration
 lvgl:
   displays:
     - my_display
+  rotation: 90 # landscape; the display's dimensions stay native for any rotation
   touchscreens: []
 
   style_definitions:
