@@ -66,23 +66,19 @@ display:
     cs_pin: GPIO5
     reset_pin: GPIO3
 
-    # In the panel's native (portrait) orientation, before rotation is applied -
-    # mipi_spi validates them against the ST7789V's native 240x320. The 76x284
-    # glass sits centred on it: (240-76)/2 = 82, (320-284)/2 = 18.
-    dimensions:
-      width: 80 # only 76 useable but otherwise will show glitchy lines
-      height: 284
-      offset_width: 82
-      offset_height: 18
+    dimensions: 
+      height: 80 # only 76 useable but otherwise will show glitchy lines
+      width: 284
+      offset_height: 82
+      offset_width: 18
 
-    # No rotation here: LVGL owns it (see lvgl: below), and rejects a rotated display.
+    rotation: 90 # when choosing other rotations you must also swap the height/width and offsets
     auto_clear_enabled: false
 
 # LVGL Configuration
 lvgl:
   displays:
     - my_display
-  rotation: 90 # landscape; the display's dimensions stay native for any rotation
   touchscreens: []
 
   style_definitions:
@@ -219,7 +215,7 @@ font:
     size: 48
 
 fader_buddy:
-  - id: fader1
+  - id: fader_buddy
     address: 0x22
     update_interval: 10ms
     invert: true
@@ -308,7 +304,7 @@ sensor:
         # Send home assistant light brightness to the fader
         - lambda: |-
             ESP_LOGD("main", "Brightness changed to: %f", x);
-            id(fader1).remote_move_to(isnan(x) ? 0 : x);
+            id(fader_buddy).remote_move_to(isnan(x) ? 0 : x);
   - platform: homeassistant
     name: "Desk Lamp Brightness"
     entity_id: light.esphome_web_318bc2_desk_light
@@ -328,7 +324,7 @@ button:
     id: btn_self_cal_1
     on_press:
       - lambda: |-
-          id(fader1).run_self_calibration();
+          id(fader_buddy).run_self_calibration();
   - platform: template
     name: Self Calibrate 2
     id: btn_self_cal_2

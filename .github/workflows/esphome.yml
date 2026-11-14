@@ -2,8 +2,11 @@ name: ESPHome
 
 # Compiles the fader_buddy external component under a pinned ESPHome, so a C++
 # or config-validation error in the component fails CI instead of a user's build.
-# Validating the example also downloads the packaged fader firmware release asset
-# and checks it against its KNOWN_FIRMWARE sha256.
+#
+# The configs are CI-only and contain just the component (ci/esphome/*.yaml), not
+# esphome/examples/: the example also exercises display and LVGL options that
+# ESPHome changes from release to release, which would break this job for reasons
+# that have nothing to do with the component.
 
 on:
   push:
@@ -38,9 +41,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: example (ESP32-S3, Arduino, LVGL)
-            config: esphome/examples/multi-fader-display.yaml
-          - name: minimal (ESP32, ESP-IDF, firmware none)
+          - name: ESP32-S3, Arduino, packaged firmware
+            config: ci/esphome/minimal-arduino.yaml
+          - name: ESP32, ESP-IDF, firmware none
             config: ci/esphome/minimal-esp-idf.yaml
 
     steps:
@@ -57,17 +60,6 @@ jobs:
       - name: Install ESPHome
         run: pip install -r ci/esphome/requirements.txt
 
-      # The example reads these via !secret. Throwaway values, generated per run;
-      # the API key must be valid base64 of 32 bytes to pass validation.
-      - name: Write placeholder secrets
-        run: |
-          cat > "$(dirname '${{ matrix.config }}')/secrets.yaml" <<SECRETS
-          wifi_ssid: "ci"
-          wifi_password: "ci-not-a-password"
-          api_key: "$(head -c 32 /dev/urandom | base64)"
-          ota_password: "ci-not-a-password"
-          SECRETS
-
       - name: Cache toolchains and build
         uses: actions/cache@v4
         with:
@@ -82,7 +74,7 @@ jobs:
             esphome-${{ runner.os }}-${{ hashFiles('ci/esphome/requirements.txt') }}-${{ matrix.config }}-
 
       - name: Validate config
-        # Prints the resolved config, errors included; the secrets are throwaway.
+        # Prints the resolved config, errors included.
         run: esphome config ${{ matrix.config }}
 
       - name: Compile

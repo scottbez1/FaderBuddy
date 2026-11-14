@@ -1,12 +1,12 @@
-# Smallest config that pulls in the whole fader_buddy component, built by CI
-# (.github/workflows/esphome.yml) alongside the full example.
+# CI-only config (.github/workflows/esphome.yml): the fader_buddy component on
+# ESP-IDF, with no packaged firmware.
 #
-# Covers what the example doesn't:
+# Covers what minimal-arduino.yaml doesn't:
 # - ESP-IDF, ESPHome's default ESP32 framework since 2026.7. The example pins
 #   Arduino, so without this an Arduino-only API in the component would only
 #   break for users on the default.
 # - firmware: none, the opt-out path for the packaged fader firmware image.
-# - A plain ESP32 rather than the example's S3.
+# - A plain ESP32 rather than an S3.
 esphome:
   name: fader-buddy-ci-minimal
 
