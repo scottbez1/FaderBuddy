@@ -1,6 +1,6 @@
 ## Firmware Flashing
 
-If you purchase a [FaderBuddy PCB assembly from Bezek Labs](bezeklabs.etsy.com/listing/4506790932), it will come with firmware already uploaded and tested, so you won't need to flash any firmware to get started. You can use these instructions if you'd like to update the firmware later.
+If you purchase a [FaderBuddy PCB assembly from Bezek Labs](bezeklabs.etsy.com/listing/4506790932), it will come with firmware already uploaded and tested, so you won't need to flash any firmware to get started. The firmware can be updated over I2C (built into the ESPHome component and Home Assistant integration). You can use these instructions to update over UPDI, but the I2C updates are usually easier as long as the bootloader is already flashed.
 
 If you [assemble your own](ABOUT_PCB_FABRICATION.md) FaderBuddy PCBs or purchase an assembled PCB from JLCPCB, you'll have a blank ATtiny1616 microcontroller, so you MUST flash the firmware yourself using a UPDI programmer before you can use it. This only needs to be done once per board (unless you want to update the firmware later).
 

@@ -334,8 +334,8 @@ Two PlatformIO environments, both in the root `platformio.ini`:
   reset-flag and reset-loop `.init3` code, which the bootloader has already
   handled.
 
-Bringing up a blank chip is two UPDI uploads, bootloader first, using the same
-physical setup as [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md):
+Bringing up a blank chip requires two UPDI uploads, bootloader first then app,
+using the same physical setup as [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md):
 
 ```bash
 pio run -e fb_bootloader_only -t upload   # chip-erase, bootloader, BOOTEND/APPEND fuses
