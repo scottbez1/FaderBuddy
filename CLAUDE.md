@@ -86,7 +86,10 @@ Generally we don't have the serial RX/TX lines hooked up, so prefer to debug fir
 ### Firmware (I2C bootloader)
 
 See `ABOUT_I2C_BOOTLOADER.md` for how the bootloader works and what is still
-missing from it. All of these run from the repo root with the PlatformIO env
+missing from it. The flash geometry (boot/app split, footer address) lives in
+`bootloader_protocol.h`; the few places that must repeat it by hand are listed
+under "Hardcoded copies of the flash geometry" in that doc - keep that list
+current, with a pointer comment beside each copy. All of these run from the repo root with the PlatformIO env
 activated.
 
 ```bash
@@ -103,6 +106,8 @@ pio run -e fb_app_and_bootloader -t upload
 # Read flash back over UPDI as ground truth (offset is a flash byte address;
 # 0x600 = BL_APP_START). Prefer this over the bootloader's own mapped-flash
 # reads, which can return stale page-buffer bytes right after a write.
+# (0x600 is a hardcoded copy of the flash geometry - see "Hardcoded copies of
+# the flash geometry" in ABOUT_I2C_BOOTLOADER.md.)
 pymcuprog read -d attiny1616 -t uart -u /dev/ttyUSB2 -m flash -o 0x600 -b 64
 
 # Read the fuse row (byte 7 = APPEND, byte 8 = BOOTEND)

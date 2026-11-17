@@ -55,15 +55,45 @@ buffer use the mapped view at `0x8000 + offset`. Everywhere below, "flash
 address X" means the program/section offset; the store target is `0x8000 + X`.
 
 - **`BOOTEND`** sets the boot-section size in 256-byte units. It is **`0x06`**
-  (1536 bytes) today. The bootloader measures about 1366 bytes, leaving roughly
-  170 bytes free.
+  (1536 bytes) today. The bootloader measures about 1402 bytes, leaving roughly
+  134 bytes free. The build enforces the limit: `env:fb_bootloader_only` caps
+  the linker's flash region at `BL_APP_START`
+  (`-Wl,--defsym=__TEXT_REGION_LENGTH__=0x600`), so a bootloader that outgrows
+  the boot section fails to link (``region `text' overflowed``) rather than
+  building cleanly and colliding with the application once flashed. Its
+  `board_upload.maximum_size` makes every build's `Flash:` line report usage
+  against the 1536 bytes.
 - **`APPEND`** is `0x00`, so the application section runs to the end of flash.
   There is no separate APPDATA region.
 - The application is linked to start at `BOOTEND * 256` = `0x0600`.
 
-`BOOTEND` is not a value to change casually. Six places move in lockstep; the
-comment on `BL_BOOTEND` in `firmware/src/shared/bootloader_protocol.h` lists
-them.
+`BOOTEND` is not a value to change casually: every hardcoded copy below moves
+with it, and boards already built keep their old split for good (see the last
+row).
+
+### Hardcoded copies of the flash geometry
+
+`firmware/src/shared/bootloader_protocol.h` is the source of truth for the flash
+geometry (`BL_BOOTEND`, `BL_APPEND`, `BL_FLASH_SIZE`, and the `BL_APP_START`
+and `BL_APP_META_ADDR` derived from them). Most consumers read it: the
+bootloader, the app and the jig include it, and every Python tool goes through
+`firmware/tools/fb_image` (the image exporter, the jig's image generator,
+`test_host.py`, the release packager), as does the ESPHome component's
+`__init__.py` via its own copy. The places below **can't**, and repeat the
+values by hand. Each one carries a comment pointing here. Change them all
+together, and add any new one to this table, with a pointer comment beside it.
+
+| Where | Value | Copy of |
+|---|---|---|
+| `platformio.ini`, `env:fb_app_only`: `board_build.text_section_start` | `0x600` | `BL_APP_START` |
+| `platformio.ini`, `env:fb_app_only`: `-Wl,--section-start=.fw_meta=` | `0x3FFE` | `BL_APP_META_ADDR` |
+| `platformio.ini`, `env:fb_bootloader_only`: `-Wl,--defsym=__TEXT_REGION_LENGTH__=` | `0x600` | `BL_APP_START` |
+| `platformio.ini`, `env:fb_bootloader_only`: `board_upload.maximum_size` | `1536` | `BL_APP_START` |
+| `platformio.ini`, `env:fb_bootloader_only` and `env:fb_app_and_bootloader` upload commands: `--bootend` / `--append` | `0x06` / `0x00` | `BL_BOOTEND` / `BL_APPEND` |
+| `esphome/components/fader_buddy/bootloader_protocol.h` | the whole header | the canonical header. Must stay byte-identical; CI (`ci/util/check_i2c_data_sync.py`) fails if it drifts |
+| `production_tools/programAndTest/factory_test_images/` | a binary linked at `0x600` | `BL_APP_START`. Regenerate it (see its README) |
+| `CLAUDE.md`, the `pymcuprog read ... -o 0x600` example | `0x600` | `BL_APP_START`. Documentation only |
+| Every board already built | its `BOOTEND`/`APPEND` fuses and bootloader | the values at the time it was made. Neither can change in the field (UPDI only), so a new split also makes new app images incompatible with those boards, and the ESPHome component and the release images would have to deal with both |
 
 Application flash is tight. The app has roughly 130 bytes of headroom below the
 `.fw_meta` footer, and about 1.1 KB of the image is avr-libc soft-float pulled
@@ -173,13 +203,27 @@ written with `ERWP`, which erases it in place anyway. See
 
 **The update sequence** is:
 
-1. `ERASE_APP`
-2. For each page: `SET_PAGE_ADDR`, then `SEND_FRAME` × 4
-3. `GET_VERSION_CRC16` over the whole application region, to verify the write
-4. `RUN_APP`
+1. `ERASE_APP` (blanks page 0, the reset vector)
+2. For every page **except page 0**: `SET_PAGE_ADDR`, then `SEND_FRAME` × 4
+3. `GET_VERSION_CRC16` over pages 1..N-1, checked against a CRC the host
+   computes over the same bytes of the image
+4. Only on a match, write page 0 the same way — this is the commit
+5. `GET_VERSION_CRC16` over the whole application region
+6. `RUN_APP`
 
 Per-frame CRC16 catches transfer errors as they happen. The whole-image CRC
 catches anything missed and stops the host from jumping into a bad image.
+
+**Page 0 goes last because it is the commit.** `app_is_valid()` only checks
+that the reset vector is not blank, and the other pages are not erased up front
+(see above), so a reset vector written first would make any later failure — a
+host that stops mid-stream, a frame dropped for a bad CRC, a frame duplicated
+by a host retry — boot a mix of new and old pages at the next reset. Holding
+page 0 back until the rest has verified keeps the board in its bootloader
+across resets until an update fully lands. If anything fails *after* page 0 is
+written but before `RUN_APP` (a bad page-0 write, a final CRC mismatch), the
+host sends `ERASE_APP` again to re-blank it. This is purely a host-side
+ordering, so it protects boards whose bootloaders are already in the field.
 
 ## 7. Entering the bootloader
 
@@ -332,8 +376,9 @@ instances rather than duplicating roughly 14 KB per fader.
 
 **The sequence** is the same one the jig uses: probe register `0x00` → if not
 already resident, `REG_ENTER_BOOTLOADER` and wait for the marker → `ERASE_APP` →
-stream pages → whole-image `GET_VERSION_CRC16` → `RUN_APP` → re-read
-`REG_FW_VERSION` to confirm.
+stream pages 1..N-1 → `GET_VERSION_CRC16` over them → page 0 → whole-image
+`GET_VERSION_CRC16` → `RUN_APP` → re-read `REG_FW_VERSION` to confirm. See
+[§6](#6-wire-protocol) for why page 0 is held back.
 
 **It runs a slice at a time from `loop()`.** `update_tick_()` walks an
 `UpdateStage` enum, one stage per call; `update_firmware()` only arms the state
@@ -408,9 +453,11 @@ fixed later over I2C. See
   whose first page happened to land. Closing this means a linker-placed CRC
   footer (image length + CRC16 at the end of APPCODE) that the bootloader
   recomputes on boot, reusing the CRC16 already used for post-write verify.
-  Streaming page 0 last would also help, since an interrupted update would then
-  leave the reset vector blank. Until then, the TP5 strap is the recovery path,
-  and it needs physical access.
+  Hosts now write page 0 last, after the rest has verified, which closes the
+  interrupted- and failed-update cases (see the update sequence). What remains
+  is corruption *after* a successful update, and hosts that predate the
+  ordering change. For those, the TP5 strap is the recovery path, and it needs
+  physical access.
 - **No command timeout in the resident bootloader.** A host that abandons an
   update mid-stream leaves the bootloader resident forever. A watchdog or
   command timeout would let it recover on its own — jumping to the application

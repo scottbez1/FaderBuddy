@@ -216,16 +216,25 @@ bool FaderBuddyBootloader::updateFirmware(const uint8_t* image, uint32_t length,
   if (progress) progress("erasing", 0, 0);
   if (!eraseApp()) BL_FAIL("erase failed");
 
-  // 4) Stream the image, one 64-byte page (4 frames) at a time.
+  // 4) Stream the image, one 64-byte page (4 frames) at a time -- every page
+  //    except page 0. Page 0 holds the reset vector that eraseApp() just
+  //    blanked; it is written last, and only after the rest has verified, so
+  //    an update that dies part-way leaves app_is_valid() failing and the
+  //    board resident in its bootloader across resets, rather than booting a
+  //    mix of new and old pages behind a valid reset vector.
   uint32_t pages = length / BL_PAGE_SIZE;
-  for (uint32_t p = 0; p < pages; p++) {
+  auto writePage = [&](uint32_t p) -> bool {
     uint16_t pageAddr = flashStart + (uint16_t)(p * BL_PAGE_SIZE);
-    if (!setPageAddr(pageAddr)) BL_FAIL("set page addr failed");
+    if (!setPageAddr(pageAddr)) return false;
     for (uint8_t f = 0; f < BL_FRAMES_PER_PAGE; f++) {
       const uint8_t* chunk = image + (p * BL_PAGE_SIZE) + (f * BL_FRAME_DATA_LEN);
-      if (!sendFrame(chunk)) BL_FAIL("send frame failed");
+      if (!sendFrame(chunk)) return false;
     }
-    if (progress) progress("writing", p + 1, pages);
+    return true;
+  };
+  for (uint32_t p = 1; p < pages; p++) {
+    if (!writePage(p)) BL_FAIL("page write failed");
+    if (progress) progress("writing", p, pages);
   }
 
   // 4b) Surface any NVM write error the bootloader recorded during streaming.
@@ -237,14 +246,51 @@ bool FaderBuddyBootloader::updateFirmware(const uint8_t* image, uint32_t length,
     }
   }
 
-  // 5) Verify the whole image via the target's own CRC over the written range.
+  // 4c) Verify everything but page 0 before committing it.
   if (progress) progress("verifying", 0, 0);
   uint16_t crc;
-  if (!getImageCrc16(flashStart, (uint16_t)length, crc)) BL_FAIL("crc read failed");
+  if (pages > 1) {
+    uint16_t expectedBody = BL_CRC16_INIT;
+    for (uint32_t i = BL_PAGE_SIZE; i < length; i++) {
+      expectedBody = bl_crc16_update(expectedBody, image[i]);
+    }
+    if (!getImageCrc16(flashStart + BL_PAGE_SIZE, (uint16_t)(length - BL_PAGE_SIZE), crc)) {
+      BL_FAIL("crc read failed");
+    }
+    if (crc != expectedBody) {
+      snprintf(err, errLen, "body CRC got=0x%04X exp=0x%04X", crc, expectedBody);
+      return false;
+    }
+  }
+
+  // From here on page 0 is (being) written, so app_is_valid() would pass at
+  // the next reset. Any failure before RUN_APP re-blanks it (best effort).
+#define BL_FAIL_UNCOMMIT(msg)                   \
+  do {                                          \
+    eraseApp();                                 \
+    BL_FAIL(msg);                               \
+  } while (0)
+
+  // 4d) Commit: write the reset-vector page.
+  if (!writePage(0)) BL_FAIL_UNCOMMIT("page write failed");
+  if (progress) progress("writing", pages, pages);
+  {
+    uint8_t bv, stt, le;
+    if (getStatus(bv, stt, le) && le != BL_ERR_NONE) {
+      snprintf(err, errLen, "nvm err=%u after write", le);
+      eraseApp();
+      return false;
+    }
+  }
+
+  // 5) Verify the whole image via the target's own CRC over the written range.
+  if (!getImageCrc16(flashStart, (uint16_t)length, crc)) BL_FAIL_UNCOMMIT("crc read failed");
   if (crc != expectedImageCrc) {
     snprintf(err, errLen, "CRC got=0x%04X exp=0x%04X", crc, expectedImageCrc);
+    eraseApp();
     return false;
   }
+#undef BL_FAIL_UNCOMMIT
 
   // 6) Run the new application and confirm it comes up with the expected version.
   if (progress) progress("starting app", 0, 0);

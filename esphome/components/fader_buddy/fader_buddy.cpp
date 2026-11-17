@@ -1088,6 +1088,20 @@ void FaderBuddy::finish_update_(bool ok, const std::string &error) {
   on_firmware_update_result_->trigger(false, error);
 }
 
+// Fail an update after page 0 (the reset vector) has been written. From that
+// point app_is_valid() passes, so a fader left in its bootloader would boot
+// whatever is in flash at its next reset. Before RUN_APP that image is not known
+// good, so blank the reset vector again: the fader then stays resident until a
+// retry succeeds, instead of booting something half-verified. Best effort - if
+// the erase itself is lost, this is no worse than not trying.
+void FaderBuddy::fail_and_uncommit_(const std::string &error) {
+  if (!bl_request_erase_app_()) {
+    ESP_LOGW(TAG, "update_firmware: could not re-blank the reset vector after failure");
+  }
+  // finish_update_()'s re-probe retries, which covers the brief erase stall.
+  finish_update_(false, error);
+}
+
 // One slice of the update, run from loop(). Each stage either completes in this
 // tick and advances, keeps polling until its deadline, or fails the whole run.
 // The only stage that can take meaningful time is UPDATE_WRITE, and it is capped
@@ -1215,7 +1229,12 @@ void FaderBuddy::update_tick_() {
           finish_update_(false, "nvm err=" + std::to_string(e) + " after erase");
           return;
         }
-        update_page_ = 0;
+        // Page 0 holds the reset vector, which ERASE_APP just blanked. It is
+        // written last, and only once the rest of the image has verified: until
+        // then app_is_valid() fails, so an update that dies part-way leaves the
+        // fader resident in its bootloader across any number of resets, rather
+        // than booting a mix of new and old pages behind a valid reset vector.
+        update_page_ = 1;
         enter_update_stage_(UPDATE_WRITE);
         return;
       }
@@ -1230,37 +1249,83 @@ void FaderBuddy::update_tick_() {
       uint32_t slice_start = millis();
       // Stream pages until the time budget for this tick is used up, then yield
       // so the rest of the device (API, WiFi, the other faders) keeps running.
+      // Pages 1..N-1 here; page 0 is written in UPDATE_BODY_CRC_WAIT.
       while (update_page_ < pages && millis() - slice_start < UPDATE_WRITE_BUDGET_MS) {
-        uint16_t page_addr = BL_APP_START + (uint16_t) (update_page_ * BL_PAGE_SIZE);
-        if (!bl_set_page_addr_(page_addr)) {
-          finish_update_(false, "set page addr failed");
+        if (!bl_write_image_page_(update_page_)) {
+          finish_update_(false, "page write failed");
           return;
-        }
-        for (uint8_t f = 0; f < BL_FRAMES_PER_PAGE; f++) {
-          const uint8_t *chunk = firmware_image_ + (update_page_ * BL_PAGE_SIZE) + (f * BL_FRAME_DATA_LEN);
-          if (!bl_send_frame_(chunk)) {
-            finish_update_(false, "send frame failed");
-            return;
-          }
         }
         update_page_++;
       }
       publish_update_progress_("writing", (uint8_t) (update_page_ * 100 / pages));
       if (update_page_ >= pages) {
-        enter_update_stage_(UPDATE_WRITE_CHECK);
+        enter_update_stage_(UPDATE_BODY_CHECK);
       }
       return;
     }
 
-    case UPDATE_WRITE_CHECK: {
+    case UPDATE_BODY_CHECK: {
+      // A one-page image has no body to verify; go straight to page 0.
+      if (firmware_image_length_ <= BL_PAGE_SIZE) {
+        enter_update_stage_(UPDATE_BODY_CRC_WAIT, 1000);
+        return;
+      }
       uint8_t bv, st, le;
       if (bl_get_status_(bv, st, le) && le != BL_ERR_NONE) {
         finish_update_(false, "nvm err=" + std::to_string(le) + " after write");
         return;
       }
       publish_update_stage_("verifying");
-      if (!bl_request_image_crc16_(BL_APP_START, (uint16_t) firmware_image_length_)) {
+      if (!bl_request_image_crc16_(BL_APP_START + BL_PAGE_SIZE, (uint16_t) (firmware_image_length_ - BL_PAGE_SIZE))) {
         finish_update_(false, "crc request failed");
+        return;
+      }
+      enter_update_stage_(UPDATE_BODY_CRC_WAIT, 1000);
+      return;
+    }
+
+    case UPDATE_BODY_CRC_WAIT: {
+      if (firmware_image_length_ > BL_PAGE_SIZE) {
+        uint16_t crc;
+        if (!bl_poll_image_crc16_(crc)) {
+          if (timed_out) {
+            finish_update_(false, "crc read failed");
+          }
+          return;
+        }
+        // The packaged CRC covers the whole image, so the body's is computed
+        // here. ~16 KB of bitwise CRC is well under a millisecond on an ESP32.
+        uint16_t expected = BL_CRC16_INIT;
+        for (uint32_t i = BL_PAGE_SIZE; i < firmware_image_length_; i++) {
+          expected = bl_crc16_update(expected, firmware_image_[i]);
+        }
+        if (crc != expected) {
+          // Page 0 is still blank, so the fader stays in its bootloader even
+          // across a power cycle, and can simply be updated again.
+          char buf[56];
+          snprintf(buf, sizeof(buf), "CRC mismatch got=0x%04X exp=0x%04X", crc, expected);
+          finish_update_(false, buf);
+          return;
+        }
+      }
+      // The rest of the image is verified: commit it by writing the reset vector.
+      if (!bl_write_image_page_(0)) {
+        fail_and_uncommit_("page write failed");
+        return;
+      }
+      enter_update_stage_(UPDATE_WRITE_CHECK);
+      return;
+    }
+
+    case UPDATE_WRITE_CHECK: {
+      uint8_t bv, st, le;
+      if (bl_get_status_(bv, st, le) && le != BL_ERR_NONE) {
+        fail_and_uncommit_("nvm err=" + std::to_string(le) + " after write");
+        return;
+      }
+      publish_update_stage_("verifying");
+      if (!bl_request_image_crc16_(BL_APP_START, (uint16_t) firmware_image_length_)) {
+        fail_and_uncommit_("crc request failed");
         return;
       }
       // The bootloader computes the CRC over the whole range after releasing the
@@ -1276,9 +1341,12 @@ void FaderBuddy::update_tick_() {
         if (crc != firmware_image_crc16_) {
           char buf[48];
           snprintf(buf, sizeof(buf), "CRC mismatch got=0x%04X exp=0x%04X", crc, firmware_image_crc16_);
-          finish_update_(false, buf);
+          fail_and_uncommit_(buf);
           return;
         }
+        // Not fail_and_uncommit_(): the image verified, and RUN_APP may have
+        // landed despite the error, in which case an ERASE_APP opcode would be
+        // a register write to the running application.
         if (!bl_run_app_()) {
           finish_update_(false, "run app cmd failed");
           return;
@@ -1288,7 +1356,7 @@ void FaderBuddy::update_tick_() {
         return;
       }
       if (timed_out) {
-        finish_update_(false, "crc read failed");
+        fail_and_uncommit_("crc read failed");
       }
       return;
     }
@@ -1402,6 +1470,16 @@ bool FaderBuddy::bl_send_frame_(const uint8_t *data16) {
   buf[1 + BL_FRAME_DATA_LEN] = (uint8_t) (crc >> 8);
   buf[1 + BL_FRAME_DATA_LEN + 1] = (uint8_t) (crc & 0xFF);
   return bl_write_retry_(buf, sizeof(buf));
+}
+
+bool FaderBuddy::bl_write_image_page_(uint32_t page) {
+  if (!bl_set_page_addr_(BL_APP_START + (uint16_t) (page * BL_PAGE_SIZE)))
+    return false;
+  for (uint8_t f = 0; f < BL_FRAMES_PER_PAGE; f++) {
+    if (!bl_send_frame_(firmware_image_ + (page * BL_PAGE_SIZE) + (f * BL_FRAME_DATA_LEN)))
+      return false;
+  }
+  return true;
 }
 
 // Ask for a whole-image CRC. Split from the read because the bootloader computes

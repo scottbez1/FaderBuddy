@@ -1,0 +1,4 @@
+# ESPHome version CI builds the component against. Pinned so a new ESPHome
+# release can't turn CI red on an unrelated PR; bump it deliberately (and fix
+# anything it breaks) in its own change.
+esphome==2026.10.1

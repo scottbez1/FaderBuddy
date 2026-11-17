@@ -1,0 +1,24 @@
+# Minimal fader_buddy config for CI (.github/workflows/esphome.yml).
+# Covers the ESP-IDF framework on a plain ESP32, and `firmware: none`.
+esphome:
+  name: fader-buddy-ci-minimal
+
+esp32:
+  board: esp32dev
+
+logger:
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+
+external_components:
+  - source:
+      type: local
+      path: ../../esphome/components
+    components: [fader_buddy]
+
+fader_buddy:
+  - id: fader_buddy_ci
+    address: 0x20
+    firmware: none

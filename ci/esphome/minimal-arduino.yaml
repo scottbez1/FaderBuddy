@@ -1,0 +1,27 @@
+# Minimal fader_buddy config for CI (.github/workflows/esphome.yml).
+# Covers the Arduino framework on an ESP32-S3, and the default `firmware:`
+# path: validation downloads the latest packaged release asset, checks its
+# KNOWN_FIRMWARE sha256, and embeds it in the build.
+esphome:
+  name: fader-buddy-ci-arduino
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: arduino
+
+logger:
+
+i2c:
+  sda: GPIO12
+  scl: GPIO13
+
+external_components:
+  - source:
+      type: local
+      path: ../../esphome/components
+    components: [fader_buddy]
+
+fader_buddy:
+  - id: fader_buddy_ci
+    address: 0x22
