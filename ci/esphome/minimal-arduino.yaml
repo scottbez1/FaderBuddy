@@ -1,14 +1,7 @@
-# CI-only config (.github/workflows/esphome.yml): the fader_buddy component on
-# Arduino, with the packaged fader firmware. Deliberately nothing but the
-# component, so CI breaks only when the component does - not when ESPHome
-# changes a display or LVGL option the full example happens to use.
-#
-# Covers what minimal-esp-idf.yaml doesn't:
-# - The Arduino framework, which the example and most existing users run.
-# - The default `firmware:` path: validation downloads the latest packaged
-#   release asset and checks it against its KNOWN_FIRMWARE sha256, and the
-#   image is embedded in the build.
-# - An ESP32-S3, like the example.
+# Minimal fader_buddy config for CI (.github/workflows/esphome.yml).
+# Covers the Arduino framework on an ESP32-S3, and the default `firmware:`
+# path: validation downloads the latest packaged release asset, checks its
+# KNOWN_FIRMWARE sha256, and embeds it in the build.
 esphome:
   name: fader-buddy-ci-arduino
 

@@ -142,7 +142,17 @@ layer-addressed registers.
 
 ## ESPHome component
 
-### 0.5.0 - in development / unreleased
+### 0.6.0 - in development / unreleased
+
+- Firmware updates write the page holding the fader's reset vector last, and
+  only after the rest of the image has verified. Previously it was written
+  first, so an update that failed or was interrupted part-way left a fader that
+  looked valid to its bootloader and, at its next power cycle, booted a mix of
+  new and old firmware - recoverable only with the TP5 strap. Now such a fader
+  stays in its bootloader and can simply be updated again. Works with the
+  bootloader already on every board; no fader firmware change needed.
+
+### 0.5.0
 
 - **Breaking:** `text_sensor: platform: fader_buddy`, deprecated since 0.3.0,
   is removed. A config still using it fails validation with instructions:
@@ -154,13 +164,6 @@ layer-addressed registers.
   **Update pending** on its Status sensor. `fader_buddy.update_firmware` waits
   the same way, and its `on_firmware_update_result` fires when the update
   actually finishes.
-- Firmware updates write the page holding the fader's reset vector last, and
-  only after the rest of the image has verified. Previously it was written
-  first, so an update that failed or was interrupted part-way left a fader that
-  looked valid to its bootloader and, at its next power cycle, booted a mix of
-  new and old firmware - recoverable only with the TP5 strap. Now such a fader
-  stays in its bootloader and can simply be updated again. Works with the
-  bootloader already on every board; no fader firmware change needed.
 - Packages firmware v1.5
 - The Status sensor now shows self-calibration progress and its result -
   succeeded, failed (no travel found), or incomplete (endpoints found but the

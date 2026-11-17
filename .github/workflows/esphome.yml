@@ -1,12 +1,7 @@
 name: ESPHome
 
-# Compiles the fader_buddy external component under a pinned ESPHome, so a C++
-# or config-validation error in the component fails CI instead of a user's build.
-#
-# The configs are CI-only and contain just the component (ci/esphome/*.yaml), not
-# esphome/examples/: the example also exercises display and LVGL options that
-# ESPHome changes from release to release, which would break this job for reasons
-# that have nothing to do with the component.
+# Validates and compiles the fader_buddy component under a pinned ESPHome,
+# using the minimal configs in ci/esphome/.
 
 on:
   push:
@@ -33,7 +28,7 @@ concurrency:
 jobs:
   compile:
     name: Compile ${{ matrix.name }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
 
     strategy:
