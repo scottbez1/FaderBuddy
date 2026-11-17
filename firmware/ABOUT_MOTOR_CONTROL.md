@@ -516,7 +516,9 @@ Two extra build environments exist for this; neither ships.
 ```bash
 source ~/.platformio/penv/bin/activate
 
-# ATtiny with REG_DEBUG_DRIVE / STATUS / GAINS (repo root)
+# ATtiny with REG_DEBUG_DRIVE / STATUS / GAINS (repo root). Linked at 0x0000
+# with no bootloader: the upload erases it and clears its fuses, so put the
+# board back with env:fb_bootloader_only then env:fb_app_only afterwards.
 pio run -e fader_buddy_lab -t upload
 
 # ESP32 jig as a serial-driven measurement harness, replacing the

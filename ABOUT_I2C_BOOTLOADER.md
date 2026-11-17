@@ -89,7 +89,7 @@ together, and add any new one to this table, with a pointer comment beside it.
 | `platformio.ini`, `env:fb_app_only`: `-Wl,--section-start=.fw_meta=` | `0x3FFE` | `BL_APP_META_ADDR` |
 | `platformio.ini`, `env:fb_bootloader_only`: `-Wl,--defsym=__TEXT_REGION_LENGTH__=` | `0x600` | `BL_APP_START` |
 | `platformio.ini`, `env:fb_bootloader_only`: `board_upload.maximum_size` | `1536` | `BL_APP_START` |
-| `platformio.ini`, `env:fb_bootloader_only` and `env:fb_app_and_bootloader` upload commands: `--bootend` / `--append` | `0x06` / `0x00` | `BL_BOOTEND` / `BL_APPEND` |
+| `platformio.ini`, `env:fb_bootloader_only` upload command: `--bootend` / `--append` | `0x06` / `0x00` | `BL_BOOTEND` / `BL_APPEND` |
 | `esphome/components/fader_buddy/bootloader_protocol.h` | the whole header | the canonical header. Must stay byte-identical; CI (`ci/util/check_i2c_data_sync.py`) fails if it drifts |
 | `production_tools/programAndTest/factory_test_images/` | a binary linked at `0x600` | `BL_APP_START`. Regenerate it (see its README) |
 | `CLAUDE.md`, the `pymcuprog read ... -o 0x600` example | `0x600` | `BL_APP_START`. Documentation only |
@@ -323,7 +323,7 @@ mismatch before anything is erased.
 
 ## 9. Build and install
 
-Three PlatformIO environments, all in the root `platformio.ini`:
+Two PlatformIO environments, both in the root `platformio.ini`:
 
 - **`fb_bootloader_only`** — the bootloader alone. Bare-metal, no Arduino
   framework, linked into the boot section.
@@ -333,19 +333,19 @@ Three PlatformIO environments, all in the root `platformio.ini`:
   the application over UPDI. `USING_OPTIBOOT` strips megaTinyCore's
   reset-flag and reset-loop `.init3` code, which the bootloader has already
   handled.
-- **`fb_app_and_bootloader`** — the combined first flash. A post-build hook
-  merges the two hex files, which never overlap, and a single
-  `firmware/tools/flash_with_fuses.py` invocation writes the merged image **and**
-  the `BOOTEND`/`APPEND` fuses over UPDI with `pymcuprog`.
 
-A fourth environment, `fb_legacy_no_bootloader`, builds the application at
-`0x0000` with no bootloader at all. It is only for boards that are not getting
-the bootloader.
+Bringing up a blank chip is two UPDI uploads, bootloader first, using the same
+physical setup as [ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md):
 
-So bringing up a blank chip is one action: select `fb_app_and_bootloader` and
-upload, using the same physical setup as
-[ABOUT_UPDATING_FIRMWARE.md](ABOUT_UPDATING_FIRMWARE.md). That same combined
-upload is the recovery path if a board is ever left in a state I2C cannot reach.
+```bash
+pio run -e fb_bootloader_only -t upload   # chip-erase, bootloader, BOOTEND/APPEND fuses
+pio run -e fb_app_only -t upload          # application, no erase, fuses untouched
+```
+
+The order matters: the bootloader upload chip-erases, so running it second
+would wipe the application. `default_envs` lists the two in this order, so a
+bare `pio run -t upload` does the same. The same two uploads are the recovery
+path if a board is ever left in a state I2C cannot reach.
 
 ## 10. Host side
 
@@ -473,10 +473,9 @@ fixed later over I2C. See
   a new image is smaller than the old one, stale bytes remain above it. This is
   harmless today, since the CRC verify covers exactly the streamed range, but it
   would matter for a CRC footer over the whole section.
-- **Unvalidated on hardware:** the combined `fb_app_and_bootloader` upload onto
-  a truly blank chip, and updating a multi-fader chain one fader at a time
-  without disturbing the others. The individual pieces of both are validated;
-  the combinations are not.
+- **Unvalidated on hardware:** updating a multi-fader chain one fader at a time
+  without disturbing the others. Updating a single fader is validated; the
+  chain as a whole is not.
 - **No CI coverage.** There is no hardware in CI, so every claim above was
   validated on the bench or by the jig.
 
