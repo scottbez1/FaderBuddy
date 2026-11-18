@@ -26,7 +26,7 @@ Connect the Adafruit UPDI Friend to the test points as follows:
 
    If you don't already have PlatformIO installed, the easiest way is via VS Code: install the [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode).
 
-2. **Connect the UPDI Friend** to the FaderBuddy board's UPDI and GND pads, and plug it into your computer via USB.
+2. **Connect the UPDI Friend** to the FaderBuddy board's VIO-, VIO+, and U pads as shown above, and plug it into your computer via USB.
 
 3. **Upload the bootloader, then the application.** The firmware is two images: the [I2C bootloader](ABOUT_I2C_BOOTLOADER.md) and the application that runs after it. Upload them in this order, from the repo root:
 
@@ -45,7 +45,7 @@ Connect the Adafruit UPDI Friend to the test points as follows:
 
 ### Troubleshooting Firmware Upload
 
-- **"No device found" or upload fails:** Check your UPDI and GND connections. UPDI requires only a single data line plus ground.
+- **"No device found" or upload fails:** Check your connections. Make sure the board is powered, either from the UPDI Friend’s VCC wire or from Vio, and that the PWR LED is lit.
 - **Wrong serial port:** PlatformIO should auto-detect, but you can set the upload port explicitly in `platformio.ini` or via command line: `pio run --target upload --upload-port /dev/ttyUSB0`
 - **Permission denied (Linux):** You may need to add your user to the `dialout` group: `sudo usermod -a -G dialout $USER` (then log out and back in).
 
