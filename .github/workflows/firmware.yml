@@ -29,8 +29,12 @@ jobs:
       - name: Build bootloader
         run: pio run -e fb_bootloader_only
 
-      - name: Build application (standalone and offset)
-        run: pio run -e fb_legacy_no_bootloader -e fb_app_only
+      - name: Build application
+        run: pio run -e fb_app_only
+
+      # Built so the debug code keeps compiling; never released.
+      - name: Build lab firmware
+        run: pio run -e fader_buddy_lab
 
       # Names the .bin after the FW_VERSION baked into it, and -- on a release tag --
       # fails if that disagrees with the tag, so a mislabelled asset can't be published,
