@@ -23,6 +23,10 @@ firmware that bumps the protocol.
 Firmware 1.0 predates `REG_FW_VERSION` and reports no version at all; hosts
 that check it will read `0xFFFF` and should treat that as firmware 1.0.
 
+The **host library** (`hostLib/`) is what the ESPHome component and the
+production jig are built on, and can be used directly from any Arduino or
+PlatformIO project. It versions on its own (`library.json`); see below.
+
 ---
 
 ## Hardware
@@ -141,6 +145,14 @@ layer-addressed registers.
 ---
 
 ## ESPHome component
+
+### 0.7.0
+
+- Internal: the component is now a thin wrapper over the shared host library
+  (`hostLib/`), which holds the protocol handling, layer and event logic, and
+  the firmware update sequence. No configuration, entity or automation
+  changes. A few log lines are worded differently, and the startup log now
+  reports the host library version alongside the component version.
 
 ### 0.6.0
 
@@ -265,3 +277,16 @@ layer-addressed registers.
 The last unversioned component - everything before this file existed. Layer
 management, haptic config, rate-limited triggers, the serial number text
 sensor, and position/touch/double-tap handling.
+
+---
+
+## Host library (hostLib)
+
+### 0.1.0
+
+- First version, extracted from the ESPHome component (0.6.0) and the
+  production jig. `FaderBuddy` mirrors the component's interface - layers,
+  moves with speed, haptics, touch/move/double-tap events, self-calibration
+  status and firmware updates - with `FaderBuddyDevice` (raw registers) and
+  `FirmwareUpdater` (the I2C bootloader sequence) underneath. Builds under
+  Arduino, ESP-IDF and natively.

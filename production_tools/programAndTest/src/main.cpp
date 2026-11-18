@@ -21,8 +21,7 @@
 #include <LittleFS.h>
 
 #include "Adafruit_INA3221.h"
-#include "fader_buddy_i2c.h"
-#include "fader_buddy_bootloader.h"
+#include "FaderBuddyHost.h"
 #include "fader_app_image.h"
 
 #define FlashFS LittleFS
@@ -74,8 +73,14 @@ TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
 
 TwoWire WireFaderBuddy = TwoWire(1);  // Use second I2C peripheral
-FaderBuddyI2C faderBuddy;
-FaderBuddyBootloader faderBootloader(BL_I2C_BASE_ADDRESS);
+// The DUT, through the shared host library (hostLib/). The app and its
+// bootloader answer at the same address. No library logging: this serial port
+// carries the >>...<< protocol test_host.py parses, and the install runs on
+// another core, so its lines could land in the middle of one.
+faderbuddy::WireTransport faderTransport(WireFaderBuddy, BL_I2C_BASE_ADDRESS);
+faderbuddy::ArduinoPlatform faderPlatform;
+faderbuddy::FaderBuddyDevice faderBuddy(faderTransport, faderPlatform);
+faderbuddy::FirmwareUpdater faderUpdater(faderBuddy);
 
 uint32_t bootTime = 0;
 
@@ -214,24 +219,11 @@ struct TestTracking {
   // Test results
   String failedTestName;
 
-  // I2C bootloader install sub-state (stepBootload(), used by both
-  // FIRMWARE_PHASE_INSTALL_OLD and FIRMWARE_PHASE_BOOTLOAD_UPDATE). Non-blocking,
-  // so loop() keeps running (display/LED/presence-abort) and progress is visible.
-  enum BootloadUpdateStep {
-    BL_STEP_ENTER_CMD,     // send REG_ENTER_BOOTLOADER if not already resident
-    BL_STEP_ENTER_WAIT,    // poll for the bootloader marker
-    BL_STEP_STATUS,        // sanity GET_STATUS check
-    BL_STEP_ERASE,         // erase the application section
-    BL_STEP_STREAM,        // pages streamed by bootloadStreamTask(); poll for it to finish
-    BL_STEP_VERIFY,        // whole-image CRC verify
-    BL_STEP_RUN,           // RUN_APP command
-    BL_STEP_WAIT_APP,      // poll for the new app to boot
-    BL_STEP_CHECK_VERSION, // read + compare REG_FW_VERSION
-  };
-  BootloadUpdateStep bootloadStep;
-  bool bootloadStarted;           // stepBootload() has initialised for the current image
+  // I2C bootloader install (stepBootload(), used by both
+  // FIRMWARE_PHASE_INSTALL_OLD and FIRMWARE_PHASE_BOOTLOAD_UPDATE). The install
+  // itself runs in its own task; these track it for loop() and the display.
+  bool bootloadStarted;           // stepBootload() has started the current image
   uint32_t bootloadStartTime;     // for the whole-install watchdog
-  uint32_t bootloadStepStartTime;
   uint32_t bootloadPageIndex;
   uint32_t bootloadTotalPages;
   // No aggregate initializer: this has static storage duration, so every member
@@ -260,8 +252,6 @@ void setup() {
   WireFaderBuddy.begin(PIN_FADER_BUDDY_SDA, PIN_FADER_BUDDY_SCL);
   WireFaderBuddy.setClock(100000);
   WireFaderBuddy.setTimeOut(250);  // tolerate bootloader CRC-compute clock stretching
-  faderBuddy.begin(&WireFaderBuddy);
-  faderBootloader.begin(&WireFaderBuddy);
   startBootloadStreamTask();
 
   // Initialize servo - move to clear position and disable after 2 seconds
@@ -421,7 +411,7 @@ void reportMotorCal() {
   uint8_t cal[12];
 
   reportPhaseStart(PH);
-  if (!faderBuddy.readMotorCal(cal)) {
+  if (!faderBuddy.read_motor_cal(cal)) {
     Serial.println("Failed to read motor characterisation (REG_MOTOR_CAL)");
     reportPhaseEnd(PH, false, millis() - started);
     return;
@@ -545,7 +535,7 @@ void updateDisplay(float v0, float c0, float v1, float c1) {
   // incrementally as it runs.
   if (bootloadActive()) {
     uint32_t done = testTracking.bootloadPageIndex;
-    if (testTracking.bootloadStep > TestTracking::BL_STEP_STREAM) {
+    if ((uint8_t)faderUpdater.stage() > (uint8_t)faderbuddy::UpdateStage::WRITE) {
       done = testTracking.bootloadTotalPages;
     }
     int barX = 4, barY = 34, barW = 127, barH = 5;
@@ -882,245 +872,154 @@ bool bootloadActive() {
          testTracking.firmwarePhase == TestTracking::FIRMWARE_PHASE_INSTALL_OLD;
 }
 
-// Page streaming runs in its own task on core 0, alongside loop() on core 1.
-// Streaming from loop() meant either pacing the transfer by the loop's display
-// push and delay (~65ms a page, against ~8ms of bus time) or starving the
-// display and LED breathing for whole slices at a time. Nothing else touches
-// WireFaderBuddy while a stream is running - the display is SPI and the INA3221
-// is on the other I2C peripheral - so the two run without contending.
+// The install is faderbuddy::FirmwareUpdater (hostLib/), the same sequence the
+// ESPHome component runs - including writing the reset-vector page last, only
+// after the rest of the image has verified, so a board that fails part-way
+// stays in its bootloader rather than booting a half-written app.
 //
-// The task writes testTracking.bootloadPageIndex as it goes (read by the
-// display) and publishes its outcome through streamState.
-enum StreamState : uint8_t { STREAM_IDLE, STREAM_BUSY, STREAM_DONE, STREAM_FAILED };
-volatile StreamState streamState = STREAM_IDLE;
-volatile bool streamCancel = false;
-const uint8_t* streamImage = nullptr;
-TaskHandle_t streamTaskHandle = nullptr;
+// It runs in its own task on core 0, alongside loop() on core 1. Running it
+// from loop() meant either pacing the transfer by the loop's display push and
+// delay (~65ms a page, against ~8ms of bus time) or starving the display and
+// LED breathing for whole slices at a time. Nothing else touches
+// WireFaderBuddy while an install is running - the display is SPI and the
+// INA3221 is on the other I2C peripheral - so the two run without contending.
+//
+// The task publishes completion through installState; the outcome and page
+// progress are read from faderUpdater.
+enum InstallState : uint8_t { INSTALL_IDLE, INSTALL_BUSY, INSTALL_DONE };
+volatile InstallState installState = INSTALL_IDLE;
+volatile bool installCancel = false;
+const BootloadImage* installImage = nullptr;
+TaskHandle_t installTaskHandle = nullptr;
 
-void bootloadStreamTask(void*) {
+void bootloadInstallTask(void*) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    StreamState result = STREAM_DONE;
-    while (testTracking.bootloadPageIndex < testTracking.bootloadTotalPages) {
-      if (streamCancel) {
-        result = STREAM_FAILED;
+    faderbuddy::FirmwareImage image = {installImage->data, installImage->size, installImage->crc16,
+                                       installImage->fwVersion};
+    faderbuddy::FirmwareUpdater::Options options;
+    // The jig exists to exercise the install, so never skip it.
+    options.skip_if_current = false;
+    // The old app is an unversioned (FW_VERSION 0) build of firmware that does
+    // support bootloader entry.
+    options.require_bootloader_entry_version = false;
+    // Ride out the bootloader's flash-write stalls as generously as this jig
+    // always has.
+    options.retry_attempts = 40;
+    options.retry_delay_ms = 5;
+    faderUpdater.start(image, options);
+    while (faderUpdater.tick()) {
+      if (installCancel) {
+        faderUpdater.cancel();
         break;
       }
-      uint32_t p = testTracking.bootloadPageIndex;
-      uint16_t pageAddr = FADER_APP_FLASH_START + (uint16_t)(p * BL_PAGE_SIZE);
-      bool ok = faderBootloader.setPageAddr(pageAddr);
-      for (uint8_t f = 0; ok && f < BL_FRAMES_PER_PAGE; f++) {
-        ok = faderBootloader.sendFrame(streamImage + (p * BL_PAGE_SIZE) + (f * BL_FRAME_DATA_LEN));
-      }
-      if (!ok) {
-        result = STREAM_FAILED;
-        break;
-      }
-      testTracking.bootloadPageIndex = p + 1;
+      // Page streaming already yields once per slice; the other stages are
+      // waiting on the target, so don't hammer it.
+      vTaskDelay(pdMS_TO_TICKS(faderUpdater.stage() == faderbuddy::UpdateStage::WRITE ? 1 : 5));
     }
-    __atomic_store_n(&streamState, result, __ATOMIC_RELEASE);
+    __atomic_store_n(&installState, INSTALL_DONE, __ATOMIC_RELEASE);
   }
 }
 
 void startBootloadStreamTask() {
-  xTaskCreatePinnedToCore(bootloadStreamTask, "bl_stream", 4096, nullptr, 1,
-                          &streamTaskHandle, 0);
+  xTaskCreatePinnedToCore(bootloadInstallTask, "bl_install", 6144, nullptr, 1, &installTaskHandle, 0);
 }
 
-// Stop any stream in flight and return the task to idle. A board pulled
-// mid-stream fails its next transaction on the Wire timeout, so this is quick
+// Stop any install in flight and return the task to idle. A board pulled
+// mid-install fails its next transaction on the Wire timeout, so this is quick
 // even then; the wait is only a backstop.
 void stopBootloadStream() {
-  if (__atomic_load_n(&streamState, __ATOMIC_ACQUIRE) == STREAM_BUSY) {
-    streamCancel = true;
+  if (__atomic_load_n(&installState, __ATOMIC_ACQUIRE) == INSTALL_BUSY) {
+    installCancel = true;
     uint32_t start = millis();
-    while (__atomic_load_n(&streamState, __ATOMIC_ACQUIRE) == STREAM_BUSY &&
-           millis() - start < 3000) {
+    while (__atomic_load_n(&installState, __ATOMIC_ACQUIRE) == INSTALL_BUSY && millis() - start < 3000) {
       delay(1);
     }
   }
-  streamCancel = false;
-  streamState = STREAM_IDLE;
+  installCancel = false;
+  installState = INSTALL_IDLE;
 }
 
 // Arm stepBootload() for a fresh install.
 void resetBootload() {
   stopBootloadStream();
   testTracking.bootloadStarted = false;
-  testTracking.bootloadStep = TestTracking::BL_STEP_ENTER_CMD;
   testTracking.bootloadPageIndex = 0;
   testTracking.bootloadTotalPages = 0;
 }
 
-// Non-blocking install of one image: enters the bootloader (from a running app,
-// or finds it already resident), erases, streams, verifies the whole-image CRC
-// on the target, runs the app, and confirms it reports the image's
-// FW_VERSION. Call repeatedly until it stops returning BOOTLOAD_RUNNING; on
-// BOOTLOAD_FAILED, testTracking.failedTestName says why.
-BootloadResult stepBootload(const BootloadImage& img) {
-#define BOOTLOAD_FAIL(suffix)                                         \
-  do {                                                                \
-    stopBootloadStream();                                             \
-    testTracking.failedTestName = String(img.failPrefix) + (suffix);  \
-    return BOOTLOAD_FAILED;                                           \
-  } while (0)
+// failedTestName suffix for each way an install can fail. These are what the
+// jig has always reported, so test logs stay comparable.
+const char* bootloadFailSuffix() {
+  using faderbuddy::UpdateError;
+  switch (faderUpdater.error()) {
+    case UpdateError::NONE: return " ?";
+    case UpdateError::BAD_IMAGE: return " IMG";
+    case UpdateError::NOT_RESPONDING:
+    case UpdateError::PREDATES_BOOTLOADER_ENTRY:
+    case UpdateError::ENTER_FAILED:
+    case UpdateError::NO_MARKER: return " ENTER";
+    case UpdateError::NO_STATUS: return " STAT";
+    case UpdateError::ERASE_FAILED: return " ERASE";
+    case UpdateError::NVM_ERROR:
+      return faderUpdater.failed_stage() == faderbuddy::UpdateStage::ERASE_WAIT ? " ERASE" : " WRITE";
+    case UpdateError::WRITE_FAILED: return " WRITE";
+    case UpdateError::CRC_READ_FAILED: return " CRCRD";
+    case UpdateError::CRC_MISMATCH: return " CRC";
+    case UpdateError::RUN_FAILED: return " RUN";
+    case UpdateError::APP_DID_NOT_START: return " BOOT";
+    case UpdateError::FW_VERSION_READ_FAILED: return " FWVER";
+    case UpdateError::FW_VERSION_MISMATCH: return " NEWVER";
+    case UpdateError::CANCELLED: return " ABORT";
+  }
+  return " ?";
+}
 
+// Non-blocking install of one image: enters the bootloader (from a running app,
+// or finds it already resident), erases, streams, verifies on the target, runs
+// the app, and confirms it reports the image's FW_VERSION. Call repeatedly
+// until it stops returning BOOTLOAD_RUNNING; on BOOTLOAD_FAILED,
+// testTracking.failedTestName says why.
+BootloadResult stepBootload(const BootloadImage& img) {
   if (!testTracking.bootloadStarted) {
     testTracking.bootloadStarted = true;
-    testTracking.bootloadStep = TestTracking::BL_STEP_ENTER_CMD;
     testTracking.bootloadStartTime = millis();
-    testTracking.bootloadStepStartTime = millis();
     testTracking.bootloadPageIndex = 0;
     testTracking.bootloadTotalPages = img.size / BL_PAGE_SIZE;
     Serial.printf("Installing FW_VERSION=%u over the I2C bootloader...\n", img.fwVersion);
+    installImage = &img;
+    installCancel = false;
+    __atomic_store_n(&installState, INSTALL_BUSY, __ATOMIC_RELEASE);
+    xTaskNotifyGive(installTaskHandle);
+    return BOOTLOAD_RUNNING;
   }
 
-  // Overall watchdog for the whole sequence (generous margin over the
-  // hardware-validated ~few-second full update).
-  if (millis() - testTracking.bootloadStartTime > 20000) {
-    Serial.println("FAILED: I2C bootloader install timed out");
-    BOOTLOAD_FAIL(" TMO");
+  testTracking.bootloadPageIndex = faderUpdater.pages_written();
+
+  if (__atomic_load_n(&installState, __ATOMIC_ACQUIRE) == INSTALL_BUSY) {
+    // Overall watchdog for the whole sequence (generous margin over the
+    // hardware-validated ~few-second full update).
+    if (millis() - testTracking.bootloadStartTime > 20000) {
+      Serial.println("FAILED: I2C bootloader install timed out");
+      stopBootloadStream();
+      testTracking.failedTestName = String(img.failPrefix) + " TMO";
+      return BOOTLOAD_FAILED;
+    }
+    return BOOTLOAD_RUNNING;
   }
+  installState = INSTALL_IDLE;
 
-  switch (testTracking.bootloadStep) {
-    case TestTracking::BL_STEP_ENTER_CMD:
-      {
-        uint8_t v;
-        if (faderBootloader.readVersionByte(v) && v == BL_VERSION_MARKER) {
-          // Already resident: the normal case for the old-app install, straight
-          // after the bootloader-only UPDI flash.
-          testTracking.bootloadStep = TestTracking::BL_STEP_STATUS;
-          testTracking.bootloadStepStartTime = millis();
-        } else if (faderBootloader.enterBootloader()) {
-          testTracking.bootloadStep = TestTracking::BL_STEP_ENTER_WAIT;
-          testTracking.bootloadStepStartTime = millis();
-        } else if (millis() - testTracking.bootloadStepStartTime > 2000) {
-          Serial.println("FAILED: could not send REG_ENTER_BOOTLOADER");
-          BOOTLOAD_FAIL(" ENTER");
-        }
-      }
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_ENTER_WAIT:
-      {
-        uint8_t v;
-        if (faderBootloader.readVersionByte(v) && v == BL_VERSION_MARKER) {
-          Serial.println("Bootloader entered (marker seen)");
-          testTracking.bootloadStep = TestTracking::BL_STEP_STATUS;
-          testTracking.bootloadStepStartTime = millis();
-        } else if (millis() - testTracking.bootloadStepStartTime > 2000) {
-          Serial.println("FAILED: no bootloader marker after entry");
-          BOOTLOAD_FAIL(" ENTER");
-        }
-      }
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_STATUS:
-      {
-        uint8_t bv, st, le;
-        if (faderBootloader.getStatus(bv, st, le)) {
-          Serial.printf("Bootloader resident: ver=%u status=%u last_error=%u\n", bv, st, le);
-          testTracking.bootloadStep = TestTracking::BL_STEP_ERASE;
-          testTracking.bootloadStepStartTime = millis();
-        } else if (millis() - testTracking.bootloadStepStartTime > 2000) {
-          Serial.println("FAILED: no status response from bootloader");
-          BOOTLOAD_FAIL(" STAT");
-        }
-      }
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_ERASE:
-      Serial.println("Erasing application section...");
-      if (!faderBootloader.eraseApp()) {
-        Serial.println("FAILED: erase failed");
-        BOOTLOAD_FAIL(" ERASE");
-      }
-      testTracking.bootloadPageIndex = 0;
-      testTracking.bootloadStep = TestTracking::BL_STEP_STREAM;
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_STREAM:
-      switch (__atomic_load_n(&streamState, __ATOMIC_ACQUIRE)) {
-        case STREAM_IDLE:
-          streamImage = img.data;
-          streamCancel = false;
-          streamState = STREAM_BUSY;
-          xTaskNotifyGive(streamTaskHandle);
-          return BOOTLOAD_RUNNING;
-        case STREAM_BUSY:
-          return BOOTLOAD_RUNNING;
-        case STREAM_FAILED:
-          Serial.printf("FAILED: write failed at page %u/%u\n", testTracking.bootloadPageIndex,
-                        testTracking.bootloadTotalPages);
-          BOOTLOAD_FAIL(" WRITE");
-        case STREAM_DONE:
-          Serial.printf("  wrote %u/%u pages\n", testTracking.bootloadPageIndex,
-                        testTracking.bootloadTotalPages);
-          streamState = STREAM_IDLE;
-          testTracking.bootloadStep = TestTracking::BL_STEP_VERIFY;
-          testTracking.bootloadStepStartTime = millis();
-          return BOOTLOAD_RUNNING;
-      }
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_VERIFY:
-      {
-        Serial.println("Verifying image CRC...");
-        uint16_t crc;
-        if (!faderBootloader.getImageCrc16(FADER_APP_FLASH_START, (uint16_t)img.size, crc)) {
-          Serial.println("FAILED: CRC read failed");
-          BOOTLOAD_FAIL(" CRCRD");
-        }
-        if (crc != img.crc16) {
-          Serial.printf("FAILED: CRC got=0x%04X exp=0x%04X\n", crc, img.crc16);
-          BOOTLOAD_FAIL(" CRC");
-        }
-        testTracking.bootloadStep = TestTracking::BL_STEP_RUN;
-      }
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_RUN:
-      Serial.println("Running new application...");
-      if (!faderBootloader.runApp()) {
-        Serial.println("FAILED: run app command failed");
-        BOOTLOAD_FAIL(" RUN");
-      }
-      testTracking.bootloadStep = TestTracking::BL_STEP_WAIT_APP;
-      testTracking.bootloadStepStartTime = millis();
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_WAIT_APP:
-      {
-        uint8_t v;
-        if (faderBootloader.readVersionByte(v) && v != BL_VERSION_MARKER && v != 0xFF) {
-          testTracking.bootloadStep = TestTracking::BL_STEP_CHECK_VERSION;
-        } else if (millis() - testTracking.bootloadStepStartTime > 2000) {
-          Serial.println("FAILED: app did not start after RUN_APP");
-          BOOTLOAD_FAIL(" BOOT");
-        }
-      }
-      return BOOTLOAD_RUNNING;
-
-    case TestTracking::BL_STEP_CHECK_VERSION:
-      {
-        uint16_t fw;
-        if (!faderBootloader.readFwVersion(fw)) {
-          Serial.println("FAILED: could not read new app's FW_VERSION");
-          BOOTLOAD_FAIL(" FWVER");
-        }
-        if (fw != img.fwVersion) {
-          Serial.printf("FAILED: new app FW_VERSION=%u, expected %u\n", fw, img.fwVersion);
-          BOOTLOAD_FAIL(" NEWVER");
-        }
-        Serial.printf("PASSED: I2C bootloader install of FW_VERSION=%u succeeded in %lu ms\n",
-                      fw, (unsigned long)(millis() - testTracking.bootloadStartTime));
-      }
-      return BOOTLOAD_DONE;
-
-    default:
-      return BOOTLOAD_RUNNING;
+  if (!faderUpdater.succeeded()) {
+    Serial.printf("FAILED: I2C bootloader install failed while %s: %s (wrote %u/%u pages)\n",
+                  faderbuddy::update_stage_name(faderUpdater.failed_stage()), faderUpdater.error_message(),
+                  faderUpdater.pages_written(), faderUpdater.pages_total());
+    testTracking.failedTestName = String(img.failPrefix) + bootloadFailSuffix();
+    return BOOTLOAD_FAILED;
   }
-#undef BOOTLOAD_FAIL
+  Serial.printf("  wrote %u/%u pages\n", faderUpdater.pages_written(), faderUpdater.pages_total());
+  Serial.printf("PASSED: I2C bootloader install of FW_VERSION=%u succeeded in %lu ms\n", img.fwVersion,
+                (unsigned long)(millis() - testTracking.bootloadStartTime));
+  return BOOTLOAD_DONE;
 }
 
 // TEST_FW_BOOTSTRAP: UPDI-flash the current bootloader and its fuses (via
@@ -1203,9 +1102,10 @@ bool testFwBootstrap() {
         // The chip was just erased and given only a bootloader, so it must come
         // up resident and report that it has no application. Anything else means
         // the erase or the fuses didn't take.
-        uint8_t v, bv, st, le;
-        if (faderBootloader.readVersionByte(v) && v == BL_VERSION_MARKER &&
-            faderBootloader.getStatus(bv, st, le)) {
+        uint8_t v;
+        faderbuddy::BootloaderStatus bl;
+        if (faderBuddy.read_probe(v) && v == BL_VERSION_MARKER && faderBuddy.bl_get_status(bl, 40, 5)) {
+          uint8_t bv = bl.version, st = bl.status, le = bl.last_error;
           if (st != BL_STATUS_NO_APP) {
             testTracking.failedTestName = "FW BL HASAPP";
             Serial.printf("FAILED: fresh bootloader reports status=%u, expected NO_APP\n", st);
@@ -1295,7 +1195,7 @@ bool testFwI2cUpdate() {
       {
         // Read serial number from motor fader and report to host
         uint8_t serial[10];
-        if (faderBuddy.readSerialNumber(serial)) {
+        if (faderBuddy.read_serial_number(serial)) {
           // Format as hex string and send to host
           Serial.print(">>SERIAL:");
           for (int i = 0; i < 10; i++) {
@@ -1416,7 +1316,7 @@ bool testDebugLED() {
 void readFaderBuddyVersionInfo() {
   versionInfo.valid = false;
 
-  if (faderBuddy.readProtocolVersion(versionInfo.protocolVersion)) {
+  if (faderBuddy.read_probe(versionInfo.protocolVersion)) {
     Serial.print("Motor Fader Protocol Version: ");
     Serial.println(versionInfo.protocolVersion);
     // Reported to the host the same way FW_VERSION is, so the test report can
@@ -1432,7 +1332,7 @@ void readFaderBuddyVersionInfo() {
       return;
     }
 
-    if (!faderBootloader.readFwVersion(versionInfo.fwVersion)) {
+    if (!faderBuddy.read_fw_version(versionInfo.fwVersion, 40, 5)) {
       Serial.println("Failed to read firmware version");
       return;
     }
@@ -1447,7 +1347,7 @@ void readFaderBuddyState() {
   faderState.valid = false;
 
   uint32_t state;
-  if (!faderBuddy.readState(state)) {
+  if (!faderBuddy.read_state(state)) {
     Serial.println("Failed to read motor fader state");
     return;
   }
@@ -1459,23 +1359,23 @@ void readFaderBuddyState() {
   faderState.rawADC = (state & STATE_RAW_ADC_bm) >> STATE_RAW_ADC_bp;
 
   // Read uptime separately
-  if (!faderBuddy.readUptime(faderState.uptime)) {
+  if (!faderBuddy.read_uptime(faderState.uptime)) {
     Serial.println("Failed to read uptime");
     return;
   }
 
   // Read touch diagnostics
-  if (!faderBuddy.readTouchDelta(faderState.touchDelta)) {
+  if (!faderBuddy.read_touch_delta(faderState.touchDelta)) {
     Serial.println("Failed to read touch delta");
     return;
   }
 
-  if (!faderBuddy.readTouchReference(faderState.touchReference)) {
+  if (!faderBuddy.read_touch_reference(faderState.touchReference)) {
     Serial.println("Failed to read touch reference");
     return;
   }
 
-  if (!faderBuddy.readTouchRecalCount(faderState.touchRecalCount)) {
+  if (!faderBuddy.read_touch_recal_count(faderState.touchRecalCount)) {
     Serial.println("Failed to read touch recal count");
     return;
   }
@@ -1504,7 +1404,7 @@ bool testSelfCalibration() {
 
   // Send self-calibration command on first call
   if (!testTracking.selfCalRequestSent) {
-    if (faderBuddy.selfCalibrate()) {
+    if (faderBuddy.self_calibrate()) {
       Serial.println("Self-calibration command sent");
       testTracking.selfCalRequestSent = true;
     } else {
@@ -1649,7 +1549,7 @@ bool testDiagnostics() {
 
   switch (testTracking.diagnosticsMovementStep) {
     case 0:  // Command position 10
-      faderBuddy.writeTargetPosition(10);
+      faderBuddy.write_layer_target(0, 10);
       Serial.println("Commanding position 10");
       testTracking.testStartTime = millis();  // Start timeout for idle wait
       testTracking.diagnosticsMovementStep = 1;
@@ -1669,7 +1569,7 @@ bool testDiagnostics() {
       return false;
 
     case 2:  // Command position 200
-      faderBuddy.writeTargetPosition(200);
+      faderBuddy.write_layer_target(0, 200);
       Serial.println("Commanding position 200");
       testTracking.testStartTime = millis();  // Start timeout for idle wait
       testTracking.diagnosticsMovementStep = 3;
@@ -1689,7 +1589,7 @@ bool testDiagnostics() {
       return false;
 
     case 4:  // Command position 80
-      faderBuddy.writeTargetPosition(80);
+      faderBuddy.write_layer_target(0, 80);
       Serial.println("Commanding position 80");
       testTracking.testStartTime = millis();  // Start timeout for idle wait
       testTracking.diagnosticsMovementStep = 5;
@@ -1775,7 +1675,7 @@ bool testTouchSensor() {
         // Give a small delay before commanding to ensure we're ready
         return false;
       }
-      if (!faderBuddy.writeTargetPosition(42)) {
+      if (!faderBuddy.write_layer_target(0, 42)) {
         testTracking.failedTestName = "TCH CMD POS";
         Serial.println("FAILED: Could not command position 0");
         testTracking.touchTestPhase = TestTracking::TOUCH_PHASE_CLEANUP_ON_FAILURE;

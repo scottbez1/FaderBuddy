@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <stdarg.h>
+
 #include <string>
 
 #include "esphome/core/component.h"
@@ -22,330 +24,172 @@
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 #include "esphome/core/optional.h"
 
 #include "fader_buddy_update.h"
 #include "i2c_data.h"
 
-#include <string>
+// The host library (hostLib/ at the repo root). These files are copies -
+// edit hostLib/src/ and run ci/util/check_i2c_data_sync.py --fix.
+#include "fader_buddy_host.h"
 
 namespace esphome {
 namespace fader_buddy {
 
 // Version of this ESPHome component, independent of the fader's firmware
 // version. Logged at startup so a bug report identifies both halves.
-#define FADER_BUDDY_COMPONENT_VERSION "0.6.0"
+#define FADER_BUDDY_COMPONENT_VERSION "0.7.0"
 
-
-// Protocol v5: Layer management is now handled in firmware
-// ESPHome component is a simple protocol wrapper
-
-class FaderBuddy : public PollingComponent, public i2c::I2CDevice {
-
+// The host library's Transport and Platform, over ESPHome's I2C device and HAL.
+class EsphomeTransport : public ::faderbuddy::Transport {
  public:
-     // Constructor
-     FaderBuddy();
+  explicit EsphomeTransport(i2c::I2CDevice *device) : device_(device) {}
+  bool write(const uint8_t *data, size_t len) override {
+    return device_->write(data, len) == i2c::ErrorCode::NO_ERROR;
+  }
+  bool read(uint8_t *data, size_t len) override { return device_->read(data, len) == i2c::ErrorCode::NO_ERROR; }
+  bool write_read(const uint8_t *write_data, size_t write_len, uint8_t *read_data, size_t read_len) override {
+    return device_->write_read(write_data, write_len, read_data, read_len) == i2c::ErrorCode::NO_ERROR;
+  }
 
-     // Standard component functions to override
-     void setup() override;
-     void update() override;
-     void loop() override;
-     void dump_config() override;
-     float get_setup_priority() const override;
+ private:
+  i2c::I2CDevice *device_;
+};
 
-    // Layer management (Protocol v5: forwards to firmware)
-    void set_active_layer(uint8_t layer_index);
-    uint8_t get_active_layer() const;
-    // Moves at the layer's configured default speed (see set_layer_default_speed).
-    void remote_move_to(uint8_t position, uint8_t layer = 0);
-    // speed: unitless 0-255, where LAYER_SPEED_FULL (255) is full speed and 0
-    // is the slowest the fader moves smoothly. It caps speed rather than
-    // scheduling the move, so a shorter move takes proportionally less time.
-    void remote_move_to(uint8_t position, uint8_t layer, uint8_t speed);
-    uint8_t get_position(uint8_t layer = 0) const;
-    void set_layer_haptic_config(
-        uint8_t layer,
-        uint8_t mode,
-        uint8_t detent_count = 0,
-        uint8_t detent_strength = 0
-    );
+class EsphomePlatform : public ::faderbuddy::Platform {
+ public:
+  uint32_t millis() override { return esphome::millis(); }
+  void delay_ms(uint32_t ms) override { esphome::delay(ms); }
+  void log(::faderbuddy::LogLevel level, const char *format, va_list args) override;
+};
 
-    void run_self_calibration();
-    void set_invert(bool invert) { invert_ = invert; }
-    void set_layer_value_change_min_interval(uint8_t layer, uint32_t min_interval_ms);
-    // Speed used for moves on this layer when the caller doesn't name one.
-    // Tracked host-side and sent with each move, rather than pushed to the
-    // fader as configuration, so a layer's default costs no extra I2C traffic
-    // and needs no round trip to change.
-    void set_layer_default_speed(uint8_t layer, uint8_t speed);
-    uint8_t get_layer_default_speed(uint8_t layer) const;
+// Constructed before the library base, which holds references to both.
+struct FaderBuddyHostAdapters {
+  explicit FaderBuddyHostAdapters(i2c::I2CDevice *device) : host_transport_(device) {}
+  EsphomeTransport host_transport_;
+  EsphomePlatform host_platform_;
+};
 
-    // Firmware version reported by the fader, packed as (major << 8) | minor.
-    // FW_VERSION_NONE for firmware old enough to have no version register.
-    uint16_t get_firmware_version() const { return firmware_version_; }
+// The fader itself is ::faderbuddy::FaderBuddy; this adds what is specific to
+// ESPHome: the component lifecycle, automation triggers, Home Assistant
+// entities, and serializing firmware updates across faders sharing a bus.
+class FaderBuddy : public PollingComponent,
+                   public i2c::I2CDevice,
+                   private FaderBuddyHostAdapters,
+                   public ::faderbuddy::FaderBuddy,
+                   protected ::faderbuddy::FaderBuddyListener {
+ public:
+  FaderBuddy();
 
-    // Chip serial number (10-byte factory ID, read once at setup). Returns an
-    // uppercase hex string (e.g. "AABBCCDDEEFF00112233"), or "" if not yet read.
-    std::string get_serial_number() const { return serial_number_; }
-    void set_serial_text_sensor(text_sensor::TextSensor *s) { serial_text_sensor_ = s; }
-    // Diagnostic text sensor: firmware version, "not responding", a required
-    // UPDI reflash, or update progress.
-    void set_status_text_sensor(text_sensor::TextSensor *s) { status_text_sensor_ = s; }
+  // Standard component functions to override
+  void setup() override;
+  void update() override;
+  void loop() override;
+  void dump_config() override;
+  float get_setup_priority() const override;
+
+  // The rest of the public interface - layers, moves, haptics, calibration,
+  // firmware version and updates - is inherited from ::faderbuddy::FaderBuddy.
+  // See hostLib/src/fader_buddy_host.h.
+
+  // Chip serial number (10-byte factory ID, read once at setup). Returns an
+  // uppercase hex string (e.g. "AABBCCDDEEFF00112233"), or "" if not yet read.
+  std::string get_serial_number() const { return ::faderbuddy::FaderBuddy::get_serial_number(); }
+  void set_serial_text_sensor(text_sensor::TextSensor *s) { serial_text_sensor_ = s; }
+  // Diagnostic text sensor: firmware version, "not responding", a required
+  // UPDI reflash, or update progress.
+  void set_status_text_sensor(text_sensor::TextSensor *s) { status_text_sensor_ = s; }
 #ifdef USE_UPDATE
-    void set_update_entity(FaderBuddyUpdate *u) { update_entity_ = u; }
+  void set_update_entity(FaderBuddyUpdate *u) { update_entity_ = u; }
 #endif
 
-    // Called only from codegen to store initial haptic configs
-    void store_initial_layer_haptic_config(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
+  // Manual update action: starts an update and returns immediately. The
+  // transfer then runs a slice at a time from loop(). The outcome arrives on
+  // the on_firmware_update_result trigger, not from here. Only one fader
+  // updates at a time, since they share the bus: a request made while another
+  // fader is updating waits, shown as "Update pending", and starts when the
+  // bus frees up.
+  void update_firmware() override;
+  // True between update_firmware() and the result trigger, waiting time included.
+  bool firmware_update_in_progress() const override {
+    return ::faderbuddy::FaderBuddy::firmware_update_in_progress() || update_pending_;
+  }
 
-    // Firmware update over the I2C bootloader -- see ABOUT_I2C_BOOTLOADER.md.
-    // Called only from codegen to configure the packaged application image (embedded
-    // once and shared across MULTI_CONF instances; image/length/crc16 describe the
-    // exact page-aligned APPCODE bytes, fw_version is read from its last 2 bytes --
-    // see BL_APP_META_ADDR in bootloader_protocol.h).
-    void set_firmware_image(const uint8_t *image, uint32_t length, uint16_t image_crc16, uint16_t fw_version);
-    // Manual update action: starts an update and returns immediately. The transfer
-    // then runs a slice at a time from loop(), so the device stays responsive and
-    // coarse progress reaches the update entity and the status sensor as it goes. The
-    // outcome arrives on the on_firmware_update_result trigger, not from here.
-    // Safe to call whether or not the fader is already at the packaged version
-    // (no-ops if so). Never triggered automatically -- only when this is called.
-    // Only one fader updates at a time, since they share the bus: a request made
-    // while another fader is updating waits, shown as "Update pending", and
-    // started when the bus frees up. Its result arrives when it eventually runs.
-    void update_firmware();
-    // True between update_firmware() and the result trigger, waiting time included.
-    bool firmware_update_in_progress() const { return update_stage_ != UPDATE_IDLE || update_pending_; }
-    // Whether an update would actually do anything: an image is configured, the
-    // fader isn't already running it, and there is a route to the bootloader.
-    // Decided from state cached at setup, so it costs no bus traffic and can be
-    // polled from a lambda; update_firmware() re-checks over the wire before
-    // committing, so this is a cheap pre-filter, not the authority.
-    bool firmware_update_available() const;
-    // Called by Home Assistant's install button and update.perform. Same as
-    // update_firmware(), but rejects a request with nothing to install without
-    // touching the bus. force skips that check, e.g. to downgrade.
-    void start_firmware_update(bool force = false);
-    // Re-read the fader's firmware version (or re-probe it if it never
-    // answered) and republish. Used by Home Assistant's "check for updates",
-    // so a fader reflashed over UPDI is picked up without rebooting the host.
-    void refresh_firmware_state();
+  Trigger<uint8_t, uint8_t> *get_on_manual_move_trigger() const { return on_manual_move_; }
+  Trigger<uint8_t, uint8_t> *get_on_raw_position_update_trigger() const { return on_raw_position_update_; }
+  Trigger<bool, uint8_t> *get_on_touch_change_trigger() const { return on_touch_change_; }
+  Trigger<uint8_t> *get_on_double_tap_trigger() const { return on_double_tap_; }
+  Trigger<bool, std::string> *get_on_firmware_update_result_trigger() const { return on_firmware_update_result_; }
 
-    Trigger<uint8_t, uint8_t> *get_on_manual_move_trigger() const { return on_manual_move_; }
-    Trigger<uint8_t, uint8_t> *get_on_raw_position_update_trigger() const { return on_raw_position_update_; }
-    Trigger<bool, uint8_t> *get_on_touch_change_trigger() const { return on_touch_change_; }
-    Trigger<uint8_t> *get_on_double_tap_trigger() const { return on_double_tap_; }
-    Trigger<bool, std::string> *get_on_firmware_update_result_trigger() const { return on_firmware_update_result_; }
+ protected:
+  // FaderBuddyListener
+  void on_manual_move(uint8_t position, uint8_t layer) override { on_manual_move_->trigger(position, layer); }
+  void on_raw_position_update(uint8_t position, uint8_t layer) override {
+    on_raw_position_update_->trigger(position, layer);
+  }
+  void on_touch_change(bool touched, uint8_t layer) override { on_touch_change_->trigger(touched, layer); }
+  void on_double_tap(uint8_t layer) override { on_double_tap_->trigger(layer); }
+  void on_serial_number(const char *serial) override;
+  void on_status_changed() override;
+  void on_firmware_update_stage(const char *label) override;
+  void on_firmware_update_progress(const char *label, uint8_t percent) override;
+  void on_firmware_update_result(bool success, const char *error) override {
+    on_firmware_update_result_->trigger(success, std::string(error));
+  }
+  // ::faderbuddy::FaderBuddy
+  void on_update_attempt_finished_(bool success, const char *error) override;
 
-    protected:
-        bool read_sensor_data_();
-        void send_layer_haptic_config_(uint8_t layer, uint8_t mode, uint8_t detent_count, uint8_t detent_strength);
-        bool write_with_retry_(const uint8_t *data, size_t len, uint8_t retries = 3);
+  Trigger<uint8_t, uint8_t> *on_manual_move_{new Trigger<uint8_t, uint8_t>()};
+  Trigger<uint8_t, uint8_t> *on_raw_position_update_{new Trigger<uint8_t, uint8_t>()};
+  Trigger<bool, uint8_t> *on_touch_change_{new Trigger<bool, uint8_t>()};
+  Trigger<uint8_t> *on_double_tap_{new Trigger<uint8_t>()};
+  Trigger<bool, std::string> *on_firmware_update_result_{new Trigger<bool, std::string>()};
 
-        Trigger<uint8_t, uint8_t> *on_manual_move_{new Trigger<uint8_t, uint8_t>()};
-        Trigger<uint8_t, uint8_t> *on_raw_position_update_{new Trigger<uint8_t, uint8_t>()};
-        Trigger<bool, uint8_t> *on_touch_change_{new Trigger<bool, uint8_t>()};
-        Trigger<uint8_t> *on_double_tap_{new Trigger<uint8_t>()};
-        Trigger<bool, std::string> *on_firmware_update_result_{new Trigger<bool, std::string>()};
+ private:
+  // Claim the bus and start the transfer. The caller has already checked that
+  // the bus is free.
+  void start_update_();
+  // The fader's version as reported to the update entity. Home Assistant
+  // compares it against the packaged version, so it must parse as a version.
+  // Extra detail goes in a semver build-metadata suffix, which doesn't affect
+  // the comparison:
+  //   "1.4"                 - running 1.4
+  //   "1.1+updi-required"   - running 1.1, too old to enter its bootloader
+  //                           over I2C (see FW_VERSION_BOOTLOADER_ENTRY)
+  //   "1.0+updi-required"   - no version register, so 1.0 or older
+  //   "0.0+bootloader"      - in its bootloader, no app installed
+  //   "0.0+unreachable"     - never answered a probe
+  std::string firmware_version_string_() const;
+  // Human-readable text for the status sensor: the firmware status, plus the
+  // calibration status when there is something to say about it.
+  std::string status_text_() const;
+  std::string firmware_status_text_() const;
+  // Publish arbitrary text to the status sensor, for transient states that
+  // status_text_() doesn't cover (update progress, failure reasons).
+  void publish_status_(const std::string &text);
+  // Publish status_text_() and the update entity state together.
+  void publish_firmware_state_();
 
-    private:
-        // Probe REG_VERSION and, if the answer is usable, finish initializing.
-        // first_attempt distinguishes the call from setup() (retries hard) from
-        // the periodic retry driven by update() while awaiting_device_ is set.
-        void probe_and_init_(bool first_attempt);
-        // Mark the fader as not responding and restart the re-probe backoff.
-        void start_awaiting_device_();
-        // Re-probes on the backoff while awaiting_device_ is set.
-        void retry_probe_();
-        void read_serial_number_();
-        void read_firmware_version_();
-        // The fader's version as reported to the update entity. Home Assistant
-        // compares it against the packaged version, so it must parse as a
-        // version. Extra detail goes in a semver build-metadata suffix, which
-        // doesn't affect the comparison:
-        //   "1.4"                 - running 1.4
-        //   "1.1+updi-required"   - running 1.1, too old to enter its
-        //                           bootloader over I2C (see
-        //                           FW_VERSION_BOOTLOADER_ENTRY)
-        //   "1.0+updi-required"   - no version register, so 1.0 or older
-        //   "0.0+bootloader"      - in its bootloader, no app installed
-        //   "0.0+unreachable"     - never answered a probe
-        std::string firmware_version_string_() const;
-        // Human-readable text for the status sensor: the firmware status, plus
-        // the calibration status when there is something to say about it.
-        std::string status_text_() const;
-        std::string firmware_status_text_() const;
-        // Publish arbitrary text to the status sensor, for transient states
-        // that status_text_() doesn't cover (update progress, failure reasons).
-        void publish_status_(const std::string &text);
-        // Publish status_text_() and the update entity state together.
-        void publish_firmware_state_();
-        // Can this fader enter its bootloader over I2C? If not, it needs a
-        // one-time UPDI reflash (see FW_VERSION_BOOTLOADER_ENTRY).
-        bool bootloader_entry_supported_() const;
-        // Would installing the packaged image change anything? Deliberately
-        // ignores whether the install is possible, so a fader that needs a
-        // UPDI reflash still shows as out of date. start_firmware_update()
-        // explains why if an install is attempted.
-        bool firmware_update_offered_() const;
-        // Could an install run against this fader at all?
-        // firmware_update_available() is offered && possible.
-        bool firmware_update_possible_() const;
-        // Logs the motor characterisation, and returns whether the fader has
-        // one (MOTOR_CAL_UNKNOWN if the firmware can't say).
-        enum MotorCalReadResult { MOTOR_CAL_UNKNOWN, MOTOR_CAL_ABSENT, MOTOR_CAL_PRESENT };
-        MotorCalReadResult read_motor_calibration_();
-
-        // Self-calibration's outcome, shown on the status sensor so it can be
-        // seen from Home Assistant without the logs. Only the most recent run
-        // is remembered, and nothing survives a host reboot - at startup all
-        // that can be told is whether the motor was ever characterised.
-        enum CalibrationStatus {
-            CALIBRATION_UNKNOWN,         // nothing worth showing
-            CALIBRATION_NEEDED,          // startup: motor never characterised
-            CALIBRATION_RUNNING,
-            CALIBRATION_SUCCEEDED,
-            CALIBRATION_MOTOR_DEFAULTS,  // endpoints found, motor measurement discarded
-            CALIBRATION_FAILED,          // endpoint sweep found no usable travel
-        };
-        CalibrationStatus calibration_status_{CALIBRATION_UNKNOWN};
-
-        // State variables
-        uint32_t last_state_{0};
-        // Faders normally come up idle, so this doesn't log a phantom
-        // transition at startup - but a fader that boots into MODE_ERROR does
-        // get reported, which is what we want.
-        Mode last_mode_{MODE_INPUT_IDLE};
-        std::string serial_number_;
-        text_sensor::TextSensor *serial_text_sensor_{nullptr};
-        text_sensor::TextSensor *status_text_sensor_{nullptr};
+  text_sensor::TextSensor *serial_text_sensor_{nullptr};
+  text_sensor::TextSensor *status_text_sensor_{nullptr};
 #ifdef USE_UPDATE
-        FaderBuddyUpdate *update_entity_{nullptr};
+  FaderBuddyUpdate *update_entity_{nullptr};
 #endif
-        HighFrequencyLoopRequester high_freq_;
-        bool invert_{false};
-        bool last_touch_{false};
-        uint8_t last_double_tap_nonce_{0};
-        uint16_t firmware_version_{FW_VERSION_NONE};
-        // Set when the version probe at setup saw the bootloader's marker rather
-        // than a protocol version, i.e. the fader has no working app image. The
-        // one case where an update is viable despite no readable app version.
-        bool bootloader_resident_{false};
-        // The fader isn't answering its version probe. update() keeps
-        // re-probing, and a firmware update can still be installed in case it
-        // is wedged rather than absent.
-        bool awaiting_device_{false};
-        // Doubling backoff for those re-probes, capped at RETRY_PROBE_MAX_MS.
-        uint32_t retry_probe_at_{0};
-        uint32_t retry_probe_backoff_ms_{0};
-        bool speed_supported_{false};
-        bool warned_speed_unsupported_{false};  // warn once, not once per move
+  HighFrequencyLoopRequester high_freq_;
 
-        // Per-layer state for value change rate limiting and position tracking
-        struct LayerState {
-            uint32_t value_change_min_interval{0};  // 0 = no rate limiting
-            uint32_t last_trigger_time{0};
-            uint8_t deferred_value{0};  // USER-FACING position for deferred trigger
-            bool has_deferred_value{false};
-            uint16_t last_hw_position{0};  // Last HARDWARE position from firmware (0-255, raw from I2C)
-            uint8_t last_position_nonce{0};
-            uint8_t default_speed{LAYER_SPEED_FULL};  // speed for moves that don't name one
-        };
-        LayerState layer_states_[8] = {};
-
-        // Initial haptic configurations (set during codegen, sent once during setup)
-        struct InitialHapticConfig {
-            uint8_t layer;
-            uint8_t mode;
-            uint8_t detent_count;
-            uint8_t detent_strength;
-            bool valid;
-        };
-        InitialHapticConfig initial_haptic_configs_[8] = {};
-
-        // --- Firmware update state (ABOUT_I2C_BOOTLOADER.md) ---
-        const uint8_t *firmware_image_{nullptr};
-        uint32_t firmware_image_length_{0};
-        uint16_t firmware_image_crc16_{0};
-        uint16_t firmware_fw_version_{0};
-
-        // Guards against two faders updating the shared I2C bus at once. Held for
-        // the whole multi-tick sequence, so unlike the per-instance update_stage_
-        // this also stops a second fader starting one while the first is mid-flight.
-        static bool s_update_in_progress;
-        // An update was requested while another fader held the bus. loop()
-        // starts it once s_update_in_progress clears, so waiting faders go in
-        // loop (YAML) order rather than request order.
-        bool update_pending_{false};
-
-        // --- Update state machine (driven by update_tick_() from loop()) ---
-        // The transfer is sliced across loop iterations rather than run inline:
-        // it takes seconds end to end, and blocking that long starves the API,
-        // WiFi and every other component - and makes progress reporting
-        // impossible, since queued entity states only go out from the loop.
-        enum UpdateStage : uint8_t {
-            UPDATE_IDLE = 0,
-            UPDATE_WAIT_TOUCH_IDLE,  // bounded wait for the user to let go
-            UPDATE_PROBE,            // app or bootloader? and the go/no-go checks
-            UPDATE_WAIT_MARKER,      // after REG_ENTER_BOOTLOADER
-            UPDATE_ERASE,            // status check, then issue the erase
-            UPDATE_ERASE_WAIT,       // target is stalled in NVM, poll it back
-            UPDATE_WRITE,            // stream pages 1..N-1 (not page 0), budgeted per tick
-            UPDATE_BODY_CHECK,       // NVM status, then ask for the CRC of pages 1..N-1
-            UPDATE_BODY_CRC_WAIT,    // poll for it; on a match, write page 0 last
-            UPDATE_WRITE_CHECK,      // post-write NVM status, then ask for the CRC
-            UPDATE_CRC_WAIT,         // poll for the whole-image CRC
-            UPDATE_WAIT_APP,         // after RUN_APP
-            UPDATE_CONFIRM,          // REG_FW_VERSION matches the packaged image
-        };
-        // How long one tick may spend streaming pages before yielding. Long
-        // enough to get several 64-byte pages out per loop iteration, short
-        // enough that nothing else notices.
-        static constexpr uint32_t UPDATE_WRITE_BUDGET_MS = 20;
-
-        UpdateStage update_stage_{UPDATE_IDLE};
-        uint32_t update_deadline_{0};   // millis deadline for the polling stages
-        uint32_t update_page_{0};       // next page to write (starts at 1; page 0 goes last)
-        uint8_t update_progress_pct_{0xFF};  // last published step; 0xFF = none yet
-
-        void update_tick_();
-        // Claim the bus and start the transfer. The caller has already checked
-        // that the bus is free.
-        void begin_update_();
-        void enter_update_stage_(UpdateStage stage, uint32_t timeout_ms = 0);
-        void publish_update_progress_(const char *label, uint8_t pct);
-        // An update stage with no meaningful percentage yet.
-        void publish_update_stage_(const char *label);
-        void log_update_starting_();
-        void finish_update_(bool ok, const std::string &error);
-        // Failure after page 0 is written: re-blank the reset vector, then finish.
-        void fail_and_uncommit_(const std::string &error);
-
-        uint8_t get_last_mode_() const;
-
-        // Bootloader wire-protocol primitives -- port of the jig's reference
-        // implementation, see production_tools/programAndTest/src/fader_buddy_bootloader.cpp.
-        bool bl_write_retry_(const uint8_t *data, size_t len, uint8_t attempts = 3, uint32_t retry_delay_ms = 5);
-        bool bl_read_retry_(const uint8_t *reg, size_t reg_len, uint8_t *out, size_t out_len,
-                            uint8_t attempts = 3, uint32_t retry_delay_ms = 5);
-        bool bl_read_bare_retry_(uint8_t *out, size_t len, uint8_t attempts, uint32_t retry_delay_ms);
-        bool bl_read_version_byte_(uint8_t &version);
-        bool bl_enter_bootloader_();
-        bool bl_get_status_(uint8_t &bl_version, uint8_t &status, uint8_t &last_error);
-        // Erase and whole-image CRC are each split into "ask" and "poll for the
-        // answer": both stall the target long enough that waiting inline would
-        // be the one thing still blocking the loop. See UPDATE_ERASE_WAIT and
-        // UPDATE_CRC_WAIT in update_tick_().
-        bool bl_request_erase_app_();
-        bool bl_set_page_addr_(uint16_t addr);
-        bool bl_send_frame_(const uint8_t *data16);
-        // SET_PAGE_ADDR + the page's 4 frames. `page` indexes the image.
-        bool bl_write_image_page_(uint32_t page);
-        bool bl_request_image_crc16_(uint16_t addr, uint16_t len);
-        bool bl_poll_image_crc16_(uint16_t &crc);
-        bool bl_run_app_();
-        bool read_fw_version_(uint16_t &version);
+  // Guards against two faders updating the shared I2C bus at once. Held for
+  // the whole multi-tick sequence, so it also stops a second fader starting
+  // one while the first is mid-flight.
+  static bool s_update_in_progress;
+  // This fader holds s_update_in_progress.
+  bool holds_bus_{false};
+  // An update was requested while another fader held the bus. loop() starts
+  // it once s_update_in_progress clears, so waiting faders go in loop (YAML)
+  // order rather than request order.
+  bool update_pending_{false};
 };
 
 // Action classes for automation

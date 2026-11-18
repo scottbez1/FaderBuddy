@@ -28,7 +28,11 @@
 #include <ESP32Servo.h>
 
 #include "Adafruit_INA3221.h"
-#include "fader_buddy_i2c.h"
+#include "FaderBuddyHost.h"
+
+// The debug registers (0xF0-0xF2) are written raw below; everything else goes
+// through the shared host library.
+#define FADER_BUDDY_I2C_ADDR 0x20
 
 #define PIN_LED_RED 21
 #define PIN_LED_GREEN 22
@@ -49,7 +53,9 @@
 
 Adafruit_INA3221 ina3221;
 TwoWire WireFaderBuddy = TwoWire(1);
-FaderBuddyI2C faderBuddy;
+faderbuddy::WireTransport faderTransport(WireFaderBuddy, FADER_BUDDY_I2C_ADDR);
+faderbuddy::ArduinoPlatform faderPlatform;
+faderbuddy::FaderBuddyDevice faderBuddy(faderTransport, faderPlatform);
 Servo servo;
 
 bool inaPresent = false;
@@ -103,7 +109,7 @@ void capture(uint32_t durationMs, uint32_t currentPeriodMs) {
   while ((int32_t)(micros() - endUs) < 0 && sampleCount < MAX_SAMPLES) {
     uint32_t s;
     uint32_t t = micros();
-    if (faderBuddy.readState(s)) {
+    if (faderBuddy.read_state(s)) {
       samples[sampleCount].t_us = t - startUs;
       samples[sampleCount].state = s;
       sampleCount++;
@@ -179,7 +185,7 @@ void captureOpenLoop(uint8_t flags, uint8_t duty, uint32_t durationMs,
     }
     uint32_t s;
     uint32_t t = micros();
-    if (faderBuddy.readState(s)) {
+    if (faderBuddy.read_state(s)) {
       samples[sampleCount].t_us = t - startUs;
       samples[sampleCount].state = s;
       sampleCount++;
@@ -223,7 +229,7 @@ void captureStopDistance(uint8_t flags, uint8_t duty, uint32_t driveMs,
     }
     uint32_t s;
     uint32_t t = micros();
-    if (faderBuddy.readState(s)) {
+    if (faderBuddy.read_state(s)) {
       samples[sampleCount].t_us = t - startUs;
       samples[sampleCount].state = s;
       sampleCount++;
@@ -237,7 +243,7 @@ bool waitIdle(uint32_t timeoutMs) {
   uint32_t start = millis();
   while (millis() - start < timeoutMs) {
     uint32_t s;
-    if (faderBuddy.readState(s) && stateMode(s) == MODE_INPUT_IDLE) {
+    if (faderBuddy.read_state(s) && stateMode(s) == MODE_INPUT_IDLE) {
       return true;
     }
     delay(5);
@@ -254,7 +260,7 @@ uint8_t cmdLen = 0;
 
 void printState() {
   uint32_t s;
-  if (!faderBuddy.readState(s)) {
+  if (!faderBuddy.read_state(s)) {
     Serial.println("ERR read state");
     return;
   }
@@ -279,7 +285,7 @@ void handleCommand(char* line) {
 
   } else if (strcmp(cmd, "ver") == 0) {
     uint8_t v;
-    if (faderBuddy.readProtocolVersion(v)) {
+    if (faderBuddy.read_probe(v)) {
       Serial.print("OK version=");
       Serial.println(v);
     } else {
@@ -293,7 +299,7 @@ void handleCommand(char* line) {
     char* a = strtok(nullptr, " ");
     if (a == nullptr) { Serial.println("ERR usage: target <0-255>"); return; }
     uint8_t t = atoi(a);
-    Serial.println(faderBuddy.writeTargetPosition(t) ? "OK" : "ERR write");
+    Serial.println(faderBuddy.write_layer_target(0, t) ? "OK" : "ERR write");
 
   } else if (strcmp(cmd, "sstep") == 0) {
     // sstep <from> <to> <speed> <log_ms>  - step at a unitless speed (0-255, 255 = full)
@@ -338,10 +344,10 @@ void handleCommand(char* line) {
     uint32_t logMs = atol(c);
     uint32_t settleMs = (d != nullptr) ? atol(d) : 700;
 
-    if (!faderBuddy.writeTargetPosition(from)) { Serial.println("ERR write from"); return; }
+    if (!faderBuddy.write_layer_target(0, from)) { Serial.println("ERR write from"); return; }
     waitIdle(4000);
     delay(settleMs);
-    if (!faderBuddy.writeTargetPosition(to)) { Serial.println("ERR write to"); return; }
+    if (!faderBuddy.write_layer_target(0, to)) { Serial.println("ERR write to"); return; }
     capture(logMs, 5);
     dumpTrace();
     Serial.println("OK");
@@ -366,7 +372,7 @@ void handleCommand(char* line) {
     }
     debugDrive(DEBUG_DRIVE_FLAGS_EXIT, 0);
     delay(5);
-    if (!faderBuddy.writeTargetPosition((uint8_t)atoi(a))) { Serial.println("ERR write start"); return; }
+    if (!faderBuddy.write_layer_target(0, (uint8_t)atoi(a))) { Serial.println("ERR write start"); return; }
     waitIdle(4000);
     delay(400);
     captureOpenLoop((uint8_t)strtoul(b, nullptr, 0), (uint8_t)strtoul(c, nullptr, 0),
@@ -388,7 +394,7 @@ void handleCommand(char* line) {
     }
     debugDrive(DEBUG_DRIVE_FLAGS_EXIT, 0);
     delay(5);
-    if (!faderBuddy.writeTargetPosition((uint8_t)atoi(a))) { Serial.println("ERR write start"); return; }
+    if (!faderBuddy.write_layer_target(0, (uint8_t)atoi(a))) { Serial.println("ERR write start"); return; }
     waitIdle(4000);
     delay(400);
     stopSampleIndex = 0;
@@ -405,15 +411,15 @@ void handleCommand(char* line) {
     Serial.println("OK");
 
   } else if (strcmp(cmd, "cal") == 0) {
-    if (!faderBuddy.selfCalibrate()) { Serial.println("ERR write"); return; }
+    if (!faderBuddy.self_calibrate()) { Serial.println("ERR write"); return; }
     delay(4000);
     printState();
 
   } else if (strcmp(cmd, "clearerr") == 0) {
-    Serial.println(faderBuddy.clearError() ? "OK" : "ERR write");
+    Serial.println(faderBuddy.clear_error() ? "OK" : "ERR write");
 
   } else if (strcmp(cmd, "touchcal") == 0) {
-    Serial.println(faderBuddy.calibrateTouch() ? "OK" : "ERR write");
+    Serial.println(faderBuddy.calibrate_touch() ? "OK" : "ERR write");
 
   } else if (strcmp(cmd, "layer") == 0) {
     char* a = strtok(nullptr, " ");
@@ -458,12 +464,12 @@ void handleCommand(char* line) {
   } else if (strcmp(cmd, "touch") == 0) {
     uint16_t raw = 0, ref = 0, recal = 0;
     int16_t delta = 0;
-    faderBuddy.readTouchRaw(raw);
-    faderBuddy.readTouchDelta(delta);
-    faderBuddy.readTouchReference(ref);
-    faderBuddy.readTouchRecalCount(recal);
+    faderBuddy.read_touch_raw(raw);
+    faderBuddy.read_touch_delta(delta);
+    faderBuddy.read_touch_reference(ref);
+    faderBuddy.read_touch_recal_count(recal);
     uint32_t st = 0;
-    faderBuddy.readState(st);
+    faderBuddy.read_state(st);
     Serial.print("OK touch_bit="); Serial.print((st & STATE_TOUCH_bm) ? 1 : 0);
     Serial.print(" raw="); Serial.print(raw);
     Serial.print(" delta="); Serial.print(delta);
@@ -510,7 +516,7 @@ void handleCommand(char* line) {
     uint16_t n = 0;
     uint32_t s;
     while (millis() - start < 200) {
-      if (faderBuddy.readState(s)) n++;
+      if (faderBuddy.read_state(s)) n++;
     }
     Serial.print("OK poll_hz=");
     Serial.println(n * 5);
@@ -531,7 +537,6 @@ void setup() {
 
   Wire.begin(PIN_INA_SDA, PIN_INA_SCL);
   WireFaderBuddy.begin(PIN_FADER_BUDDY_SDA, PIN_FADER_BUDDY_SCL, 400000);
-  faderBuddy.begin(&WireFaderBuddy);
 
   servo.attach(PIN_SERVO);
   servo.write(SERVO_CLEAR_POS);

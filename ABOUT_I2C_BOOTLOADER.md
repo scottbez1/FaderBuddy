@@ -374,21 +374,24 @@ array. The component is `MULTI_CONF`, and many faders normally run the same
 firmware, so the blob is emitted once per distinct image and shared across
 instances rather than duplicating roughly 14 KB per fader.
 
-**The sequence** is the same one the jig uses: probe register `0x00` → if not
+**The sequence** lives in one place, `FirmwareUpdater` in the host library
+(`hostLib/src/fader_buddy_updater.{h,cpp}`), which both the component and the
+jig run: probe register `0x00` → if not
 already resident, `REG_ENTER_BOOTLOADER` and wait for the marker → `ERASE_APP` →
 stream pages 1..N-1 → `GET_VERSION_CRC16` over them → page 0 → whole-image
 `GET_VERSION_CRC16` → `RUN_APP` → re-read `REG_FW_VERSION` to confirm. See
 [§6](#6-wire-protocol) for why page 0 is held back.
 
-**It runs a slice at a time from `loop()`.** `update_tick_()` walks an
-`UpdateStage` enum, one stage per call; `update_firmware()` only arms the state
-machine and returns. The transfer takes seconds, and blocking for that long
+**It runs a slice at a time from `loop()`.** `FirmwareUpdater::tick()` walks
+an `UpdateStage` enum, one stage per call, driven from the library
+`FaderBuddy::loop()`; `update_firmware()` only arms the state machine and
+returns. The transfer takes seconds, and blocking for that long
 would starve the API and WiFi, and would make progress reporting impossible,
 since queued entity states are only flushed from the loop. Three details make
 the slicing work:
 
-- **Page streaming is time-budgeted**, not one page per tick. `UPDATE_WRITE`
-  keeps writing until `UPDATE_WRITE_BUDGET_MS` is spent, then yields. One page
+- **Page streaming is time-budgeted**, not one page per tick. The `WRITE`
+  stage keeps writing until `Options::write_budget_ms` is spent, then yields. One page
   per tick would turn a 230-page image into about 4 seconds of pure latency.
 - **The two long stalls are split into "ask" and "poll"** — erase and
   whole-image CRC. Both leave the target unable to answer for hundreds of
@@ -396,7 +399,7 @@ the slicing work:
   blocking the loop.
 - **Every polling stage carries a deadline**, compared wraparound-safe.
 
-`update()` early-returns while an update is in flight, since a fader in its
+`poll()` (the component's `update()`) early-returns while an update is in flight, since a fader in its
 bootloader has no `REG_STATE` to read.
 
 **Guard rails:**
@@ -409,7 +412,9 @@ bootloader has no `REG_STATE` to read.
 - **Never interrupt the user.** The run waits, bounded, for the fader to leave
   `MODE_INPUT_ACTIVE` before taking the bus, and reports failure if it is still
   in use.
-- **One fader at a time.** A class-static flag stops a second concurrent
+- **One fader at a time.** This one is the ESPHome component's, not the
+  library's - it is about faders sharing a bus, which only the host knows. A
+  class-static flag stops a second concurrent
   update across all instances. It is claimed before the first tick and held for
   the whole run, which matters because the sequence is interruptible: without
   it, a second fader could start in a gap between the first one's slices. A
@@ -423,9 +428,12 @@ bootloader has no `REG_STATE` to read.
 
 ### The production jig
 
-`production_tools/programAndTest/` is the reference implementation and the
-regression test. Every board that goes through the jig exercises the full update
-path:
+`production_tools/programAndTest/` is the regression test. It runs the same
+`FirmwareUpdater` as the component - on its own core-0 task, with longer
+per-transaction retries, `skip_if_current` off, and the
+`FW_VERSION_BOOTLOADER_ENTRY` gate off for its `FW_VERSION=0` old app - so
+every board that goes through the jig exercises the update path field faders
+use:
 
 - `TEST_FW_BOOTSTRAP` UPDI-flashes the DUT with the **current bootloader, built
   from source when `test_host.py` starts**, and its fuses - nothing else. It
