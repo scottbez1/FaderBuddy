@@ -142,7 +142,7 @@ layer-addressed registers.
 
 ## ESPHome component
 
-### 0.6.0 - in development / unreleased
+### 0.6.0
 
 - Firmware updates write the page holding the fader's reset vector last, and
   only after the rest of the image has verified. Previously it was written
