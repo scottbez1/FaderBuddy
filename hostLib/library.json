@@ -1,0 +1,34 @@
+{
+  "name": "FaderBuddyHost",
+  "version": "0.1.0",
+  "description": "Host-side driver for FaderBuddy motorized faders over I2C: layers, moves, haptics, touch and gesture events, self-calibration, and firmware updates through the FaderBuddy I2C bootloader.",
+  "keywords": "fader, motor fader, i2c, haptics, esphome",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scottbez1/motorFader.git"
+  },
+  "authors": [
+    {
+      "name": "Scott Bezek",
+      "maintainer": true
+    }
+  ],
+  "license": "Apache-2.0",
+  "frameworks": "*",
+  "platforms": "*",
+  "headers": "FaderBuddyHost.h",
+  "export": {
+    "exclude": [
+      "platformio.ini",
+      "test",
+      ".pio"
+    ]
+  },
+  "examples": [
+    {
+      "name": "Basic",
+      "base": "examples/basic",
+      "files": ["main.cpp"]
+    }
+  ]
+}

@@ -1,0 +1,376 @@
+/*
+ * Copyright 2026 Scott Bezek
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#pragma once
+
+#include <stdint.h>
+
+#define I2C_PROTOCOL_VERSION (5)  // v5: Layer management in firmware, 16-bit haptic config
+// The protocol version covers the WIRE FORMAT of the registers below. Bump it
+// only for a backwards incompatible change; additive changes that older hosts
+// can simply ignore leave it alone. Feature-detect on FW_VERSION instead; hosts
+// that hard-fail on an unexpected protocol version would otherwise be bricked by
+// a bump they didn't need to care about.
+
+// Magic payload (big-endian) required by REG_ENTER_BOOTLOADER so that a stray or
+// corrupt write cannot accidentally reboot a fader into the bootloader.
+#define ENTER_BOOTLOADER_MAGIC (0xB0071053UL)
+
+/*
+ * Application firmware version, as a packed u16: (major << 8) | minor.
+ * Reported at REG_FW_VERSION, and MONOTONICALLY INCREASING, so a host can both
+ * feature-gate on it and compare it against a packaged image to decide whether
+ * an update is needed. Bump the minor on every released build that changes
+ * observable behaviour.
+ *
+ * Two values are reserved and never reported by a real build:
+ *   0x0000 - unused
+ *   0xFFFF - what an I2C read returns from firmware that has no FW_VERSION
+ *            register at all: the peripheral stops driving SDA for an unknown
+ *            register and the bus pulls high. Firmware that old is treated as
+ *            version 1.0 - the last unversioned release.
+ *
+ * Overridable via build flag (-DFW_VERSION=N) so one-off builds can stamp a
+ * different version without touching this default.
+ */
+#define FW_VERSION_MAJOR (1)
+#define FW_VERSION_MINOR (5)
+#ifndef FW_VERSION
+#define FW_VERSION ((FW_VERSION_MAJOR << 8) | FW_VERSION_MINOR)
+#endif
+#define FW_VERSION_NONE (0xFFFF)  // read back from firmware predating the register
+
+// Minimum firmware version that honours the LAYER_TARGET speed byte. Older
+// firmware ignores a 4-byte write completely, so a host MUST check this before
+// sending one rather than letting the move be silently dropped.
+#define FW_VERSION_MOVE_SPEED (0x0101)  // 1.1
+
+// Minimum firmware version that measures motor characteristics during
+// self-calibration and reports them at REG_MOTOR_CAL.
+#define FW_VERSION_MOTOR_CAL (0x0102)  // 1.2
+
+// Minimum firmware version that honours REG_ENTER_BOOTLOADER, i.e. that can be
+// dropped into the I2C bootloader by a host. Firmware below this predates the
+// bootloader and needs a one-time UPDI migration to gain the capability - note
+// that installing the bootloader is a fuse change, so it is UPDI-only by
+// construction and cannot be bootstrapped over I2C.
+//
+// This is deliberately an FW_VERSION gate and not a protocol-version bump:
+// adding a write-only register that old hosts never touch breaks no existing
+// host, and bumping I2C_PROTOCOL_VERSION for it would trip any host that
+// validates the protocol version strictly.
+#define FW_VERSION_BOOTLOADER_ENTRY (0x0103)  // 1.3
+
+
+/*
+ * I2C Register Map (Protocol Version 5)
+ * ======================================
+ *
+ * Addr | Register Name       | Access  | Type | Description
+ * -----|---------------------|---------|------|------------
+ * 0x00 | VERSION             | R       | u8   | Protocol version (currently 5)
+ * -----|---------------------|---------|------|------------
+ * 0x01 | STATE               | R       | u32  | Current state (includes active layer in bits 4-6)
+ * -----|---------------------|---------|------|------------
+ * 0x02 | (removed in v5)     |         |      | Use REG_LAYER_TARGET instead
+ * -----|---------------------|---------|------|------------
+ * 0x03 | UPTIME              | R       | u32  | Uptime milliseconds
+ * -----|---------------------|---------|------|------------
+ * 0x04 | CAL_TOUCH           | W       | N/A  | Recalibrate touch sensor
+ * -----|---------------------|---------|------|------------
+ * 0x05 | CLEAR_ERROR         | W       | N/A  | Clear error state
+ * -----|---------------------|---------|------|------------
+ * 0x06 | TOUCH_RAW           | R       | u16  | Raw touch value
+ * -----|---------------------|---------|------|------------
+ * 0x07 | SELF_CAL            | W       | N/A  | Initiate self calibration of motor/potentiometer
+ * -----|---------------------|---------|------|------------
+ * 0x08 | SERIAL              | R       | u8[10] | Chip serial number (10 bytes)
+ * -----|---------------------|---------|------|------------
+ * 0x09 | TOUCH_DELTA         | R       | i16  | Touch delta (sensorData - reference)
+ * -----|---------------------|---------|------|------------
+ * 0x0A | TOUCH_REF           | R       | u16  | Touch reference value
+ * -----|---------------------|---------|------|------------
+ * 0x0B | TOUCH_RECAL         | R       | u16  | Touch recalibration count
+ * -----|---------------------|---------|------|------------
+ * 0x0C | HAPTIC_CONFIG       | R/W     | u32  | Haptic configuration [DEPRECATED - use REG_LAYER_HAPTIC_CONFIG]
+ * -----|---------------------|---------|------|------------
+ * 0x0D | ACTIVE_LAYER        | R/W     | u8   | Active layer index (0-7)
+ * -----|---------------------|---------|------|------------
+ * 0x0E | LAYER_TARGET        | R/W     | -    | Layer restore position + optional speed (see below)
+ * -----|---------------------|---------|------|------------
+ * 0x0F | LAYER_HAPTIC_CONFIG | R/W     | -    | Layer haptic config (layer-addressed, u16)
+ * -----|---------------------|---------|------|------------
+ * 0x10 | ENTER_BOOTLOADER    | W       | u32  | Write ENTER_BOOTLOADER_MAGIC to reboot into the I2C bootloader
+ * -----|---------------------|---------|------|------------
+ * 0x11 | FW_VERSION          | R       | u16  | Application firmware version (see FW_VERSION)
+ * -----|---------------------|---------|------|------------
+ * 0x12 | MOTOR_CAL           | R       |u8[12]| Measured motor characteristics (see below)
+ * -----|---------------------|---------|------|------------
+ * 0x13 | ...                 |         |      | (free - next production register goes here)
+ * -----|---------------------|---------|------|------------
+ * 0xF0 | DEBUG_DRIVE         | W       | u8[2]| Open-loop motor drive (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
+ * 0xF1 | DEBUG_STATUS        | R       |u8[16]| Control-loop internals (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
+ * 0xF2 | DEBUG_GAINS         | W       | u8[3]| Runtime gain override (DEBUG_DRIVE builds only)
+ * -----|---------------------|---------|------|------------
+ *
+ * Protocol:
+ * - Simple registers:
+ *   - Read:  Write register address, then read N bytes
+ *   - Write: Write register address + N data bytes
+ * - Layer-addressed registers (0x0E, 0x0F):
+ *   - Read:  Write [register, layer], then read N bytes for that layer
+ *   - Write: Write [register, layer, ...data] to write to specific layer
+ *
+ * LAYER_TARGET (0x0E) accepts an OPTIONAL trailing speed byte:
+ *   [0x0E, layer, position]        - move at full speed (unchanged behaviour)
+ *   [0x0E, layer, position, speed] - move no faster than this
+ * Three-byte writes behave exactly as before, so this is backwards compatible
+ * and does not change the protocol version. See LAYER_SPEED below.
+ * - All multi-byte values are big-endian (MSB first)
+ *
+ * v5 Breaking Changes from v4:
+ * - HAPTIC_CONFIG changed from 32-bit to 16-bit (removed nonce and target position)
+ * - STATE register bits 4-6 changed from haptic_config_nonce to active_layer
+ * - New layer-addressed protocol for per-layer configuration
+ */
+
+// I2C register addresses
+#define REG_VERSION 0x00  // Protocol version
+#define REG_STATE   0x01  // Current
+// 0x02 removed in v5 - use REG_LAYER_TARGET instead
+#define REG_UPTIME  0x03
+#define REG_CAL_TOUCH 0x04
+#define REG_CLEAR_ERROR 0x05
+#define REG_TOUCH_RAW 0x06
+#define REG_SELF_CAL 0x07
+#define REG_SERIAL 0x08  // Chip serial number (10 bytes)
+#define REG_TOUCH_DELTA 0x09  // Touch delta (signed 16-bit)
+#define REG_TOUCH_REF 0x0A  // Touch reference value (unsigned 16-bit)
+#define REG_TOUCH_RECAL 0x0B  // Touch recalibration count (unsigned 16-bit)
+// 0x0C removed in v5 - use REG_LAYER_HAPTIC_CONFIG instead
+#define REG_ACTIVE_LAYER 0x0D  // Active layer index (R/W, u8)
+#define REG_LAYER_TARGET 0x0E  // Layer restore position (layer-addressed, R/W, u8)
+#define REG_LAYER_HAPTIC_CONFIG 0x0F  // Layer haptic config (layer-addressed, R/W, u16)
+#define REG_ENTER_BOOTLOADER 0x10  // Write ENTER_BOOTLOADER_MAGIC (u32 big-endian) to reboot into the bootloader
+#define REG_FW_VERSION 0x11  // Application firmware version (R, u16 big-endian, see FW_VERSION)
+#define REG_MOTOR_CAL 0x12  // Measured motor characteristics (R, 12 bytes, see below)
+
+/*
+ * REG_MOTOR_CAL (0x12) - read-only, 12 bytes.
+ *
+ * What self-calibration measured about THIS motor, and the feedforward it
+ * derived from it. Purely diagnostic: the firmware needs no host involvement
+ * to use these, and a host that ignores the register loses nothing.
+ *
+ * The control law is written against three per-unit plant parameters, because
+ * the same duty means different things on different faders (see
+ * firmware/ABOUT_MOTOR_CONTROL.md):
+ *
+ *   breakaway  duty at which the carriage first moves at all
+ *   k          ADC counts/sec of cruise per duty count above breakaway
+ *   v_jump     the speed motion starts at once breakaway is crossed - the
+ *              Stribeck jump, which sets the floor on the on-target deadband
+ *
+ *   byte  0    valid          1 = measured, 0 = using compiled-in defaults
+ *   byte  1    breakaway_rising   duty
+ *   byte  2    breakaway_falling  duty
+ *   byte  3    k_rising           ADC counts/sec per duty
+ *   byte  4    k_falling          ADC counts/sec per duty
+ *   bytes 5-6  v_jump_rising      ADC counts/sec, big-endian u16
+ *   bytes 7-8  v_jump_falling     ADC counts/sec, big-endian u16
+ *   bytes 9-10 vel_min            slowest velocity reference the control law
+ *                                 will ask for, ADC counts/sec, big-endian u16
+ *   byte 11    deadband           on-target window, ADC counts
+ *
+ * breakaway and k feed the feedforward (breakaway + v_ref/k) and the velocity
+ * loop gain (scaled by 1/k); v_jump sets vel_min and the deadband floor.
+ *
+ * With valid = 0 the measurement never ran, or ran and produced values outside
+ * the plausible range; bytes 1-8 are then zero and 9-11 report the compiled-in
+ * defaults actually in use. Trigger a measurement with REG_SELF_CAL.
+ */
+/*
+ * Optional speed byte for LAYER_TARGET writes.
+ *
+ * A unitless 0-255 speed: 255 is full speed (no limit, the default), and 0 is
+ * the slowest the mechanism moves smoothly. The scale is linear in velocity
+ * and its ends are the ends of the validated range - roughly 700 ms of full
+ * travel at 0, down to 250 ms at 254 - so every value is usable and there are
+ * no awkward bounds for a host to know about.
+ *
+ * It is a velocity cap, not a move scheduler: a shorter move takes
+ * proportionally less time rather than being stretched to fill a duration.
+ *
+ * This is a LIMIT and not a precise speed. It is realised through a
+ * friction-dependent plant, so actual timing varies with the fader - expect
+ * within roughly 15% of the nominal speed, and about 7% difference between the
+ * two directions of travel. Speeds below the bottom of the scale are not
+ * reachable at all: the motor cannot sustain continuous rotation there and
+ * creeps in stick-slip steps instead, which is why 0 stops where it does.
+ *
+ * A 3-byte write leaves the layer's stored speed alone, and layers power up at
+ * LAYER_SPEED_FULL, so a host that never sends the byte moves at full speed.
+ *
+ * A host that DOES use the byte should send it on every move, LAYER_SPEED_FULL
+ * included: dropping back to a 3-byte write re-applies whatever limit the layer
+ * last stored, rather than moving at full speed. Send 3 bytes only when talking
+ * to firmware that predates the byte, which ignores a 4-byte write entirely.
+ */
+#define LAYER_SPEED_SLOWEST (0)
+#define LAYER_SPEED_FULL (255)
+
+/*
+ * Debug registers live at the top of the address space, not immediately after
+ * the production registers, so that adding a real register never has to step
+ * over them or leave a hole where they used to be. They are compiled out of
+ * production builds entirely, so nothing on a shipped board answers here.
+ */
+#define REG_DEBUG_DRIVE 0xF0  // Open-loop motor drive (W, [flags, duty]); DEBUG_DRIVE builds only
+
+/*
+ * REG_DEBUG_DRIVE (0xF0) - write-only, present only in DEBUG_DRIVE builds.
+ *
+ * Write [0xF0, flags, duty] to command the H-bridge directly, bypassing the
+ * control loop, for system identification. Writing flags = 0xFF exits open-loop
+ * mode. The firmware coasts the motor if a command is not refreshed within
+ * 400 ms, or if the fader nears a travel limit.
+ */
+#define DEBUG_DRIVE_FLAGS_EXIT (0xFF)
+
+// Direction: 2 bits at position 0
+#define DEBUG_DRIVE_DIR_bp (0)
+#define DEBUG_DRIVE_DIR_bm (0x03 << DEBUG_DRIVE_DIR_bp)
+#define DEBUG_DRIVE_DIR_COAST (0)
+#define DEBUG_DRIVE_DIR_A     (1)  // Toward the motor end (rising ADC)
+#define DEBUG_DRIVE_DIR_B     (2)  // Toward the low end (falling ADC)
+#define DEBUG_DRIVE_DIR_BRAKE (3)  // Both low sides on (dynamic braking)
+
+// Decay mode: 1 bit at position 2 (0 = fast/coast, 1 = slow/brake)
+#define DEBUG_DRIVE_SLOW_DECAY_bp (2)
+#define DEBUG_DRIVE_SLOW_DECAY_bm (1 << DEBUG_DRIVE_SLOW_DECAY_bp)
+
+// PWM prescaler select: 2 bits at position 4
+// 0 = DIV4 (19.6 kHz), 1 = DIV256 (306 Hz), 2 = DIV2 (39.2 kHz), 3 = DIV8 (9.8 kHz)
+#define DEBUG_DRIVE_CLK_bp (4)
+#define DEBUG_DRIVE_CLK_bm (0x03 << DEBUG_DRIVE_CLK_bp)
+
+/*
+ * REG_DEBUG_STATUS (0xF1) - read-only, DEBUG_DRIVE builds only.
+ * 16 bytes, big-endian: calib_min u16, calib_max u16, target_adc i16,
+ * drive i16, velocity i16 (ADC counts/sec), error_x8 i16 (error * 8),
+ * loop_hz u16, tick_hz u16.
+ */
+#define REG_DEBUG_STATUS 0xF1
+
+/*
+ * REG_DEBUG_GAINS (0xF2) - write-only, DEBUG_DRIVE builds only.
+ * Write [0xF2, index, value_hi, value_lo] to override one control-loop gain at
+ * runtime, so tuning doesn't need a reflash per trial. Values are fixed point:
+ * KP and KD are scaled by 1000, the rest are integers.
+ */
+#define REG_DEBUG_GAINS 0xF2
+#define DEBUG_GAIN_VREF_SLOPE  (0)  // velocity reference per ADC count of error, x1000
+#define DEBUG_GAIN_KV          (1)  // duty per (ADC count/sec) of velocity error, x1000
+#define DEBUG_GAIN_BD_RISING   (2)  // assumed breakaway duty, rising
+#define DEBUG_GAIN_BD_FALLING  (3)  // assumed breakaway duty, falling
+#define DEBUG_GAIN_K           (11) // assumed ADC counts/sec per duty, both directions
+#define DEBUG_GAIN_VEL_MIN     (12) // velocity reference floor, ADC counts/sec
+#define DEBUG_GAIN_DEADBAND    (4)  // ADC counts, x1000
+#define DEBUG_GAIN_TICK_US     (5)  // control tick period, microseconds
+#define DEBUG_GAIN_RAMP_RATE   (6)  // stiction ramp rate, duty per second
+#define DEBUG_GAIN_TAKEUP      (7)  // backlash take-up duty ceiling (0 = disabled)
+#define DEBUG_GAIN_TAKEUP_RAMP (10) // take-up ceiling ramp rate, duty per second
+#define DEBUG_GAIN_CALIB_MIN   (8)  // override calib_min (RAM only, not saved)
+#define DEBUG_GAIN_CALIB_MAX   (9)  // override calib_max (RAM only, not saved)
+
+enum Mode : uint8_t {
+  MODE_REMOTE_MOVEMENT_IN_PROGRESS = 0,
+  MODE_INPUT_ACTIVE                = 1,
+  MODE_INPUT_IDLE                  = 2,
+  MODE_ERROR                       = 3,
+  MODE_SELF_CALIBRATION            = 4,
+};
+
+enum HapticMode : uint8_t {
+  HAPTIC_NO_HAPTICS              = 0,
+  HAPTIC_SMOOTH_WITH_MAGNET_ENDS = 1,
+  HAPTIC_DETENTS                 = 2,
+};
+
+
+/*
+ * Bitfield definitions: bit position (_bp), bit size (_bs), bit mask (_bm)
+ */
+
+// Touch: 1 bit at position 0
+#define STATE_TOUCH_bp (0)
+#define STATE_TOUCH_bs (1)
+#define STATE_TOUCH_bm (((1UL << STATE_TOUCH_bs) - 1) << STATE_TOUCH_bp)
+
+// Mode: 3 bits at position 1
+#define STATE_MODE_bp (1)
+#define STATE_MODE_bs (3)
+#define STATE_MODE_bm (((1UL << STATE_MODE_bs) - 1) << STATE_MODE_bp)
+
+// Active layer: 3 bits at position 4 (replaces haptic_config_nonce in v5)
+#define STATE_ACTIVE_LAYER_bp      (4)
+#define STATE_ACTIVE_LAYER_bs      (3)
+#define STATE_ACTIVE_LAYER_bm      (((1UL << STATE_ACTIVE_LAYER_bs) - 1) << STATE_ACTIVE_LAYER_bp)
+
+// Position: 8 bits at position 7
+#define STATE_POSITION_bp            (7)
+#define STATE_POSITION_bs            (8)
+#define STATE_POSITION_bm            (((1UL << STATE_POSITION_bs) - 1) << STATE_POSITION_bp)
+
+// Position nonce: 2 bits at position 15
+#define STATE_POSITION_NONCE_bp            (15)
+#define STATE_POSITION_NONCE_bs            (2)
+#define STATE_POSITION_NONCE_bm            (((1UL << STATE_POSITION_NONCE_bs) - 1) << STATE_POSITION_NONCE_bp)
+
+// Raw ADC: 11 bits at position 17
+#define STATE_RAW_ADC_bp            (17)
+#define STATE_RAW_ADC_bs            (11)
+#define STATE_RAW_ADC_bm            (((1UL << STATE_RAW_ADC_bs) - 1) << STATE_RAW_ADC_bp)
+
+// Double tap nonce: 2 bits at position 28
+#define STATE_DOUBLE_TAP_NONCE_bp   (28)
+#define STATE_DOUBLE_TAP_NONCE_bs   (2)
+#define STATE_DOUBLE_TAP_NONCE_bm   (((1UL << STATE_DOUBLE_TAP_NONCE_bs) - 1) << STATE_DOUBLE_TAP_NONCE_bp)
+
+/*
+ * Haptic Configuration Bitfields (16-bit format - PROTOCOL VERSION 5+)
+ * =====================================================================
+ * REMOVED in v5: HAPTIC_NONCE (v4: bits 0-2)
+ * REMOVED in v5: HAPTIC_TARGET_POSITION (v4: bits 13-20)
+ */
+
+// Haptic mode: 3 bits at position 0
+#define HAPTIC_MODE_bp              (0)
+#define HAPTIC_MODE_bs              (3)
+#define HAPTIC_MODE_bm              (((1U << HAPTIC_MODE_bs) - 1) << HAPTIC_MODE_bp)
+
+// Detent count: 4 bits at position 3
+#define HAPTIC_DETENT_COUNT_bp      (3)
+#define HAPTIC_DETENT_COUNT_bs      (4)
+#define HAPTIC_DETENT_COUNT_bm      (((1U << HAPTIC_DETENT_COUNT_bs) - 1) << HAPTIC_DETENT_COUNT_bp)
+
+// Detent strength: 3 bits at position 7
+#define HAPTIC_DETENT_STRENGTH_bp   (7)
+#define HAPTIC_DETENT_STRENGTH_bs   (3)
+#define HAPTIC_DETENT_STRENGTH_bm   (((1U << HAPTIC_DETENT_STRENGTH_bs) - 1) << HAPTIC_DETENT_STRENGTH_bp)
+
+// Reserved: 6 bits at position 10-15 (must be 0)

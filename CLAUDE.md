@@ -27,13 +27,23 @@ FaderBuddy is a bidirectional motor fader control system with integrated capacit
   - `ABOUT_MOTOR_CONTROL.md` - **Read before touching the movement code.** Measured plant
     model, why the control law is shaped as it is, and how the gains are centred for
     hardware variance rather than tuned against one fader
+- **hostLib/** - FaderBuddyHost, the host-side C++ library every ESP32 host is built
+  on (PlatformIO library, framework-agnostic). `FaderBuddy` mirrors the ESPHome
+  component's public interface; `FirmwareUpdater` is the one copy of the I2C
+  bootloader install sequence; `FaderBuddyDevice` is raw register access. Native unit
+  tests run against a simulated fader (`test/fake_fader.h`)
 - **esphome/** - ESPHome custom component for Home Assistant integration
-  - `components/fader_buddy/` - Core component for interfacing with FaderBuddy boards
+  - `components/fader_buddy/` - Core component for interfacing with FaderBuddy boards.
+    A thin wrapper over hostLib: `fader_buddy.{h,cpp}` hold only the ESPHome parts
+    (lifecycle, triggers, entities, status text, one-update-at-a-time across faders).
+    The `fader_buddy_{platform,protocol,device,updater,host}.*` files are **copies** of
+    `hostLib/src/` - never edit them here
   - `examples/multi-fader-display.yaml` - ESP32-S3 example with LVGL display
 - **software/** - Software tools and demos
   - `mcp2221-webhid/` - WebHID-based browser demo tool for I2C control via MCP2221 USB-to-I2C bridge
 - **production_tools/programAndTest/** - ESP32-based production test fixture
-  - ESP32 PlatformIO project with display and current monitoring
+  - ESP32 PlatformIO project with display and current monitoring. Talks to the DUT
+    through hostLib (`lib_deps = symlink://../../hostLib`)
   - Python test scripts for automated hardware validation
   - `factory_test_images/` - The fixed old application the jig installs over
     I2C (onto a bootloader-only board) before exercising an I2C update.
@@ -150,6 +160,23 @@ after changing the bootloader) - never check a bootloader
 image into `production_tools/programAndTest/factory_test_images/`, or boards will
 ship with a stale bootloader.
 
+
+### Host library (hostLib)
+
+```bash
+# Native unit tests (simulated fader app + bootloader)
+pio test -d hostLib -e native
+
+# Compile the Arduino example as a consumer would
+pio ci hostLib/examples/basic --lib hostLib --board esp32dev
+
+# After editing hostLib/src/ or firmware/src/shared/: refresh every copy (the ESPHome
+# component's, and hostLib's protocol headers). CI runs this without --fix.
+python3 ci/util/check_i2c_data_sync.py --fix
+```
+
+Versioned on its own in `hostLib/library.json` (see CHANGELOG.md). Published to the
+PlatformIO registry by hand with `pio pkg publish hostLib` - never from CI or an agent.
 
 ### Firmware (production programAndTest ESP32 jig)
 
@@ -399,11 +426,14 @@ This allows the host controller to distinguish between position updates caused b
 
 The file `firmware/src/shared/i2c_data.h` contains the I2C protocol definitions and is shared between:
 - The ATtiny1616 firmware (I2C peripheral implementation)
-- The ESPHome component (`esphome/components/fader_buddy/i2c_data.h`)
-- The production test tool (ESP32 I2C controller)
+- The host library (`hostLib/src/i2c_data.h`, a copy), and through it the ESPHome
+  component (another copy) and the production jig
 - The WebHID demo tool (JavaScript implementation)
 
-When modifying the I2C protocol, ensure changes are compatible across all consumers and update all copies of i2c_data.h.
+When modifying the I2C protocol, ensure changes are compatible across all consumers,
+then run `python3 ci/util/check_i2c_data_sync.py --fix` to refresh the copies (CI fails
+on drift). Host-side protocol logic - feature gates on the firmware version, the
+speed-byte rule, the update sequence - belongs in hostLib, not in an individual host.
 
 ## Hardware Details
 
